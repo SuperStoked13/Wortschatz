@@ -1,0 +1,275 @@
+/* Wortschatz design tokens. Theme is set on <html data-theme="light|dark">. */
+
+:root {
+  color-scheme: light;
+
+  /* Surfaces */
+  --bg: #F5F6FA;
+  --bg-tint: #EEF0F7;
+  --surface: #FFFFFF;
+  --surface-2: #EFF1F6;
+  --surface-3: #E6E9F0;
+  --surface-hover: #F7F8FB;
+  --border: #E2E5ED;
+  --border-strong: #D2D6E0;
+  --divider: #ECEEF3;
+  --border-hover: #BCC2CE;
+  --popover-bg: #FFFFFF;
+  --popover-hover: #F0F1F6;
+  --seg-bg: #ECEEF4;
+  --seg-indicator: #FFFFFF;
+  --star: #F2AE0C;
+
+  /* Text */
+  --text: #161922;
+  --text-2: #4A5163;
+  --text-3: #5F6679;               /* secondary small text: 4.5:1 on every surface */
+  --text-disabled: #A7ADBB;
+
+  /* Accent (indigo-violet) */
+  --accent: #5146E5;
+  --accent-hover: #4338CA;
+  --accent-active: #3A30B5;
+  --accent-fill: #5146E5;          /* solid fills behind white text */
+  --accent-fill-hover: #4338CA;
+  --accent-soft: #ECEBFD;
+  --accent-soft-hover: #E1DFFC;
+  --accent-soft-border: #D6D3FA;
+  --accent-text: #463BD4;          /* accent-coloured text on soft backgrounds */
+  --accent-contrast: #FFFFFF;
+  --accent-gradient: linear-gradient(135deg, #6A61F2 0%, #5146E5 55%, #4A3DD8 100%);
+
+  /* Semantic */
+  --success: #12A150;
+  --success-hover: #0E8C45;
+  --success-soft: #E6F6EC;
+  --success-border: #BFE6CD;
+  --success-text: #0B7A3B;
+  --success-fill: #0B7A3B;         /* solid fills behind white text (4.5:1) */
+  --success-fill-hover: #096A33;
+  --danger: #E5484D;
+  --danger-hover: #CF3A3F;
+  --danger-soft: #FDECEC;
+  --danger-border: #F6C9CB;
+  --danger-text: #C4282E;
+  --danger-fill: #CF3A3F;
+  --danger-fill-hover: #B03035;
+  --warning: #D9930D;
+  --warning-soft: #FFF4DB;
+  --warning-border: #F5DFA8;
+  --warning-text: #946000;
+  /* Lernserie and «N richtig in Folge» (the Mac app's flame colour). */
+  --flame: #F26B1D;
+  --flame-soft: rgba(242, 107, 29, 0.13);
+  --flame-strong: rgba(242, 107, 29, 0.22);
+  /* Solid amber behind white text (the failed exam's grade; --warning gives only 2.4:1). */
+  --warning-fill: #A06500;
+  /* The streak of light across a turning flashcard: a cool reflection on the white card. */
+  --fc-sheen: color-mix(in srgb, var(--accent) 16%, transparent);
+  /* A Lernserie waiting for today's answers (the Mac sidebar's 7 % tint). */
+  --flame-faint: rgba(242, 107, 29, 0.07);
+  /* The flame on the dark toast pill (--inverse-bg in both themes). */
+  --flame-on-inverse: #FF8A3D;
+  --info: #2F7DE1;
+  --info-soft: #E8F1FD;
+
+  /* Card status (mastery) */
+  --status-mastered: #12A150;
+  --status-learning: #E5A21C;
+  --status-new: #D9DDE6;
+
+  /* Effects */
+  /* --ring is the soft halo for focused text fields (their accent border carries the
+     contrast). Keyboard focus on everything else uses the solid --focus-* tokens. */
+  --ring: 0 0 0 3px rgb(81 70 229 / 0.28);
+  --ring-danger: 0 0 0 3px rgb(229 72 77 / 0.24);
+  --ring-success: 0 0 0 3px rgb(18 161 80 / 0.24);
+  --focus-color: #5146E5;
+  --focus-outline: 2px solid var(--focus-color);
+  --focus-ring: 0 0 0 2px var(--surface), 0 0 0 4px var(--focus-color);
+  --focus-ring-inset: inset 0 0 0 2px var(--focus-color);
+  --overlay: rgb(17 20 32 / 0.42);
+  --header-bg: rgb(245 246 250 / 0.78);
+  --header-border: rgb(16 24 40 / 0.07);
+  --highlight: rgb(255 255 255 / 0.7);
+  --inverse-bg: #1B1E29;
+  --inverse-text: #F4F5F9;
+  --inverse-text-2: #A9AFBE;
+  --inverse-border: rgb(255 255 255 / 0.08);
+
+  --shadow-1: 0 1px 2px rgb(16 24 40 / 0.06), 0 1px 3px rgb(16 24 40 / 0.08);
+  --shadow-2: 0 4px 12px -2px rgb(16 24 40 / 0.08), 0 2px 6px -2px rgb(16 24 40 / 0.05);
+  --shadow-3: 0 18px 40px -12px rgb(16 24 40 / 0.22), 0 4px 12px -4px rgb(16 24 40 / 0.08);
+  --shadow-accent: 0 6px 16px -6px rgb(81 70 229 / 0.55);
+  --shadow-inset: inset 0 1px 2px rgb(16 24 40 / 0.05);
+
+  /* Radii */
+  --radius-xs: 6px;
+  --radius-sm: 8px;
+  --radius-md: 11px;
+  --radius: 14px;
+  --radius-lg: 20px;
+  --radius-xl: 28px;
+  --radius-full: 999px;
+
+  /* Spacing scale 4/8/12/16/20/24/32/40/56/72 */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-7: 32px;
+  --space-8: 40px;
+  --space-9: 56px;
+  --space-10: 72px;
+
+  /* Typography */
+  --font-ui: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Inter, system-ui, sans-serif;
+  --font-display: ui-rounded, "SF Pro Rounded", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+
+  --fs-xs: 0.75rem;     /* 12 */
+  --fs-sm: 0.8125rem;   /* 13 */
+  --fs-base: 0.9375rem; /* 15 */
+  --fs-md: 1rem;        /* 16 */
+  --fs-lg: 1.125rem;    /* 18 */
+  --fs-xl: 1.375rem;    /* 22 */
+  --fs-2xl: 1.75rem;    /* 28 */
+  --fs-3xl: 2.25rem;    /* 36 */
+  --fs-4xl: 3rem;       /* 48 */
+  --fs-prompt: clamp(1.75rem, 1.15rem + 2.4vw, 2.75rem); /* 28–44 */
+
+  --fw-regular: 400;
+  --fw-medium: 500;
+  --fw-semibold: 600;
+  --fw-bold: 700;
+
+  --lh-tight: 1.2;
+  --lh-snug: 1.35;
+  --lh: 1.5;
+  --tracking-tight: -0.015em;
+  --tracking-display: -0.022em;
+  --tracking-caps: 0.06em;
+
+  /* Motion */
+  --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  --ease-spring: cubic-bezier(0.34, 1.4, 0.64, 1);
+  --dur-1: 120ms;
+  --dur-2: 180ms;
+  --dur-3: 240ms;
+  --dur-4: 360ms;
+
+  /* Layout */
+  --header-h: 60px;
+  --content-w: 1080px;
+  --content-narrow: 720px;
+  --gutter: clamp(16px, 4vw, 32px);
+  --control-h-sm: 36px;
+  --control-h: 44px;
+  --control-h-lg: 54px;
+
+  /* Layers */
+  --z-header: 50;
+  --z-popover: 80;
+  --z-modal: 100;
+  --z-toast: 120;
+  --z-tooltip: 130;
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --bg: #0E1016;
+  --bg-tint: #12141C;
+  --surface: #161922;
+  --surface-2: #1D212B;
+  --surface-3: #252A36;
+  --surface-hover: #1B1F29;
+  --border: #2A2F3B;
+  --border-strong: #363C4A;
+  --divider: #222632;
+  --border-hover: #474E5E;
+  --popover-bg: #1E222D;
+  --popover-hover: #2B303D;
+  --seg-bg: #12151C;
+  --seg-indicator: #2A2F3C;
+  --star: #F5C344;
+
+  --text: #ECEEF3;
+  --text-2: #B3B9C7;
+  --text-3: #8E96A8;
+  --text-disabled: #5A6172;
+
+  --accent: #7B74FF;
+  --accent-hover: #8F89FF;
+  --accent-active: #6B63F5;
+  --accent-fill: #6159F0;
+  --accent-fill-hover: #5A52EC;
+  --accent-soft: #23214A;
+  --accent-soft-hover: #2C2959;
+  --accent-soft-border: #39357A;
+  --accent-text: #ABA6FF;
+  --accent-contrast: #FFFFFF;
+  --accent-gradient: linear-gradient(135deg, #6860F2 0%, #6159F0 60%, #554CE6 100%);
+
+  --success: #2FBF71;
+  --success-hover: #3DCC7E;
+  --success-soft: #11291C;
+  --success-border: #1D4A31;
+  --success-text: #5ED896;
+  --success-fill: #168049;
+  --success-fill-hover: #126B3D;
+  --danger: #F2555A;
+  --danger-hover: #F76A6E;
+  --danger-soft: #331A1D;
+  --danger-border: #5A2629;
+  --danger-text: #FF8F93;
+  --danger-fill: #CC3338;
+  --danger-fill-hover: #B02C31;
+  --warning: #E5A823;
+  --warning-soft: #2F2510;
+  --warning-border: #54421A;
+  --warning-text: #F3C35E;
+  --flame: #FF8A3D;
+  --flame-soft: rgba(255, 138, 61, 0.13);
+  --flame-strong: rgba(255, 138, 61, 0.22);
+  --warning-fill: #A06500;
+  /* White light on the dark card. */
+  --fc-sheen: color-mix(in srgb, var(--accent-contrast) 20%, transparent);
+  --flame-faint: rgba(255, 138, 61, 0.07);
+  --flame-on-inverse: #FF8A3D;
+  --info: #5B9BF0;
+  --info-soft: #14243A;
+
+  --status-mastered: #2FBF71;
+  --status-learning: #E5A823;
+  --status-new: #333948;
+
+  --ring: 0 0 0 3px rgb(123 116 255 / 0.4);
+  --ring-danger: 0 0 0 3px rgb(242 85 90 / 0.32);
+  --ring-success: 0 0 0 3px rgb(47 191 113 / 0.32);
+  --focus-color: #8F89FF;
+  --focus-ring: 0 0 0 2px var(--bg), 0 0 0 4px var(--focus-color);
+  --overlay: rgb(4 5 10 / 0.62);
+  --header-bg: rgb(14 16 22 / 0.72);
+  --header-border: rgb(255 255 255 / 0.06);
+  --highlight: rgb(255 255 255 / 0.04);
+  --inverse-bg: #2A2F3D;
+  --inverse-text: #F4F5F9;
+  --inverse-text-2: #B8BECC;
+  --inverse-border: rgb(255 255 255 / 0.1);
+
+  --shadow-1: 0 1px 2px rgb(0 0 0 / 0.35), 0 1px 3px rgb(0 0 0 / 0.25);
+  --shadow-2: 0 6px 16px -4px rgb(0 0 0 / 0.5), 0 2px 6px -2px rgb(0 0 0 / 0.35);
+  --shadow-3: 0 24px 56px -12px rgb(0 0 0 / 0.65), 0 6px 16px -6px rgb(0 0 0 / 0.4);
+  --shadow-accent: 0 8px 20px -8px rgb(97 89 240 / 0.7);
+  --shadow-inset: inset 0 1px 2px rgb(0 0 0 / 0.25);
+}
+
+@media (pointer: coarse) {
+  :root {
+    --control-h-sm: 40px;
+  }
+}

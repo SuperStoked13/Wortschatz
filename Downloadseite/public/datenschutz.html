@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="de-CH">
+<head>
+{{> head}}
+  <title>Datenschutz: Wortschatz</title>
+  <meta name="description" content="Welche Daten die Website von Wortschatz verarbeitet und warum.">
+  <meta name="robots" content="noindex">
+  <link rel="canonical" href="{{site.origin}}/datenschutz">
+</head>
+<body class="page">
+{{> sprite}}
+{{> nav}}
+  <main id="inhalt" class="prose">
+    <h1>Datenschutz</h1>
+    <p class="prose-lead">Diese Website zeigt Wortschatz und bietet die App zum Download an. Sie setzt keine Cookies, keine Analyse- oder Werbedienste und keine Inhalte von Dritten ein. Schriften, Bilder und Skripte kommen alle von diesem Server.</p>
+
+    <h2>Verantwortlich</h2>
+    {{#site.operator}}<p>{{site.operator}}{{#site.contactEmail}}, <a href="{{site.mailto}}">{{site.contactEmail}}</a>{{/site.contactEmail}}</p>{{/site.operator}}
+    {{^site.operator}}{{#site.contactEmail}}<p><a href="{{site.mailto}}">{{site.contactEmail}}</a></p>{{/site.contactEmail}}{{/site.operator}}
+    {{^site.operator}}{{^site.contactEmail}}<p>Die Website wird privat betrieben. Kontaktangaben folgen.</p>{{/site.contactEmail}}{{/site.operator}}
+
+    <h2>Was der Server verarbeitet</h2>
+    <p>Bei jedem Aufruf erhält der Server deine IP-Adresse, die aufgerufene Adresse, die Uhrzeit und die Angaben deines Browsers, die bei jeder Anfrage mitgehen. Damit wird die Seite ausgeliefert und vor Missbrauch geschützt:</p>
+    <ul>
+      <li>Der Server zählt, wie viele Anfragen und Downloads von einer Adresse kommen, und sperrt Adressen vorübergehend, die die Website angreifen oder überlasten. Diese Zähler liegen nur im Arbeitsspeicher, kommen nie auf die Festplatte und verschwinden nach spätestens zwei Tagen.</li>
+      <li>Im Protokoll des Servers steht deine IP-Adresse nur gekürzt (zum Beispiel 203.0.113.0), sodass sie nicht mehr auf einen einzelnen Anschluss zeigt. Das Protokoll dient der Fehlersuche und wird regelmässig gelöscht.</li>
+      <li>Für Downloads zählt der Server, wie oft jede Version pro Tag geladen wurde. Diese Zahl enthält nichts über die Personen, die geladen haben.</li>
+    </ul>
+
+    <h2>Verschlüsselung und Name</h2>
+    <p>Die Verbindung ist mit HTTPS verschlüsselt (Zertifikat von Let’s Encrypt). Der Name wortschatz.duckdns.org wird über den Dienst DuckDNS auf diesen Server geleitet. DuckDNS sieht dabei nur, welche Adresse der Server hat, aber nicht, wer die Website besucht.</p>
+
+    <h2>Die App</h2>
+    <p>Wortschatz selbst sendet keine Daten. Lernsets, Fortschritt und Einstellungen bleiben auf deinem Computer: in der Mac-App in ihrem eigenen Ordner, in der Windows-App unter %LOCALAPPDATA%\Wortschatz. In der Windows-App lädt der erste Import eines PDFs oder Fotos zwei Programmbibliotheken von cdn.jsdelivr.net nach, alles andere funktioniert ohne Internet.</p>
+
+    <h2>Deine Rechte</h2>
+    <p>Du kannst Auskunft darüber verlangen, welche Daten über dich bearbeitet werden, und ihre Berichtigung oder Löschung verlangen. Da der Server keine Daten speichert, die auf dich zurückführen, gibt es in der Regel nichts zu löschen.{{#site.contactEmail}} Schreib dafür an <a href="{{site.mailto}}">{{site.contactEmail}}</a>.{{/site.contactEmail}}</p>
+
+    <p class="prose-meta">Stand: Oktober 2026</p>
+  </main>
+{{> footer}}
+</body>
+</html>

@@ -1,0 +1,6 @@
+manger = essen
+boire = trinken
+dormir = schlafen
+la boulangerie = die Bäckerei
+le marché = der Markt
+acheter = kaufen

@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="de-CH">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Wortschatz</title>
+    <meta name="description" content="Wortschatz – Vokabeln lernen mit Multiple Choice und im Schreibmodus." />
+    <meta name="theme-color" content="#F5F6FA" />
+    <meta name="color-scheme" content="light dark" />
+    <link rel="icon" href="assets/icon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="assets/icon.svg" />
+    <script>
+      // Apply the stored theme before the first paint (no light flash in dark mode).
+      (function () {
+        var theme = 'light';
+        try {
+          var setting = 'system';
+          var raw = localStorage.getItem('wortschatz:v1:settings');
+          var parsed = raw ? JSON.parse(raw) : null;
+          if (parsed && (parsed.theme === 'light' || parsed.theme === 'dark')) setting = parsed.theme;
+          theme = setting === 'system' ? (window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light') : setting;
+        } catch (e) {
+          theme = window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+        }
+        document.documentElement.setAttribute('data-theme', theme);
+        var meta = document.querySelector('meta[name="theme-color"]');
+        if (meta) meta.setAttribute('content', theme === 'dark' ? '#0E1016' : '#F5F6FA');
+      })();
+    </script>
+    <link rel="stylesheet" href="styles/tokens.css" />
+    <link rel="stylesheet" href="styles/base.css" />
+    <link rel="stylesheet" href="styles/components.css" />
+    <link rel="stylesheet" href="styles/screens/dashboard.css" />
+    <link rel="stylesheet" href="styles/screens/editor.css" />
+    <link rel="stylesheet" href="styles/screens/set.css" />
+    <link rel="stylesheet" href="styles/screens/learn.css" />
+    <link rel="stylesheet" href="styles/screens/write.css" />
+    <link rel="stylesheet" href="styles/screens/flashcards.css" />
+    <link rel="stylesheet" href="styles/screens/exam.css" />
+    <link rel="stylesheet" href="styles/screens/settings.css" />
+    <script type="module" src="src/main.js"></script>
+  </head>
+  <body>
+    <header class="app-header" id="app-header">
+      <div class="app-header__inner">
+        <a class="app-brand" href="#/">
+          <img class="app-brand__mark" src="assets/icon.svg" alt="" width="30" height="30" />
+          <span class="app-brand__name">Wortschatz</span>
+        </a>
+      </div>
+    </header>
+    <main id="app" class="app-main" tabindex="-1"></main>
+    <div id="toasts" class="ui-toasts" aria-live="polite"></div>
+    <noscript>
+      <section class="app-error">
+        <h1 class="app-error__title">JavaScript ist ausgeschaltet</h1>
+        <p class="app-error__text">Wortschatz braucht JavaScript. Bitte aktiviere es in den Browser-Einstellungen.</p>
+      </section>
+    </noscript>
+  </body>
+</html>

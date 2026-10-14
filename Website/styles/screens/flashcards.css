@@ -1,0 +1,729 @@
+/* Karteikarten (fc-*): the card with its 3D flip, the stack, swiping, the action bar and the summaries.
+   Builds on the shared study layout of write.css (wr-*: sidebar, compact bar, eyebrow, tiles, messages),
+   which loads before this file. Colours only via tokens (--fc-sheen: the streak of light on a turning card). */
+
+/* Sideways two-finger swipes belong to the card, never to the browser's history. */
+:root:has(.fc) {
+  overscroll-behavior-x: none;
+}
+
+/* ================================================================= layout */
+
+/* Cards gliding off may reach past the column, never past the page. */
+.wr.fc {
+  overflow-x: clip;
+}
+
+.fc-main {
+  display: flex;
+  flex-direction: column;
+}
+
+/* The deck and the summary share one cell, so the action bar stays put between them. */
+.fc-stage {
+  position: relative;
+  display: grid;
+}
+
+.fc-stage > * {
+  grid-area: 1 / 1;
+  min-width: 0;
+}
+
+.fc-stage > .fc-deck {
+  position: relative;
+  z-index: 1;
+}
+
+.fc-stage[data-mode="summary"] > .fc-deck {
+  pointer-events: none;
+}
+
+.fc-stage__summary {
+  position: relative;
+  z-index: 0;
+  align-self: center;
+}
+
+.fc-stage[data-mode="card"] > .fc-stage__summary {
+  pointer-events: none;
+}
+
+/* ================================================================ sidebar */
+
+.fc-side__compact {
+  display: none;
+}
+
+.fc .fc-side__keys {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-2);
+}
+
+/* ============================================================ deck & stack */
+
+.fc-deck {
+  height: calc(var(--fc-card-h, 380px) + 18px);
+}
+
+.fc-stack {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+}
+
+.fc-stack__edge {
+  position: absolute;
+  top: var(--fc-drop);
+  left: var(--fc-inset);
+  right: var(--fc-inset);
+  height: var(--fc-card-h, 380px);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xl);
+  background: var(--surface);
+  box-shadow: var(--shadow-1);
+  transition: opacity 300ms var(--ease);
+}
+
+.fc-stack__edge--1 {
+  opacity: 0.62;
+}
+
+.fc-stack[data-count="0"] .fc-stack__edge,
+.fc-stack[data-count="1"] .fc-stack__edge--1 {
+  opacity: 0;
+}
+
+.fc-deck__cards {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 1;
+  height: var(--fc-card-h, 380px);
+}
+
+/* ================================================================== card */
+
+.fc-card {
+  --fc-tone: var(--success);
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  cursor: pointer;
+  /* Up and down still scroll the page; sideways belongs to the swipe. */
+  touch-action: pan-y;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.fc-card[data-verdict="stillLearning"] {
+  --fc-tone: var(--status-learning);
+}
+
+.fc-card.is-swiping {
+  cursor: grabbing;
+}
+
+.fc-card.is-leaving {
+  cursor: default;
+  pointer-events: none;
+}
+
+.fc-card__move,
+.fc-card__glide,
+.fc-card__turn {
+  position: absolute;
+  inset: 0;
+}
+
+/* Rising from the stack and sinking back into it: from the card's bottom edge. */
+.fc-card__move {
+  transform-origin: 50% 100%;
+}
+
+/* About the Mac's perspective (0.45 of the card's width) for a column-wide card. */
+.fc-card__glide {
+  perspective: 1600px;
+}
+
+.fc-card__turn {
+  transform-style: preserve-3d;
+}
+
+/* ================================================================= faces */
+
+.fc-face {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 20px 26px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xl);
+  background: var(--surface);
+  box-shadow: var(--shadow-2);
+  color: var(--text);
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+}
+
+/* The back has a faint accent tint. */
+.fc-face--back {
+  border-color: color-mix(in srgb, var(--accent) 16%, var(--border));
+  background: color-mix(in srgb, var(--accent) 7%, var(--surface));
+}
+
+/* At rest only the side that is up is there (and reachable); while the card turns both are,
+   and the back is turned half way round so it lands upright. */
+.fc-card[data-up="front"]:not(.is-turning):not(.is-xfade) .fc-face--back,
+.fc-card[data-up="back"]:not(.is-turning):not(.is-xfade) .fc-face--front {
+  visibility: hidden;
+}
+
+.fc-card.is-turning .fc-face--back {
+  transform: rotate3d(1, 0.12, 0, 180deg);
+}
+
+.fc-face__head {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  min-height: 36px;
+  margin: -4px -10px 0 0;
+}
+
+.fc-face__label {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-3);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-semibold);
+  letter-spacing: var(--tracking-caps);
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.fc-face__tools {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 2px;
+}
+
+.fc-face__body {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  min-height: 0;
+  overflow: hidden;
+  padding: var(--space-2) var(--space-4);
+}
+
+.fc-face__text {
+  display: -webkit-box;
+  max-height: 100%;
+  margin: 0;
+  overflow: hidden;
+  color: var(--text);
+  font-family: var(--font-display);
+  font-size: 46px;
+  font-weight: var(--fw-semibold);
+  line-height: 1.2;
+  letter-spacing: var(--tracking-display);
+  text-align: center;
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+  text-wrap: balance;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 7;
+}
+
+.fc-face__text--empty {
+  color: var(--text-3);
+  font-family: var(--font-ui);
+  letter-spacing: 0;
+}
+
+.fc-face__hint {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 20px;
+  color: var(--text-3);
+  font-size: var(--fs-xs);
+}
+
+.fc-face__hint .ui-kbd {
+  min-width: 30px;
+  height: 18px;
+  font-size: 0.6875rem;
+}
+
+/* ============================================== verdict: wash, seal, sheen */
+
+/* The verdict's colour on the card, strongest on the side it goes to. A swipe grows it with
+   the distance (--fc-wash); armed or sorted it is there in full, with a rim. */
+.fc-face__wash {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: linear-gradient(to left, color-mix(in srgb, var(--fc-tone) 36%, transparent), color-mix(in srgb, var(--fc-tone) 12%, transparent));
+  opacity: var(--fc-wash, 0);
+  pointer-events: none;
+  transition: opacity 360ms var(--ease);
+}
+
+.fc-card[data-verdict="stillLearning"] .fc-face__wash {
+  background: linear-gradient(to right, color-mix(in srgb, var(--fc-tone) 36%, transparent), color-mix(in srgb, var(--fc-tone) 12%, transparent));
+}
+
+.fc-card.is-swiping .fc-face__wash {
+  transition: none;
+}
+
+.fc-card.is-armed .fc-face__wash,
+.fc-card.is-sealed .fc-face__wash {
+  opacity: 1;
+  box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--fc-tone) 75%, transparent);
+  transition: opacity 160ms ease-out;
+}
+
+/* The verdict behind the text, like a seal: its symbol in a ring, sending out a second ring. */
+.fc-face__seal {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 150px;
+  height: 150px;
+  margin: -75px 0 0 -75px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.fc-face__ring,
+.fc-face__ripple {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+}
+
+.fc-face__ring {
+  display: grid;
+  place-items: center;
+  border: 5px solid color-mix(in srgb, var(--fc-tone) 42%, transparent);
+  color: color-mix(in srgb, var(--fc-tone) 42%, transparent);
+}
+
+.fc-face__ripple {
+  border: 2px solid var(--fc-tone);
+  opacity: 0;
+}
+
+.fc-face__seal-learning,
+.fc-card[data-verdict="stillLearning"] .fc-face__seal-know {
+  display: none;
+}
+
+.fc-card[data-verdict="stillLearning"] .fc-face__seal-learning {
+  display: block;
+}
+
+.fc-card.is-armed .fc-face__seal,
+.fc-card.is-sealed .fc-face__seal {
+  animation: fc-seal-in 320ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.fc-card.is-armed .fc-face__ripple,
+.fc-card.is-sealed .fc-face__ripple {
+  animation: fc-ripple 600ms ease-out 40ms both;
+}
+
+@keyframes fc-seal-in {
+  from {
+    opacity: 0;
+    transform: scale(1.18);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes fc-ripple {
+  from {
+    opacity: 0.45;
+    transform: scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: scale(1.7);
+  }
+}
+
+/* The streak of light while the card turns (moved and faded by the flip's animation). */
+.fc-face__sheen {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  background: linear-gradient(
+    160deg,
+    transparent 24%,
+    color-mix(in srgb, var(--fc-sheen) 27%, transparent) 40%,
+    var(--fc-sheen) 50%,
+    color-mix(in srgb, var(--fc-sheen) 27%, transparent) 60%,
+    transparent 76%
+  );
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* ============================================================= action bar */
+
+.fc-bar {
+  position: sticky;
+  bottom: 0;
+  z-index: 5;
+  margin-top: var(--space-5);
+  padding: var(--space-2) 0 max(var(--space-3), env(safe-area-inset-bottom, 0px));
+  background: linear-gradient(to bottom, transparent, var(--bg) 36%);
+  container-type: inline-size;
+}
+
+.fc-bar__row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.fc-bar__spacer {
+  flex: 1;
+}
+
+.fc-bar__row.is-switching > .ui-btn:not(.fc-bar__undo) {
+  animation: fc-bar-in 240ms var(--ease) both;
+}
+
+@keyframes fc-bar-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.fc-bar__undo {
+  flex: none;
+}
+
+.fc-bar__primary {
+  min-width: 150px;
+}
+
+.fc-sort {
+  --fc-tone: var(--success);
+  --fc-tone-text: var(--success-text);
+  --fc-tone-soft: var(--success-soft);
+  gap: 8px;
+  padding: 0 14px;
+}
+
+.fc-sort--learning {
+  --fc-tone: var(--status-learning);
+  --fc-tone-text: var(--warning-text);
+  --fc-tone-soft: var(--warning-soft);
+}
+
+.fc-sort:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring), var(--btn-shadow);
+}
+
+.fc-sort__icon {
+  display: inline-flex;
+  color: var(--fc-tone);
+}
+
+.fc-sort__label {
+  font-weight: var(--fw-medium);
+}
+
+.fc-sort__count {
+  min-width: 28px;
+  padding: 2px 7px;
+  border-radius: var(--radius-full);
+  background: var(--fc-tone-soft);
+  color: var(--fc-tone-text);
+  font-family: var(--font-display);
+  font-weight: var(--fw-semibold);
+  line-height: 1.35;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.fc-sort__count.is-bumping {
+  animation: fc-bump 320ms var(--ease-spring);
+}
+
+@keyframes fc-bump {
+  0% { transform: scale(1); }
+  40% { transform: scale(1.12); }
+  100% { transform: scale(1); }
+}
+
+/* Narrow columns: the sort buttons keep their symbols and counts. */
+@container (max-width: 660px) {
+  .fc-sort__label {
+    display: none;
+  }
+}
+
+@container (max-width: 560px) {
+  .fc-sort__key,
+  .fc-bar .ui-btn__kbd {
+    display: none;
+  }
+
+  .fc-bar__primary {
+    min-width: 0;
+  }
+}
+
+/* Phones: the main action gets a row of its own. */
+@container (max-width: 440px) {
+  .fc-bar__row {
+    flex-wrap: wrap;
+  }
+
+  .fc-bar__primary {
+    flex: 1 1 100%;
+    order: 10;
+  }
+
+  .fc-bar .ui-btn--lg {
+    --btn-px: 14px;
+  }
+}
+
+/* ================================================================ summary */
+
+.fc-sum {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+  overflow-x: clip;
+  padding: var(--space-3) 0;
+  text-align: center;
+}
+
+.fc-sum.is-arriving {
+  animation: fc-sum-in 420ms cubic-bezier(0.4, 0, 0.2, 1) 220ms both;
+}
+
+.fc-sum.is-leaving {
+  animation: fc-sum-out 120ms ease-out forwards;
+}
+
+@keyframes fc-sum-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes fc-sum-out {
+  to { opacity: 0; }
+}
+
+.fc-sum__badge-wrap {
+  position: relative;
+  width: 88px;
+  height: 88px;
+  margin-bottom: var(--space-2);
+}
+
+.fc-sum__badge {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  width: 88px;
+  height: 88px;
+  border-radius: 50%;
+  background: var(--accent-gradient);
+  color: var(--accent-contrast);
+  box-shadow: var(--shadow-accent);
+  animation: fc-badge-in 520ms var(--ease-spring) both;
+}
+
+.fc-sum.is-arriving .fc-sum__badge {
+  animation-delay: 220ms;
+}
+
+/* The confetti waits until the summary is there. */
+.fc-sum.is-arriving .wr-confetti i {
+  animation-delay: calc(var(--d) + 280ms);
+}
+
+.fc-sum--done .fc-sum__badge {
+  background: var(--success-fill);
+  box-shadow: 0 8px 20px -8px color-mix(in srgb, var(--success) 70%, transparent);
+}
+
+@keyframes fc-badge-in {
+  0% { transform: scale(0.82); }
+  60% { transform: scale(1.06); }
+  100% { transform: scale(1); }
+}
+
+.fc-sum__title {
+  margin: 0;
+  color: var(--text);
+  font-family: var(--font-display);
+  font-size: clamp(1.625rem, 1.2rem + 1.4vw, 2.125rem);
+  font-weight: var(--fw-bold);
+  letter-spacing: var(--tracking-display);
+  text-wrap: balance;
+}
+
+.fc-sum__text {
+  max-width: 560px;
+  margin: 0;
+  color: var(--text-2);
+  font-size: var(--fs-md);
+  text-wrap: pretty;
+}
+
+.fc-sum__tiles {
+  width: 100%;
+  max-width: 620px;
+  margin-top: var(--space-5);
+  grid-template-columns: repeat(var(--fc-tiles, 3), minmax(0, 1fr));
+  text-align: left;
+}
+
+.fc-tile--know .wr-tile__icon {
+  background: var(--success-soft);
+  color: var(--success-text);
+}
+
+.fc-tile--learning .wr-tile__icon {
+  background: var(--warning-soft);
+  color: var(--warning-text);
+}
+
+.fc-tile--rounds .wr-tile__icon {
+  background: var(--info-soft);
+  color: var(--info);
+}
+
+/* ================================================================ options */
+
+.fc-options__note {
+  margin: 0 var(--space-1);
+  color: var(--text-3);
+  font-size: var(--fs-sm);
+  line-height: var(--lh-snug);
+}
+
+/* ============================================================= responsive */
+
+@media (pointer: coarse) {
+  .fc-face__hint .ui-kbd,
+  .fc-sort__key {
+    display: none;
+  }
+
+  .fc-face__tools {
+    gap: 6px;
+  }
+}
+
+@media (max-width: 899px) {
+  /* The compact bar: back, «Runde 2 · 3/12», options; the round's progress along its bottom. */
+  .fc-side__compact {
+    display: flex;
+    flex: 1;
+    align-items: baseline;
+    justify-content: center;
+    gap: 6px;
+    min-width: 0;
+    margin: 0;
+    color: var(--text-2);
+    font-size: var(--fs-sm);
+    font-weight: var(--fw-semibold);
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .fc-side__compact-dot {
+    color: var(--text-3);
+  }
+
+  .fc .fc-side {
+    min-height: 52px;
+  }
+}
+
+@media (max-width: 560px) {
+  .fc-face {
+    padding: 16px 18px 12px;
+  }
+
+  .fc-face__body {
+    padding: var(--space-2);
+  }
+
+  .fc-bar {
+    margin-top: var(--space-4);
+  }
+
+  .fc-sum__tiles {
+    gap: var(--space-2);
+  }
+
+  .fc-sum__tiles .wr-tile {
+    padding: 14px 12px;
+  }
+
+  .fc-sum__tiles .wr-tile__value {
+    font-size: 1.3125rem;
+  }
+
+  .fc-sum__tiles .wr-tile__label {
+    font-size: var(--fs-xs);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fc-face__ripple {
+    display: none;
+  }
+
+  .fc-sum__badge,
+  .fc-card.is-armed .fc-face__seal,
+  .fc-card.is-sealed .fc-face__seal {
+    animation: none;
+  }
+
+  .fc-card.is-armed .fc-face__seal,
+  .fc-card.is-sealed .fc-face__seal {
+    opacity: 1;
+  }
+}

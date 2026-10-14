@@ -1,0 +1,10 @@
+il cane = der Hund
+la casa = das Haus
+lo studente = der Student
+gli amici = die Freunde
+la città = die Stadt
+parlare = sprechen
+mangiare = essen
+il ragazzo = der Junge
+la stazione = der Bahnhof
+perché = warum

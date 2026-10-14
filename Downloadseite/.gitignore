@@ -1,0 +1,7 @@
+# Nie veröffentlichen: .env enthält den DuckDNS-Token.
+.env
+data/
+# Downloads sind gross und entstehen mit tools/release-*.sh.
+releases/*
+!releases/README.md
+.DS_Store

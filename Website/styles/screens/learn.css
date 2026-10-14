@@ -1,0 +1,818 @@
+/* Learn mode ("Lernen", ln-*): multiple choice and written questions in rounds, checkpoint, finish.
+   Builds on the Write layout (wr-*: sidebar, question card, lists, results), which is always loaded.
+   write.css comes later in index.html, so overrides of wr-* rules are scoped under the .ln root. */
+
+/* ================================================================ layout */
+
+.ln-meta {
+  display: none;
+}
+
+.ln-hint-host:empty {
+  display: none;
+}
+
+/* ===================================================== segmented progress */
+
+.ln-progress {
+  display: flex;
+  gap: 3px;
+  width: 100%;
+  height: 8px;
+}
+
+.ln-progress--lg {
+  gap: 4px;
+  height: 14px;
+}
+
+.ln-progress__seg {
+  position: relative;
+  flex: 1 1 0;
+  min-width: 0;
+  height: 100%;
+  overflow: hidden;
+  border-radius: var(--radius-full);
+  background: var(--status-new);
+}
+
+.ln-progress__reached,
+.ln-progress__mastered {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 0;
+  transition: width 640ms var(--ease);
+}
+
+.ln-progress__reached {
+  background: var(--status-learning);
+}
+
+.ln-progress__mastered {
+  background: var(--status-mastered);
+}
+
+/* ================================================================ sidebar */
+
+.ln .ln-stat--new {
+  --wr-dot: var(--status-new);
+}
+
+.ln .ln-stat--new .wr-stat__dot {
+  box-shadow: inset 0 0 0 1px var(--border-hover);
+}
+
+.ln .ln-stat--learning {
+  --wr-dot: var(--status-learning);
+  --wr-num: var(--warning-text);
+}
+
+.ln .ln-stat--mastered {
+  --wr-dot: var(--status-mastered);
+  --wr-num: var(--success-text);
+}
+
+.ln .ln-side__keys {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-2);
+}
+
+/* ============================================================= intro hint */
+
+.ln-hint {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-bottom: var(--space-4);
+  padding: 8px 6px 8px 14px;
+  border: 1px solid var(--accent-soft-border);
+  border-radius: var(--radius);
+  background: var(--accent-soft);
+  animation: wr-reveal 300ms var(--ease) both;
+}
+
+.ln-hint.is-leaving {
+  animation: ln-hint-out 200ms var(--ease) forwards;
+}
+
+@keyframes ln-hint-out {
+  to {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+}
+
+.ln-hint__icon {
+  display: grid;
+  flex: none;
+  color: var(--accent-text);
+}
+
+.ln-hint__text {
+  flex: 1;
+  min-width: 0;
+  color: var(--text);
+  font-size: var(--fs-sm);
+  line-height: 1.45;
+}
+
+.ln-hint__close {
+  flex: none;
+  color: var(--accent-text);
+}
+
+/* ======================================================= multiple choice */
+
+/* The tiles carry the feedback; the card itself stays calm. */
+.ln-mc.wr-card[data-phase="correct"] {
+  border-color: var(--border);
+  box-shadow: var(--shadow-2);
+}
+
+/* Unlike a written miss, the prompt keeps its place and size after an answer. */
+.ln-mc.wr-card .wr-q,
+.ln-mc.wr-card[data-phase] .wr-q {
+  min-height: clamp(88px, 14vh, 150px);
+}
+
+.ln-mc.wr-card .wr-q__prompt,
+.ln-mc.wr-card[data-phase] .wr-q__prompt {
+  padding-bottom: var(--space-5);
+  color: var(--text);
+  font-size: var(--fs-prompt);
+  line-height: 1.16;
+}
+
+.ln-mc.wr-card[data-phase] .wr-q__prompt.is-long {
+  font-size: clamp(1.375rem, 1rem + 1.4vw, 2rem);
+  line-height: 1.25;
+}
+
+.ln-mc.wr-card[data-phase] .wr-q__prompt.is-very-long {
+  font-size: clamp(1.125rem, 0.95rem + 0.8vw, 1.5rem);
+  line-height: 1.4;
+}
+
+.ln-mc__caption {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 28px;
+  margin-bottom: var(--space-3);
+  color: var(--text-2);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-semibold);
+}
+
+.ln-mc__caption--ok,
+.ln-mc__caption--bad,
+.ln-mc__caption--calm {
+  font-size: var(--fs-md);
+}
+
+.ln-mc__caption--ok {
+  color: var(--success-text);
+}
+
+.ln-mc__caption--bad {
+  color: var(--danger-text);
+}
+
+.ln-mc__caption--calm {
+  color: var(--accent-text);
+}
+
+.ln-mc__caption .ui-icon {
+  flex: none;
+}
+
+.ln-tiles {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-3);
+}
+
+/* The group anchors focus (1–4, Tab into the options). A keyboard user sees a
+   soft ring around the options; after a click or tap it stays invisible. */
+.ln-tiles:focus {
+  outline: none;
+}
+
+.ln-tiles:focus-visible {
+  outline: 2px solid var(--accent-soft-border);
+  outline-offset: 6px;
+  border-radius: calc(var(--radius) + 6px);
+}
+
+.ln-tiles.is-odd > .ln-tile:last-child {
+  grid-column: 1 / -1;
+}
+
+.ln-tile {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-width: 0;
+  min-height: 76px;
+  padding: 14px 18px 14px 14px;
+  border: 1.5px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow-1);
+  color: var(--text);
+  font: inherit;
+  font-size: 1.0625rem;
+  font-weight: var(--fw-medium);
+  line-height: 1.35;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    border-color var(--dur-2) var(--ease),
+    background-color var(--dur-2) var(--ease),
+    box-shadow var(--dur-2) var(--ease),
+    opacity var(--dur-3) var(--ease),
+    transform var(--dur-2) var(--ease);
+}
+
+.ln-tiles.is-long .ln-tile {
+  font-size: var(--fs-base);
+}
+
+.ln-tile__key {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--surface-2);
+  color: var(--text-3);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-semibold);
+  font-variant-numeric: tabular-nums;
+  transition: background-color var(--dur-2) var(--ease), border-color var(--dur-2) var(--ease), color var(--dur-2) var(--ease);
+}
+
+.ln-tile__text {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  hyphens: auto;
+}
+
+.ln-mc[data-phase="question"] .ln-tile:hover {
+  border-color: var(--accent);
+  box-shadow: var(--shadow-2);
+  transform: translateY(-1px);
+}
+
+.ln-mc[data-phase="question"] .ln-tile:hover .ln-tile__key {
+  border-color: var(--accent-soft-border);
+  background: var(--accent-soft);
+  color: var(--accent-text);
+}
+
+.ln-tile:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: var(--focus-ring);
+}
+
+.ln-mc[data-phase="question"] .ln-tile:active {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  box-shadow: none;
+  transform: scale(0.985);
+}
+
+/* Answered */
+.ln-mc:not([data-phase="question"]) .ln-tile {
+  box-shadow: none;
+  cursor: default;
+}
+
+.ln-tile.is-correct {
+  border-color: var(--success);
+  background: var(--success-soft);
+}
+
+.ln-tile.is-wrong {
+  border-color: var(--danger);
+  background: var(--danger-soft);
+}
+
+.ln-tile.is-correct .ln-tile__key,
+.ln-tile.is-wrong .ln-tile__key {
+  border-color: transparent;
+  color: var(--accent-contrast);
+}
+
+.ln-tile.is-correct .ln-tile__key {
+  background: var(--success-fill);
+}
+
+.ln-tile.is-wrong .ln-tile__key {
+  background: var(--danger-fill);
+}
+
+.ln-tile.is-dim {
+  opacity: 0.5;
+}
+
+/* Choosing by keyboard: the option the letters (or the arrows) pick is tinted with an accent
+   ring and badge; options the letters do not start fade; the typed part is underlined. */
+.ln-mc[data-phase="question"] .ln-tile.is-highlighted {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  box-shadow: var(--shadow-2);
+}
+
+.ln-mc[data-phase="question"] .ln-tile.is-highlighted .ln-tile__key {
+  border-color: transparent;
+  background: var(--accent-fill);
+  color: var(--accent-contrast);
+}
+
+.ln-mc[data-phase="question"] .ln-tile.is-filtered {
+  opacity: 0.5;
+}
+
+.ln-tile__typed {
+  color: var(--accent-text);
+  text-decoration: underline;
+  text-decoration-color: var(--accent);
+  text-decoration-thickness: 2px;
+  text-underline-offset: 3px;
+}
+
+/* The typing hint under the tiles: it unfolds by its height, so the row below glides. */
+.ln-ta {
+  display: grid;
+  grid-template-rows: 0fr;
+  opacity: 0;
+  transition:
+    grid-template-rows var(--dur-3) var(--ease),
+    opacity var(--dur-2) var(--ease),
+    margin-top var(--dur-3) var(--ease);
+}
+
+.ln-ta.is-open {
+  grid-template-rows: 1fr;
+  margin-top: var(--space-4);
+  opacity: 1;
+}
+
+.ln-ta__inner {
+  display: flex;
+  justify-content: center;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.ln-ta__pill {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 4px 10px;
+  max-width: 100%;
+  margin: 2px;
+  padding: 6px 14px;
+  border-radius: var(--radius-full);
+  background: var(--surface-2);
+  color: var(--text-2);
+  font-size: var(--fs-sm);
+  line-height: 1.35;
+}
+
+.ln-ta__icon {
+  display: grid;
+  color: var(--text-3);
+}
+
+.ln-ta__typed {
+  min-width: 0;
+  color: var(--text);
+  font-weight: var(--fw-semibold);
+  white-space: pre;
+}
+
+.ln-ta__typed.is-none {
+  color: var(--danger-text);
+}
+
+.ln-ta__what {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.ln-ta__key {
+  min-width: 20px;
+  height: 20px;
+}
+
+.ln-ta__fix {
+  color: var(--text-3);
+  font-size: var(--fs-xs);
+}
+
+.ln-tile.is-popping {
+  animation: ln-tile-pop 420ms var(--ease-spring);
+}
+
+@keyframes ln-tile-pop {
+  0% { transform: scale(1); }
+  40% { transform: scale(1.025); }
+  100% { transform: scale(1); }
+}
+
+.ln-tiles.is-entering > .ln-tile {
+  animation: ln-tile-in 260ms var(--ease) both;
+}
+
+.ln-tiles.is-entering > .ln-tile:nth-child(2) { animation-delay: 35ms; }
+.ln-tiles.is-entering > .ln-tile:nth-child(3) { animation-delay: 70ms; }
+.ln-tiles.is-entering > .ln-tile:nth-child(4) { animation-delay: 105ms; }
+
+@keyframes ln-tile-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.ln .ln-mc__actions {
+  margin-top: var(--space-5);
+}
+
+.ln-mc__keys .ui-kbd {
+  min-width: 20px;
+  height: 20px;
+}
+
+.ln-dont {
+  min-height: 44px;
+  margin-right: -6px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--accent-text);
+  font: inherit;
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-semibold);
+  cursor: pointer;
+}
+
+.ln-dont:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.ln-dont:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+/* ==================================================== repetition questions */
+
+/* The prompt's language and «↺ Wiederholung» stay together on the left of the head. */
+.ln-q__label {
+  --row-gap: var(--space-2);
+  min-width: 0;
+}
+
+.ln-review-chip {
+  cursor: default;
+}
+
+.ln-demoted-chip {
+  flex: none;
+}
+
+/* ============================================================= checkpoint */
+
+.ln-cp {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-7);
+}
+
+.ln-cp__hero {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: clamp(24px, 4vw, 40px);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-2);
+}
+
+.ln-cp__title {
+  color: var(--text);
+  font-family: var(--font-display);
+  font-size: clamp(1.625rem, 1.2rem + 1.4vw, 2.25rem);
+  font-weight: var(--fw-bold);
+  letter-spacing: var(--tracking-display);
+}
+
+.ln-cp__progress {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  margin: var(--space-4) 0 var(--space-2);
+}
+
+.ln-cp__progress-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.ln-cp__mastered {
+  color: var(--text);
+  font-size: var(--fs-lg);
+  font-weight: var(--fw-semibold);
+  font-variant-numeric: tabular-nums;
+}
+
+.ln-cp__pct {
+  color: var(--success-text);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-semibold);
+  font-variant-numeric: tabular-nums;
+}
+
+.ln-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 20px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  color: var(--text-2);
+  font-size: var(--fs-sm);
+}
+
+.ln-legend__item {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.ln-legend__item strong {
+  color: var(--text);
+  font-weight: var(--fw-semibold);
+  font-variant-numeric: tabular-nums;
+}
+
+.ln-cp__text {
+  color: var(--text-2);
+}
+
+.ln-cp__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+  margin-top: var(--space-4);
+}
+
+/* Fixed widths keep the term and definition columns aligned from row to row. */
+.ln-cp__status {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-3);
+  min-width: 132px;
+}
+
+.ln-dots {
+  display: inline-flex;
+  justify-content: flex-end;
+  gap: 4px;
+  min-width: 20px;
+}
+
+.ln-dots__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.ln-dots__dot.is-ok {
+  background: var(--success);
+}
+
+.ln-dots__dot.is-bad {
+  background: var(--danger);
+}
+
+/* ================================================================= finish */
+
+.ln-fin__title {
+  max-width: 18ch;
+  text-wrap: balance;
+}
+
+/* «Beste Serie: 12 richtig in Folge» and the repetition line under the subtitle. */
+.ln-fin__streak,
+.ln-fin__review {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+.ln-fin__streak {
+  padding: 6px 14px 6px 10px;
+  border-radius: var(--radius-full);
+  background: var(--flame-soft);
+  color: var(--text);
+  font-size: var(--fs-md);
+  font-weight: var(--fw-medium);
+  animation: ui-fade-in var(--dur-4) var(--ease) 200ms both;
+}
+
+.ln-fin__flame {
+  display: grid;
+  color: var(--flame);
+}
+
+.ln .ln-tiles-stats {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
+.ln .ln-tiles-stats .wr-tile:nth-child(5) {
+  animation-delay: 240ms;
+}
+
+/* ============================================================ responsive */
+
+@media (max-width: 899px) {
+  /* Phones and tablets: a compact sticky bar with the counters, the options icon
+     and the segmented progress as a full-width row below. */
+  .ln .ln-side {
+    flex-wrap: wrap;
+    row-gap: 6px;
+    padding-bottom: 10px;
+  }
+
+  .ln-side .wr-side__progress.ln-side__progress {
+    position: static;
+    order: 10;
+    flex: 1 0 100%;
+  }
+
+  .ln-side .ln-progress {
+    gap: 2px;
+    height: 6px;
+  }
+
+  .ln-meta {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    margin: 0 0 var(--space-3) 4px;
+    color: var(--text-3);
+    font-size: var(--fs-sm);
+    font-weight: var(--fw-medium);
+  }
+
+  .ln-meta::before {
+    content: "";
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--accent);
+  }
+}
+
+@media (max-width: 760px) {
+  /* Five stat tiles: three on top, two below. */
+  .ln .ln-tiles-stats {
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+  }
+
+  .ln .ln-tiles-stats .wr-tile {
+    grid-column: span 2;
+  }
+
+  .ln .ln-tiles-stats .wr-tile:nth-child(n + 4) {
+    grid-column: span 3;
+  }
+}
+
+@media (max-width: 640px) {
+  .ln-cp__hero {
+    text-align: left;
+  }
+
+  .ln-cp__actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .ln-cp__status {
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 6px;
+    min-width: 0;
+  }
+}
+
+@media (max-width: 560px) {
+  .ln-mc.wr-card .wr-q,
+  .ln-mc.wr-card[data-phase] .wr-q {
+    min-height: 72px;
+  }
+
+  .ln-mc.wr-card .wr-q__prompt,
+  .ln-mc.wr-card[data-phase] .wr-q__prompt {
+    padding-bottom: var(--space-4);
+  }
+
+  .ln-tiles {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 10px;
+  }
+
+  .ln-tile {
+    min-height: 60px;
+    padding: 12px 14px 12px 12px;
+    font-size: var(--fs-md);
+  }
+
+  .ln .ln-mc__actions {
+    margin-top: var(--space-4);
+  }
+
+  /* "Weiss ich nicht?" stays on the right; after answering "Weiter" spans the row. */
+  .ln-mc[data-phase="question"] .wr-actions__spacer {
+    display: block;
+  }
+
+  .ln-hint {
+    margin-bottom: var(--space-3);
+  }
+
+  /* Feedback keeps the caption on one line, so the tiles below never move. */
+  .ln-mc__caption--ok,
+  .ln-mc__caption--bad,
+  .ln-mc__caption--calm {
+    font-size: var(--fs-base);
+  }
+
+  /* "Alles gemeistert": the actions stack and long labels wrap inside the gutter. */
+  .ln .wr-msg__actions {
+    flex-direction: column;
+    align-items: stretch;
+    width: 100%;
+  }
+
+  .ln .wr-msg__actions .ui-btn {
+    height: auto;
+    min-height: var(--btn-h);
+    padding-block: 10px;
+    line-height: 1.3;
+    text-align: center;
+    white-space: normal;
+  }
+}
+
+@media (max-width: 480px) {
+  /* Phones keep the 3 + 2 grid with tighter tiles. */
+  .ln .ln-tiles-stats {
+    gap: var(--space-2);
+  }
+
+  .ln .ln-tiles-stats .wr-tile {
+    padding: 14px 12px;
+  }
+
+  .ln .ln-tiles-stats .wr-tile__icon {
+    width: 28px;
+    height: 28px;
+    margin-bottom: 4px;
+  }
+
+  .ln .ln-tiles-stats .wr-tile__value {
+    font-size: 1.3125rem;
+  }
+
+  .ln .ln-tiles-stats .wr-tile__label {
+    font-size: var(--fs-xs);
+  }
+}

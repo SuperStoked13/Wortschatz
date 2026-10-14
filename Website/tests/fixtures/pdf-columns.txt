@@ -1,0 +1,8 @@
+la gare                   der Bahnhof
+le billet                 die Fahrkarte
+le train                  der Zug
+le quai                   der Bahnsteig
+le départ                 die Abfahrt
+l'arrivée                 die Ankunft
+le numéro de la voie die Gleisnummer
+le guichet                der Schalter

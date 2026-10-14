@@ -1,0 +1,11 @@
+  <footer class="site-footer">
+    <div class="footer-inner">
+      <p class="footer-note">Wortschatz braucht kein Konto und keine Cloud. Deine Lernsets bleiben auf deinem Computer, und diese Website setzt weder Cookies noch Tracking ein.</p>
+      <nav class="footer-links" aria-label="Weitere Seiten">
+        <a href="/datenschutz">Datenschutz</a>
+        <a href="/checksums.txt">Prüfsummen</a>
+        {{#site.contactEmail}}<a href="{{site.mailto}}">Kontakt</a>{{/site.contactEmail}}
+      </nav>
+      <p class="footer-copy">© {{site.year}} Wortschatz{{#site.operator}}, {{site.operator}}{{/site.operator}}</p>
+    </div>
+  </footer>

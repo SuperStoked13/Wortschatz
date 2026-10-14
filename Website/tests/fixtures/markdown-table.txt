@@ -1,0 +1,6 @@
+| Französisch | Deutsch |
+|---|---|
+| le pain | das Brot |
+| le fromage | der Käse |
+| le lait | die Milch |
+| la viande | das Fleisch |

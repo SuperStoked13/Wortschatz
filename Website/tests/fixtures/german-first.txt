@@ -1,0 +1,7 @@
+der Hund - le chien
+die Katze - le chat
+das Pferd - le cheval
+die Kuh - la vache
+das Schwein - le cochon
+der Vogel - l'oiseau
+die Maus - la souris

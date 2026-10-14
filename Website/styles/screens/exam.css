@@ -1,0 +1,1256 @@
+/* Prüfung (exam): setup, the exam sheet with all questions on one page, the timer and the graded results. */
+
+/* The bars at the top and bottom keep focused fields and toasts clear of themselves.
+   --ex-dock-h is measured by the screen (the characters make the bottom bar taller). */
+:root[data-route="exam"] {
+  scroll-padding-top: calc(var(--header-h) + 72px);
+  scroll-padding-bottom: calc(var(--ex-dock-h, 88px) + 16px);
+}
+
+:root[data-route="exam"] .ui-toasts {
+  bottom: calc(max(12px, env(safe-area-inset-bottom, 0px)) + var(--ex-dock-h, 88px));
+}
+
+/* ================================================================= layout */
+
+.ex {
+  display: flex;
+  flex-direction: column;
+  min-height: calc(100dvh - var(--header-h));
+}
+
+.ex--solo {
+  padding: var(--space-6) 0;
+}
+
+.ex-stage,
+.ex-page {
+  display: flex;
+  flex: 1 0 auto;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.ex-col {
+  width: 100%;
+  max-width: calc(760px + 2 * var(--gutter));
+  margin: 0 auto;
+  padding: var(--space-5) max(var(--gutter), env(safe-area-inset-right, 0px)) var(--space-7) max(var(--gutter), env(safe-area-inset-left, 0px));
+}
+
+.ex-col--setup {
+  max-width: calc(660px + 2 * var(--gutter));
+}
+
+.ex-enter {
+  animation: ex-enter var(--dur-4) var(--ease) both;
+}
+
+@keyframes ex-enter {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes ex-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.ex-eyebrow {
+  margin: 0;
+  color: var(--text-3);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-bold);
+  letter-spacing: var(--tracking-caps);
+  line-height: 1.2;
+  text-transform: uppercase;
+}
+
+/* ================================================================ top bar */
+
+.ex-top {
+  position: sticky;
+  top: calc(var(--header-h) + env(safe-area-inset-top, 0px));
+  z-index: 30;
+  background: var(--header-bg);
+  -webkit-backdrop-filter: saturate(180%) blur(16px);
+  backdrop-filter: saturate(180%) blur(16px);
+  border-bottom: 1px solid var(--header-border);
+}
+
+.ex-top__inner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  max-width: calc(760px + 2 * var(--gutter));
+  min-height: 52px;
+  margin: 0 auto;
+  padding: 6px max(var(--gutter), env(safe-area-inset-right, 0px)) 6px max(var(--gutter), env(safe-area-inset-left, 0px));
+}
+
+.ex-top__back {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  margin-left: -8px;
+  padding: 5px 10px 5px 6px;
+  border-radius: var(--radius-sm);
+  color: var(--text-2);
+  text-decoration: none;
+  transition: color var(--dur-2) var(--ease), background-color var(--dur-2) var(--ease);
+}
+
+.ex-top__back:hover {
+  background: var(--surface-2);
+  color: var(--text);
+  text-decoration: none;
+}
+
+.ex-top__back:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.ex-top__back .ui-icon {
+  flex: none;
+  color: var(--text-3);
+  transition: transform var(--dur-2) var(--ease);
+}
+
+.ex-top__back:hover .ui-icon {
+  transform: translateX(-2px);
+}
+
+.ex-top__titles {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  line-height: 1.25;
+}
+
+.ex-top__mode {
+  color: var(--text);
+  font-family: var(--font-display);
+  font-size: var(--fs-base);
+  font-weight: var(--fw-bold);
+}
+
+.ex-top__set {
+  overflow: hidden;
+  color: var(--text-3);
+  font-size: var(--fs-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ex-top__status {
+  flex: none;
+}
+
+/* The time and the answered questions while the exam runs. */
+.ex-status {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  animation: ex-fade var(--dur-3) var(--ease) both;
+}
+
+.ex-clock {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 34px;
+  padding: 0 12px;
+  border-radius: var(--radius-full);
+  background: var(--surface-2);
+  color: var(--text);
+  font-size: var(--fs-base);
+  font-weight: var(--fw-semibold);
+  font-variant-numeric: tabular-nums;
+  transition: color var(--dur-3) var(--ease), background-color var(--dur-3) var(--ease);
+}
+
+.ex-clock .ui-icon {
+  color: var(--text-3);
+  transition: color var(--dur-3) var(--ease);
+}
+
+/* The last minute. */
+.ex-clock.is-warning {
+  background: var(--warning-soft);
+  color: var(--warning-text);
+}
+
+.ex-clock.is-warning .ui-icon {
+  color: var(--warning-text);
+}
+
+.ex-status__count {
+  min-width: 3.2em;
+  color: var(--text-2);
+  font-size: var(--fs-base);
+  font-weight: var(--fw-medium);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+/* ============================================================ bottom bar */
+
+/* Floats over the page at the bottom of the window (the Mac's glass bar). Only its pieces
+   take clicks; the rest lets them through to the page underneath. */
+.ex-dock {
+  position: sticky;
+  bottom: 0;
+  z-index: 25;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: auto;
+  padding: var(--space-2) max(var(--gutter), env(safe-area-inset-right, 0px)) max(var(--space-4), env(safe-area-inset-bottom, 0px)) max(var(--gutter), env(safe-area-inset-left, 0px));
+  container-type: inline-size;
+  pointer-events: none;
+}
+
+/* Content scrolling under the bar fades out instead of crowding it. */
+.ex-dock::before {
+  content: "";
+  position: absolute;
+  inset: -20px 0 0;
+  z-index: -1;
+  background: linear-gradient(to top, var(--bg) 58%, transparent);
+  pointer-events: none;
+}
+
+.ex-dock__above > *,
+.ex-bar__lead > *,
+.ex-bar__trail > * {
+  pointer-events: auto;
+}
+
+.ex-dock__above {
+  display: flex;
+  justify-content: center;
+  width: 100%;
+  max-width: calc(760px - 2 * var(--space-7));
+}
+
+.ex-dock__above:not(:has(.ex-chars:not([hidden]))) {
+  display: none;
+}
+
+.ex-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  width: 100%;
+  max-width: 760px;
+}
+
+.ex-bar__lead,
+.ex-bar__trail {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.ex-bar__trail {
+  justify-content: flex-end;
+  margin-left: auto;
+}
+
+/* Secondary buttons float over the page like the pill (the focus ring stays: components.css
+   adds it to --btn-shadow). */
+.ex-bar .ui-btn--secondary {
+  --btn-shadow: var(--shadow-2);
+}
+
+/* A quiet pill on the left ("20 Wörter · 10 Minuten", "12 von 20 beantwortet"). */
+.ex-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--control-h);
+  padding: 0 var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full);
+  background: var(--header-bg);
+  -webkit-backdrop-filter: saturate(180%) blur(16px);
+  backdrop-filter: saturate(180%) blur(16px);
+  box-shadow: var(--shadow-1);
+  color: var(--text-2);
+  font-size: var(--fs-sm);
+  white-space: nowrap;
+}
+
+.ex-pill .ui-icon {
+  flex: none;
+  color: var(--text-3);
+}
+
+.ex-pill__count {
+  font-variant-numeric: tabular-nums;
+}
+
+/* The answered share next to «X von N beantwortet». */
+.ex-line {
+  position: relative;
+  flex: none;
+  width: 80px;
+  height: 5px;
+  overflow: hidden;
+  border-radius: var(--radius-full);
+  background: var(--surface-3);
+}
+
+/* Slides in from the left (a transform, no layout per step); the line's rounded clip shapes
+   both ends. */
+.ex-line__fill {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: var(--accent);
+  transform: translateX(-100%);
+  transition: transform var(--dur-3) var(--ease);
+}
+
+/* Shorter labels when the bar is narrow ("Neu", "Lernen", "Prüfen"). */
+.ex-short {
+  display: none;
+}
+
+@container (max-width: 600px) {
+  .ex-long {
+    display: none;
+  }
+
+  .ex-short {
+    display: inline;
+  }
+
+  .ex-bar .ui-btn__kbd {
+    display: none;
+  }
+
+  .ex-pill {
+    padding: 0 var(--space-3);
+  }
+}
+
+@container (max-width: 380px) {
+  .ex-bar__trail {
+    flex: 1 1 100%;
+  }
+
+  .ex-bar__trail .ui-btn {
+    flex: 1 1 auto;
+  }
+}
+
+/* ================================================================= setup */
+
+.ex-setup__head {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+  margin: var(--space-3) 0 var(--space-6);
+  text-align: center;
+}
+
+.ex-setup__badge {
+  display: grid;
+  place-items: center;
+  width: 80px;
+  height: 80px;
+  margin-bottom: var(--space-2);
+  border-radius: 50%;
+  background: var(--accent-gradient);
+  box-shadow: var(--shadow-accent), inset 0 1px 0 var(--highlight);
+  color: var(--accent-contrast);
+  animation: ex-pop 560ms var(--ease-spring) both;
+}
+
+.ex-setup__head .ex-eyebrow {
+  color: var(--accent-text);
+}
+
+.ex-setup__title {
+  margin: 0;
+  color: var(--text);
+  font-family: var(--font-display);
+  font-size: clamp(1.75rem, 1.4rem + 1.2vw, 2.125rem);
+  font-weight: var(--fw-bold);
+  letter-spacing: var(--tracking-display);
+  line-height: var(--lh-tight);
+}
+
+.ex-setup__text {
+  max-width: 46ch;
+  margin: 0;
+  color: var(--text-2);
+  font-size: var(--fs-lg);
+  line-height: var(--lh-snug);
+}
+
+@keyframes ex-pop {
+  from {
+    opacity: 0;
+    transform: scale(0.82);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.ex-setup__card {
+  container-type: inline-size;
+  padding: var(--space-2) var(--space-6);
+  border: 1px solid var(--border);
+  border-radius: 22px;
+  background: var(--surface);
+  box-shadow: var(--shadow-2);
+}
+
+/* One setting: icon, title and caption on the left, the control at its own width on the right. */
+.ex-set {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  padding: var(--space-4) 0;
+}
+
+.ex-set + .ex-set {
+  border-top: 1px solid var(--divider);
+}
+
+.ex-set[hidden] {
+  display: none;
+}
+
+.ex-set__label {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: flex-start;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.ex-set__icon {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: var(--radius-sm);
+  background: var(--accent-soft);
+  color: var(--accent-text);
+}
+
+.ex-set__text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.ex-set__title {
+  color: var(--text);
+  font-family: var(--font-display);
+  font-size: var(--fs-md);
+  font-weight: var(--fw-semibold);
+  line-height: var(--lh-snug);
+}
+
+.ex-set__caption {
+  color: var(--text-3);
+  font-size: var(--fs-sm);
+  line-height: var(--lh-snug);
+}
+
+.ex-set__control {
+  flex: none;
+  max-width: 100%;
+}
+
+.ex-set__control .ui-field {
+  gap: 0;
+}
+
+.ex-set__control .ui-select {
+  min-width: 132px;
+}
+
+/* Narrow card: the control goes under its title, in line with the caption. */
+@container (max-width: 539px) {
+  .ex-set {
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--space-3);
+  }
+
+  .ex-set__control {
+    align-self: flex-start;
+    padding-left: calc(30px + var(--space-3));
+  }
+
+  .ex-set[data-key="starred"] {
+    flex-direction: row;
+    align-items: center;
+  }
+
+  .ex-set[data-key="starred"] .ex-set__control {
+    padding-left: 0;
+  }
+}
+
+.ex-setup__notes {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-top: var(--space-5);
+  padding: 0 var(--space-1);
+}
+
+.ex-note {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  margin: 0;
+  color: var(--text-3);
+  font-size: var(--fs-sm);
+  line-height: var(--lh-snug);
+}
+
+.ex-note .ui-icon {
+  flex: none;
+  margin-top: 1px;
+  color: var(--text-3);
+}
+
+.ex-empty .ui-empty {
+  padding-top: var(--space-8);
+}
+
+.ex-empty__actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--space-2);
+}
+
+/* ================================================================= sheet */
+
+.ex-intro {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2) var(--space-4);
+  margin: var(--space-1) var(--space-1) var(--space-3);
+}
+
+.ex-intro__text {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0;
+  color: var(--text-2);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+}
+
+.ex-intro__text .ui-icon {
+  color: var(--text-3);
+}
+
+.ex-intro__keys {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  color: var(--text-3);
+  font-size: var(--fs-xs);
+}
+
+.ex-intro__keys .ui-kbd + span:not(:last-child) {
+  margin-right: var(--space-2);
+}
+
+/* All questions on one panel. */
+.ex-sheet {
+  container-type: inline-size;
+  margin: 0;
+  padding: 0;
+  overflow: clip;
+  list-style: none;
+  border: 1px solid var(--border);
+  border-radius: 22px;
+  background: var(--surface);
+  box-shadow: var(--shadow-2);
+}
+
+.ex-q {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-4);
+  padding: var(--space-4) var(--space-5);
+  transition: background-color 150ms var(--ease);
+}
+
+/* A divider that starts where the text starts. */
+.ex-q + .ex-q::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: calc(var(--space-5) + 34px + var(--space-4));
+  height: 1px;
+  background: var(--divider);
+  transition: opacity 150ms var(--ease);
+}
+
+/* The focused question's band. */
+.ex-q:focus-within {
+  background: color-mix(in srgb, var(--accent-soft) 55%, transparent);
+}
+
+.ex-q:focus-within::before,
+.ex-q:focus-within + .ex-q::before {
+  opacity: 0;
+}
+
+/* The number, filled once the question is answered. */
+.ex-q__num {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  margin-top: 2px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--accent-soft) 65%, transparent);
+  color: var(--text-2);
+  font-family: var(--font-display);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-bold);
+  font-variant-numeric: tabular-nums;
+  transition: background-color var(--dur-2) var(--ease), color var(--dur-2) var(--ease);
+}
+
+.ex-q:focus-within .ex-q__num {
+  background: var(--accent-soft);
+  color: var(--accent-text);
+}
+
+.ex-q__num.is-answered,
+.ex-q:focus-within .ex-q__num.is-answered {
+  background: var(--accent-gradient);
+  color: var(--accent-contrast);
+}
+
+.ex-q__body {
+  display: grid;
+  flex: 1 1 auto;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.ex-q__ask {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  padding-top: 2px;
+}
+
+.ex-q__prompt {
+  margin: 0;
+  color: var(--text);
+  font-family: var(--font-display);
+  font-size: 1.25rem;
+  font-weight: var(--fw-semibold);
+  line-height: var(--lh-snug);
+  overflow-wrap: anywhere;
+}
+
+.ex-q__input {
+  width: 100%;
+  height: 46px;
+  padding: 0 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 1.0625rem;
+  font-weight: var(--fw-medium);
+  transition: border-color var(--dur-2) var(--ease), box-shadow var(--dur-2) var(--ease);
+}
+
+.ex-q__input::placeholder {
+  color: var(--text-3);
+  font-weight: var(--fw-regular);
+  opacity: 1;
+}
+
+.ex-q__input:hover:not(:focus) {
+  border-color: var(--border-hover);
+}
+
+/* The accent border carries the contrast; the halo only softens it. */
+.ex-q__input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent), var(--ring);
+}
+
+/* Wide sheets: the answer field beside the prompt. */
+@container (min-width: 640px) {
+  .ex-q__body {
+    grid-template-columns: minmax(0, 1fr) 290px;
+    align-items: start;
+    gap: var(--space-5);
+  }
+}
+
+/* Special characters of the focused answer's language, floating above the bar. */
+.ex-chars {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 6px;
+  padding: var(--space-2);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: var(--header-bg);
+  -webkit-backdrop-filter: saturate(180%) blur(16px);
+  backdrop-filter: saturate(180%) blur(16px);
+  box-shadow: var(--shadow-2);
+}
+
+.ex-chars[hidden] {
+  display: none;
+}
+
+.ex-chars.is-arriving {
+  animation: ex-chars-in var(--dur-3) var(--ease) both;
+}
+
+@keyframes ex-chars-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.ex-char {
+  min-width: 36px;
+  height: 36px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+  font-size: var(--fs-md);
+  font-weight: var(--fw-medium);
+  line-height: 1;
+  transition: background-color var(--dur-1) var(--ease), border-color var(--dur-1) var(--ease), transform var(--dur-1) var(--ease);
+}
+
+.ex-char:hover {
+  background: var(--surface-2);
+  border-color: var(--border-strong);
+}
+
+.ex-char:active {
+  transform: scale(0.92);
+  background: var(--accent-soft);
+  border-color: var(--accent-soft-border);
+  color: var(--accent-text);
+}
+
+/* =============================================================== results */
+
+.ex-res__hero {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+  margin: var(--space-4) 0 var(--space-7);
+  text-align: center;
+}
+
+/* Holds the confetti (write.css .wr-confetti bursts from its centre). */
+.ex-grade-wrap {
+  position: relative;
+  margin-bottom: var(--space-3);
+}
+
+.ex-grade {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: 132px;
+  height: 132px;
+  border-radius: 50%;
+  color: var(--accent-contrast);
+  animation: ex-grade-in 600ms var(--ease-spring) 100ms both;
+}
+
+.ex-grade--success {
+  background: var(--success-fill);
+  box-shadow: 0 12px 28px -12px var(--success), inset 0 1px 0 var(--highlight);
+}
+
+.ex-grade--accent {
+  background: var(--accent-gradient);
+  box-shadow: var(--shadow-accent), inset 0 1px 0 var(--highlight);
+}
+
+.ex-grade--warning {
+  background: var(--warning-fill);
+  box-shadow: 0 12px 28px -12px var(--warning), inset 0 1px 0 var(--highlight);
+}
+
+.ex-grade__label {
+  font-family: var(--font-display);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-semibold);
+  opacity: 0.92;
+}
+
+.ex-grade__value {
+  font-family: var(--font-display);
+  font-size: 3.125rem;
+  font-weight: var(--fw-bold);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+  line-height: 1;
+}
+
+@keyframes ex-grade-in {
+  from {
+    opacity: 0;
+    transform: scale(0.86);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.ex-res__title {
+  margin: 0;
+  color: var(--text);
+  font-family: var(--font-display);
+  font-size: clamp(1.75rem, 1.4rem + 1.2vw, 2.125rem);
+  font-weight: var(--fw-bold);
+  letter-spacing: var(--tracking-display);
+  line-height: var(--lh-tight);
+}
+
+/* Focus rests here after the time ran out; it is no control. */
+.ex-res__title:focus {
+  outline: none;
+}
+
+.ex-res__text {
+  margin: 0;
+  color: var(--text-2);
+  font-size: var(--fs-lg);
+  font-variant-numeric: tabular-nums;
+}
+
+.ex-res__timeout {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: var(--space-1) 0 0;
+  color: var(--warning-text);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+}
+
+/* Richtig · Kleine Fehler · Falsch · Ohne Antwort */
+.ex-tiles {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-3);
+  margin-bottom: var(--space-8);
+}
+
+.ex-tiles--four {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.ex-tile {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  padding: var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  background: var(--surface);
+  box-shadow: var(--shadow-1);
+  animation: ex-enter var(--dur-4) var(--ease) both;
+}
+
+.ex-tile:nth-child(2) {
+  animation-delay: 60ms;
+}
+
+.ex-tile:nth-child(3) {
+  animation-delay: 120ms;
+}
+
+.ex-tile:nth-child(4) {
+  animation-delay: 180ms;
+}
+
+.ex-tile__icon {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  margin-bottom: var(--space-2);
+  border-radius: 10px;
+}
+
+.ex-tile--success .ex-tile__icon {
+  background: var(--success-soft);
+  color: var(--success-text);
+}
+
+.ex-tile--info .ex-tile__icon {
+  background: var(--info-soft);
+  color: var(--info);
+}
+
+.ex-tile--danger .ex-tile__icon {
+  background: var(--danger-soft);
+  color: var(--danger-text);
+}
+
+.ex-tile--muted .ex-tile__icon {
+  background: var(--surface-2);
+  color: var(--text-3);
+}
+
+.ex-tile__value {
+  color: var(--text);
+  font-family: var(--font-display);
+  font-size: 1.5rem;
+  font-weight: var(--fw-bold);
+  font-variant-numeric: tabular-nums;
+  line-height: 1.15;
+}
+
+.ex-tile__label {
+  color: var(--text-2);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+}
+
+.ex-tile__caption {
+  color: var(--text-3);
+  font-size: var(--fs-xs);
+}
+
+/* «Deine Antworten» */
+.ex-answers__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-1) var(--space-4);
+  margin: 0 var(--space-1) var(--space-3);
+}
+
+.ex-answers__title {
+  margin: 0;
+  color: var(--text);
+  font-family: var(--font-display);
+  font-size: var(--fs-xl);
+  font-weight: var(--fw-semibold);
+}
+
+.ex-answers__rule {
+  margin: 0;
+  border-radius: var(--radius-xs);
+  color: var(--text-3);
+  font-size: var(--fs-sm);
+  cursor: help;
+}
+
+.ex-answers__rule:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.ex-answers__list {
+  margin: 0;
+  padding: 0;
+  overflow: clip;
+  list-style: none;
+  border: 1px solid var(--border);
+  border-radius: 22px;
+  background: var(--surface);
+  box-shadow: var(--shadow-1);
+}
+
+.ex-item {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-4);
+  padding: var(--space-3) var(--space-5);
+}
+
+.ex-item + .ex-item::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: calc(var(--space-5) + 28px + var(--space-4));
+  height: 1px;
+  background: var(--divider);
+}
+
+/* ✓ ½ ✗ – */
+.ex-mark {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  margin-top: 1px;
+  border-radius: 50%;
+  font-family: var(--font-display);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-bold);
+}
+
+.ex-mark--correct {
+  background: var(--success-soft);
+  color: var(--success-text);
+}
+
+.ex-mark--half {
+  background: var(--info-soft);
+  color: color-mix(in srgb, var(--info) 72%, var(--text));
+}
+
+.ex-mark--wrong {
+  background: var(--danger-soft);
+  color: var(--danger-text);
+}
+
+.ex-mark--blank {
+  background: var(--surface-2);
+  color: var(--text-3);
+}
+
+.ex-item__body {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  min-width: 0;
+}
+
+.ex-item__ask {
+  margin: 0;
+  color: var(--text-2);
+  font-size: var(--fs-sm);
+  overflow-wrap: anywhere;
+}
+
+.ex-item__num {
+  color: var(--text-3);
+  font-weight: var(--fw-semibold);
+  font-variant-numeric: tabular-nums;
+}
+
+.ex-answer {
+  margin: 0;
+  color: var(--text);
+  font-family: var(--font-display);
+  font-size: 1.0625rem;
+  font-weight: var(--fw-medium);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.ex-answer--right {
+  color: var(--success-text);
+}
+
+.ex-answer--wrong {
+  color: var(--danger-text);
+}
+
+.ex-answer--none {
+  color: var(--text-3);
+}
+
+.ex-diff {
+  padding: 1px;
+  border-radius: 4px;
+  text-decoration-thickness: 2px;
+  text-decoration-skip-ink: none;
+}
+
+.ex-diff--del {
+  background: var(--danger-soft);
+  color: var(--danger-text);
+  text-decoration-line: line-through;
+  text-decoration-color: var(--danger);
+}
+
+.ex-diff--add {
+  background: var(--success-soft);
+  color: var(--success-text);
+  text-decoration-line: underline;
+  text-decoration-color: var(--success);
+  text-underline-offset: 4px;
+}
+
+.ex-expected {
+  margin: 0;
+  color: var(--text-2);
+  font-size: var(--fs-sm);
+  overflow-wrap: anywhere;
+}
+
+.ex-expected__text {
+  color: var(--success-text);
+  font-weight: var(--fw-semibold);
+}
+
+.ex-item__note {
+  max-width: 100%;
+  margin-top: 2px;
+}
+
+.ex-item__note .ui-chip {
+  max-width: 100%;
+  height: auto;
+  min-height: 22px;
+  padding-block: 3px;
+  line-height: 1.25;
+  text-align: left;
+  white-space: normal;
+}
+
+.ex-chip--info {
+  background: var(--info-soft);
+  color: color-mix(in srgb, var(--info) 72%, var(--text));
+}
+
+.ex-item__points {
+  flex: none;
+  min-width: 28px;
+  padding-top: 3px;
+  color: var(--text-3);
+  font-family: var(--font-display);
+  font-size: var(--fs-base);
+  font-weight: var(--fw-semibold);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.ex-item__points.is-scored {
+  color: var(--text);
+}
+
+/* ============================================================ narrow windows */
+
+@media (max-width: 640px) {
+  .ex-tiles,
+  .ex-tiles--four {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .ex-q {
+    gap: var(--space-3);
+    padding: var(--space-3) var(--space-4);
+  }
+
+  .ex-q + .ex-q::before {
+    left: calc(var(--space-4) + 34px + var(--space-3));
+  }
+
+  .ex-item {
+    gap: var(--space-3);
+    padding: var(--space-3) var(--space-4);
+  }
+
+  .ex-item + .ex-item::before {
+    left: calc(var(--space-4) + 28px + var(--space-3));
+  }
+
+  .ex-setup__card {
+    padding: var(--space-1) var(--space-4);
+  }
+}
+
+@media (max-width: 420px) {
+  .ex-intro__keys {
+    display: none;
+  }
+
+  .ex-clock {
+    padding: 0 10px;
+  }
+}
+
+/* Touch screens have no Return or Strg keys to hint at. */
+@media (pointer: coarse) {
+  .ex-intro__keys,
+  .ex-bar .ui-btn__kbd {
+    display: none;
+  }
+}
+
+/* ========================================================= reduced motion */
+
+@media (prefers-reduced-motion: reduce) {
+  .ex-enter,
+  .ex-tile,
+  .ex-grade,
+  .ex-setup__badge,
+  .ex-status,
+  .ex-chars.is-arriving {
+    animation: none;
+  }
+}

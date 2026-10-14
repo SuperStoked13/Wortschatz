@@ -1,0 +1,7 @@
+le livre;das Buch
+le cahier;das Heft
+le stylo;der Kugelschreiber
+la gomme;der Radiergummi
+la règle;das Lineal
+"le taille-crayon";der Spitzer
+le sac à dos ; der Rucksack
