@@ -59,7 +59,7 @@
         <span class="btn btn-glass btn-large is-unavailable" data-platform="windows">Windows-Version folgt</span>
         {{/windows.available}}
       </div>
-      <p class="hero-note" data-hero-note>{{#version}}Version {{version}}, kostenlos und ohne Konto.{{/version}}{{^version}}Kostenlos und ohne Konto.{{/version}}</p>
+      <p class="hero-note" data-hero-note>{{#version}}Version {{version}}, kostenlos und ohne Konto.{{/version}}{{^version}}Kostenlos und ohne Konto.{{/version}}{{#updates.latest}} <a href="/neuigkeiten">Was ist neu?</a>{{/updates.latest}}</p>
       <p class="hero-note hero-note-mobile" data-mobile-note hidden>Wortschatz gibt es für Mac und Windows. Öffne diese Seite am Computer, um die App zu laden.</p>
     </section>
 
@@ -184,7 +184,7 @@
             <div class="deck" data-el="deck">
               <div class="deck-edge deck-edge-2"></div>
               <div class="deck-edge deck-edge-1"></div>
-              <div class="flashcard" data-el="card">
+              <div class="flashcard" data-el="card" data-side="front">
                 <div class="flashcard-turn" data-el="turn">
                   <div class="face face-front">
                     <span class="face-wash"></span>
@@ -410,20 +410,27 @@
           <div class="help-body">
             <ol>
               <li>Öffne die geladene Datei und ziehe Wortschatz in den Ordner «Programme».</li>
-              <li>Starte Wortschatz. Beim ersten Mal meldet macOS, dass die App nicht überprüft werden konnte. Klicke auf «Fertig».</li>
-              <li>Öffne «Systemeinstellungen», dann «Datenschutz &amp; Sicherheit». Scrolle nach unten und klicke bei Wortschatz auf «Dennoch öffnen».</li>
+              <li>Starte Wortschatz. macOS meldet, Apple könne nicht überprüfen, ob Wortschatz frei von Schadsoftware ist. Klicke auf «Fertig», nicht auf «In den Papierkorb legen».</li>
+              <li>Öffne <a href="x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension">Datenschutz &amp; Sicherheit</a> in den Systemeinstellungen und scrolle nach unten zu «Sicherheit». Bei «„Wortschatz“ wurde blockiert, um deinen Mac zu schützen» klickst du auf «Dennoch öffnen», im nächsten Fenster noch einmal, und bestätigst mit deinem Passwort oder Touch ID.</li>
             </ol>
-            <p>Das ist nur beim ersten Start nötig. Wortschatz ist nicht bei Apple notarisiert, weil das ein kostenpflichtiges Entwicklerkonto voraussetzt. Die App läuft in der Sandbox von macOS und braucht keinen Internetzugang.</p>
+            <p>Das ist nur beim ersten Start nötig. Der Knopf «Dennoch öffnen» erscheint erst nach dem Startversuch und bleibt etwa eine Stunde lang da. Wortschatz ist nicht bei Apple notarisiert, weil das ein kostenpflichtiges Entwicklerkonto voraussetzt. Die App läuft in der Sandbox von macOS und braucht keinen Internetzugang.</p>
+            <p>Schneller geht es im Terminal: Statt Schritt 2 und 3 diesen Befehl einfügen und mit Enter bestätigen. Er gibt Wortschatz frei und startet die App.</p>
+            <div class="checksum">
+              <span class="checksum-label">Mac, im Terminal</span>
+              <code class="checksum-value" data-checksum>xattr -dr com.apple.quarantine /Applications/Wortschatz.app &amp;&amp; open /Applications/Wortschatz.app</code>
+              <button type="button" class="copy-btn" data-copy="xattr -dr com.apple.quarantine /Applications/Wortschatz.app &amp;&amp; open /Applications/Wortschatz.app" aria-label="Terminal-Befehl kopieren"><svg class="i" aria-hidden="true"><use href="#i-copy"/></svg><span data-copy-label>Kopieren</span></button>
+            </div>
           </div>
         </details>
         <details class="help-item" id="hilfe-windows">
           <summary>Erster Start unter Windows<svg class="i" aria-hidden="true"><use href="#i-chevron-down"/></svg></summary>
           <div class="help-body">
             <ol>
+              <li>Meldet der Browser schon beim Herunterladen, die Datei werde selten geladen, wähle «Beibehalten».</li>
               <li>Lege die geladene Datei an einen festen Ort, zum Beispiel auf den Schreibtisch, und doppelklicke darauf.</li>
               <li>Erscheint «Der Computer wurde durch Windows geschützt», klicke auf «Weitere Informationen» und dann auf «Trotzdem ausführen».</li>
-              <li>Meldet der Browser schon beim Herunterladen, die Datei werde selten geladen, wähle «Beibehalten».</li>
             </ol>
+            <p>Blockiert die intelligente App-Steuerung (Smart App Control) von Windows 11 die App, gibt es dafür keine Ausnahme: Wortschatz startet erst, wenn sie unter «Windows-Sicherheit», «App- und Browsersteuerung» ausgeschaltet ist. Sie schützt vor unbekannten Programmen; ob du sie ausschaltest, entscheidest du.</p>
             <p>Die Warnungen erscheinen, weil Wortschatz nicht mit einem kostenpflichtigen Zertifikat signiert ist. Wortschatz braucht WebView2 von Microsoft, das zu Windows 11 und fast jedem Windows 10 gehört; fehlt es, bietet die App den Download an. Deine Lernsets liegen im Ordner %LOCALAPPDATA%\Wortschatz und bleiben erhalten, wenn du die Datei durch eine neuere ersetzt.</p>
           </div>
         </details>

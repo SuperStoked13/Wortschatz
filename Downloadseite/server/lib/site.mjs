@@ -1,6 +1,7 @@
 // Loads the public folder once (and again on reload): static files are kept in memory,
 // pre-compressed (brotli, gzip) and versioned by content hash; the HTML templates are
-// compiled and rendered with the release data.
+// compiled and rendered with the release data. Markdown files (the update list) are read
+// as text for the server and never served.
 
 import crypto from 'node:crypto';
 import fsp from 'node:fs/promises';
@@ -65,6 +66,7 @@ async function walk(dir, base = dir, out = []) {
  *   statics: Map<string, object>,
  *   renderPage: (name: string, context: object) => object,
  *   renderHtml: (name: string, context: object) => string,
+ *   text: (name: string) => string,
  * }}
  */
 export async function loadSite(publicDir) {
@@ -72,6 +74,7 @@ export async function loadSite(publicDir) {
   const statics = new Map();
   const templates = new Map();
   const partials = new Map();
+  const texts = new Map();
   const styles = [];
   let total = 0;
 
@@ -87,6 +90,10 @@ export async function loadSite(publicDir) {
       const source = await fsp.readFile(full, 'utf8');
       if (rel.startsWith('_partials/')) partials.set(path.basename(rel, '.html'), compile(source, rel));
       else templates.set(rel.replace(/\.html$/, ''), compile(source, rel));
+      continue;
+    }
+    if (extension === '.md') {
+      texts.set(rel, await fsp.readFile(full, 'utf8'));
       continue;
     }
     const type = TYPES[extension];
@@ -123,6 +130,7 @@ export async function loadSite(publicDir) {
   return {
     statics,
     has: (name) => templates.has(name),
+    text: (name) => texts.get(name) ?? '',
     renderHtml,
     renderPage(name, context) {
       return makeEntry(Buffer.from(renderHtml(name, context), 'utf8'), 'text/html; charset=utf-8', {

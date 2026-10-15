@@ -23,7 +23,6 @@ import { icon } from '../ui/icons.js';
 import { LANGS, STATUS, plural, langName } from '../lib/labels.js';
 import { canSpeak, speak, stopSpeaking } from '../lib/speech.js';
 import { relativeTime } from '../lib/time.js';
-import { isDesktopApp } from '../lib/host.js';
 import { isTypingTarget } from '../lib/shortcuts.js';
 import { db } from '../store/db.js';
 import { downloadText, setToText } from '../store/backup.js';
@@ -459,7 +458,7 @@ function openExport(set) {
             return false;
           }
           // The Windows app saves without asking: say where the file went.
-          if (isDesktopApp()) toast(`«${shortTitle(set.title)}» als Textdatei im Ordner «Downloads» gespeichert`, { tone: 'success' });
+          toast(`«${shortTitle(set.title)}» als Textdatei im Ordner «Downloads» gespeichert`, { tone: 'success' });
           return true;
         },
       },

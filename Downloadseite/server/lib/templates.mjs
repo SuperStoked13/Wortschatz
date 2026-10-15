@@ -1,7 +1,8 @@
 // A tiny template language for the HTML pages (escaped by default):
 //   {{name}} {{a.b}}          value, HTML-escaped
 //   {{#name}}…{{/name}}       block if the value is truthy
-//   {{^name}}…{{/name}}       block if the value is falsy
+//   {{^name}}…{{/name}}       block if the value is falsy (an empty list counts as falsy)
+//   {{#list}}…{{/list}}       block once per object in the list: its fields first, then the outer values
 //   {{> partial}}             another template from public/_partials
 //   {{@asset /assets/x.css}}  the asset's URL with its content hash (?v=…)
 
@@ -58,6 +59,12 @@ function lookup(context, key) {
   return value;
 }
 
+/** The context inside a list block: the item's own fields, and everything else from outside. */
+function scope(context, item) {
+  if (item === null || typeof item !== 'object') return context;
+  return Object.create(context ?? null, Object.getOwnPropertyDescriptors(item));
+}
+
 /**
  * @param {Array} nodes compiled template
  * @param {object} context values
@@ -76,6 +83,10 @@ export function render(nodes, context, env, depth = 0) {
         break;
       case 'section': {
         const value = lookup(context, node.key);
+        if (Array.isArray(value) && !node.inverted) {
+          for (const item of value) out += render(node.children, scope(context, item), env, depth);
+          break;
+        }
         const truthy = Array.isArray(value) ? value.length > 0 : Boolean(value);
         if (truthy !== node.inverted) out += render(node.children, context, env, depth);
         break;

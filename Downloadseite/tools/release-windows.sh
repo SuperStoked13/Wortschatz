@@ -75,6 +75,9 @@ mv -f "$OUT/windows.json.tmp" "$OUT/windows.json"
 # Ältere Windows-Versionen erst jetzt entfernen, wenn das Manifest schon auf die neue zeigt.
 find "$OUT" -maxdepth 1 \( -name 'Wortschatz-*-Windows.exe' -o -name 'Wortschatz-*-Windows.zip' \) ! -name "$NAME" -print -delete
 
+# Neuigkeiten: was unter «Nächste Version» steht, gehört jetzt zu dieser Version.
+python3 -I "$SITE/tools/neuigkeiten.py" "$VERSION" windows || echo "Neuigkeiten nicht eingetragen: Downloadseite/public/_neuigkeiten.md von Hand nachführen."
+
 SIZE=$(du -h "$OUT/$NAME" | cut -f1)
 echo
 echo "Fertig: releases/$NAME ($SIZE)"

@@ -1,13 +1,13 @@
 // The Windows app (windows/host) shows this web app in WebView2 and announces itself
 // before any page script runs: window.wortschatzHost = { platform: 'windows', setTheme, setUnsaved }.
-// In a normal browser (Start.command) there is no host. Safe to import anywhere. Also the
-// app-window behaviour the host cannot do itself (context menu, links in new windows).
+// Without a host (the unit tests under jsc) the glue does nothing. Safe to import anywhere. Also
+// the app-window behaviour the host cannot do itself (context menu, links in new windows).
 
 function host() {
   return typeof window !== 'undefined' && window.wortschatzHost ? window.wortschatzHost : null;
 }
 
-// True inside the Windows app: copy says "auf diesem Computer" instead of "in diesem Browser".
+// True inside the Windows app (the window glue below only acts there).
 export function isDesktopApp() {
   const h = host();
   return !!h && h.platform === 'windows';

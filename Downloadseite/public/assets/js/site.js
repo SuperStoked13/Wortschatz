@@ -184,6 +184,8 @@
         text: `${data.file}, ${formatSize(data.size)}`,
         action: { label: 'So geht es weiter', href: `#hilfe-${name}` },
       });
+      // Straight to the first-start steps, which are needed before the app opens.
+      openHelp(`hilfe-${name}`);
     } finally {
       delete form.dataset.busy;
       button?.classList.remove('is-busy');
@@ -276,7 +278,8 @@
     const details = document.getElementById(id);
     if (!(details instanceof HTMLDetailsElement)) return;
     details.open = true;
-    details.scrollIntoView({ behavior: still.matches ? 'auto' : 'smooth', block: 'center' });
+    // 'start' keeps the heading in view below the nav (scroll-padding-top), even when the steps are taller than the window.
+    details.scrollIntoView({ behavior: still.matches ? 'auto' : 'smooth', block: 'start' });
     details.querySelector('summary')?.focus({ preventScroll: true });
   }
 

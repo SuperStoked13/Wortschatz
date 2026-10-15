@@ -88,6 +88,11 @@ export function loadConfig(env = process.env) {
     throw new Error('DOWNLOAD_SECRET muss mindestens 32 Zeichen lang sein (oder leer bleiben).');
   }
 
+  const password = raw(env, 'SITE_PASSWORD');
+  if (password && password.length < 8) {
+    throw new Error('SITE_PASSWORD muss mindestens 8 Zeichen lang sein (oder leer bleiben).');
+  }
+
   const duckdnsDomain = raw(env, 'DUCKDNS_DOMAIN').toLowerCase().replace(/\.duckdns\.org$/, '');
   const duckdnsToken = raw(env, 'DUCKDNS_TOKEN');
 
@@ -102,6 +107,7 @@ export function loadConfig(env = process.env) {
     releasesDir: readDir(env, 'RELEASES_DIR', path.join(WEBSITE_ROOT, 'releases')),
     dataDir: readDir(env, 'DATA_DIR', path.join(WEBSITE_ROOT, 'data')),
     secret,
+    password,
     operator: raw(env, 'OPERATOR_NAME').slice(0, 120),
     contactEmail: readEmail(env, 'CONTACT_EMAIL'),
     accessLog: readBool(env, 'ACCESS_LOG', true),

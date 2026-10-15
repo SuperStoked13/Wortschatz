@@ -1,7 +1,8 @@
   <footer class="site-footer">
     <div class="footer-inner">
-      <p class="footer-note">Wortschatz braucht kein Konto und keine Cloud. Deine Lernsets bleiben auf deinem Computer, und diese Website setzt weder Cookies noch Tracking ein.</p>
+      <p class="footer-note">Wortschatz braucht kein Konto und keine Cloud. Deine Lernsets bleiben auf deinem Computer, und diese Website setzt {{#site.login}}nur ein Cookie für die Anmeldung und kein Tracking ein.{{/site.login}}{{^site.login}}weder Cookies noch Tracking ein.{{/site.login}}</p>
       <nav class="footer-links" aria-label="Weitere Seiten">
+        <a href="/neuigkeiten">Neuigkeiten</a>
         <a href="/datenschutz">Datenschutz</a>
         <a href="/checksums.txt">Prüfsummen</a>
         {{#site.contactEmail}}<a href="{{site.mailto}}">Kontakt</a>{{/site.contactEmail}}

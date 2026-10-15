@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="de-CH">
+<head>
+{{> head}}
+  <title>Anmelden: Wortschatz</title>
+  <meta name="robots" content="noindex">
+</head>
+<body class="page page-login">
+  <main id="inhalt" class="error-page login-page">
+    <img class="error-icon" src="{{@asset /assets/img/icon-128.png}}" srcset="{{@asset /assets/img/icon-128.png}} 1x, {{@asset /assets/img/icon-256.png}} 2x" alt="" width="96" height="96">
+    <h1>Wortschatz</h1>
+    <p class="error-message">Diese Seite ist passwortgeschützt.</p>
+    <form class="login-form" method="post" action="/login">
+      <input type="hidden" name="weiter" value="{{login.next}}">
+      <label class="login-label" for="passwort">Passwort</label>
+      <input class="login-input" id="passwort" name="passwort" type="password" autocomplete="current-password" required autofocus>
+      {{#login.error}}<p class="login-error" role="alert">{{login.error}}</p>{{/login.error}}
+      <button class="btn btn-primary login-button" type="submit">Anmelden</button>
+    </form>
+  </main>
+{{> footer}}
+</body>
+</html>

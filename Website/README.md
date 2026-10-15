@@ -6,7 +6,7 @@ A Quizlet-style vocabulary trainer: you study a set with **Lernen** (multiple ch
 
 The project folder holds three parts:
 
-- `Website/` — the web app (this folder): plain HTML, CSS and JavaScript modules. The Windows app shows exactly this app.
+- `Website/` — the interface of the Windows app (this folder): plain HTML, CSS and JavaScript modules. It is not a website and does not run on its own; `windows/build.sh` embeds it in the exe.
 - `mac/` — the native Mac app (SwiftUI). `mac/scripts/build.sh` builds it into `mac/build/Wortschatz.app`.
 - `windows/` — the Windows app: a small host program (`windows/host`, Go) that shows the web app in Microsoft's WebView2. `windows/build.sh` builds it into **`windows/dist/Wortschatz.exe`**.
 
@@ -19,11 +19,7 @@ The project folder holds three parts:
 - If WebView2 is missing or too old, Wortschatz says so and offers to open Microsoft's download page.
 - Read-aloud uses the voices installed in Windows. If a language has no voice (often French on a German Windows), Wortschatz tells you; add one in the Windows settings under **Zeit und Sprache**.
 
-**Mac:** use the Mac app (`mac/build/Wortschatz.app`). The web app also runs in a browser on the Mac (the browser version): double-click **`Start.command`** in this folder. A Terminal window opens, and the app opens in your browser at <http://localhost:4173>. Keep the Terminal window open while you practise and close it when you're done.
-
-> The first time, macOS may say the file is from an unidentified developer. Right-click `Start.command` → **Öffnen** → **Öffnen**.
->
-> The browser version stores your sets **in that browser** under that address. Always use the same address (`http://localhost:4173`): a different browser or a different port starts empty.
+**Mac:** use the Mac app (`mac/build/Wortschatz.app`).
 
 ### Moving your sets between computers
 
@@ -33,7 +29,7 @@ Each app keeps its own data. To move your sets, progress and statistics from one
 2. Copy the file to the Windows computer (USB stick, cloud folder, e-mail).
 3. In the Windows app: **Einstellungen → Backup importieren** (or drag the file onto the backup panel). If the app already has sets, choose **Zusammenführen** to keep them, or **Alles ersetzen**.
 
-It works the same way in the other direction and with the browser version: all three use the same backup format. In the Windows app, exported files (backups, text exports) go to your **Downloads** folder.
+It works the same way in the other direction: both apps use the same backup format. In the Windows app, exported files (backups, text exports) go to your **Downloads** folder.
 
 ## Features
 
@@ -73,10 +69,9 @@ It works the same way in the other direction and with the browser version: all t
 
 ## Development
 
-There is no build step for the web app and nothing to install: plain HTML, CSS and JavaScript modules.
+The interface itself needs no build step and nothing to install: plain HTML, CSS and JavaScript modules.
 
 - `tests/run.sh`: runs all unit tests with macOS's built-in JavaScriptCore (no Node needed). `tests/run.sh grading` runs only the files whose name contains "grading".
 - `windows/build.sh` (in the project folder, next to `Website/`): builds `windows/dist/Wortschatz.exe` on the Mac. It downloads its own Go compiler into `~/Library/Caches/Wortschatz/windows-toolchain` the first time and embeds the web app (`index.html`, `src/`, `styles/`, `assets/`) in the exe, so rebuild it after changing the web app.
-- `serve.py`: a tiny static server (no caching), used by `Start.command`.
 - Design spec: `docs/superpowers/specs/2026-10-11-wortschatz-design.md`. Implementation plans: `docs/superpowers/plans/`.
-- PDF reading (pdf.js) and photo OCR (tesseract.js) are downloaded on first use, so those two imports need an internet connection, in the browser and in the Windows app. Everything else works offline.
+- PDF reading (pdf.js) and photo OCR (tesseract.js) are downloaded on first use, so those two imports need an internet connection. Everything else works offline.

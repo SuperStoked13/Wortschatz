@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="de-CH">
+<head>
+{{> head}}
+  <title>Neuigkeiten: Wortschatz</title>
+  <meta name="description" content="Was in den neuen Versionen von Wortschatz für Mac und Windows dazugekommen ist.">
+  <link rel="canonical" href="{{site.origin}}/neuigkeiten">
+</head>
+<body class="page">
+{{> sprite}}
+{{> nav}}
+  <main id="inhalt" class="prose updates">
+    <h1>Neuigkeiten</h1>
+    <p class="prose-lead">Was in Wortschatz für Mac und Windows dazugekommen ist. Eine neue Version lädst du <a href="/#download">auf der Startseite</a> und ersetzt damit die alte App. Deine Lernsets bleiben erhalten.</p>
+
+    {{#updates.upcoming}}
+    <section class="release release-upcoming" aria-labelledby="demnaechst">
+      <div class="release-head">
+        <h2 id="demnaechst">Demnächst</h2>
+        <p class="release-date">Kommt mit der nächsten Version</p>
+      </div>
+      <ul class="changes">
+        {{#updates.upcoming.changes}}
+        <li class="change">{{#kindLabel}}<span class="change-kind change-kind-{{kind}}">{{kindLabel}}</span>{{/kindLabel}}<span class="change-text">{{text}}{{#platformLabel}} <span class="change-platform">nur {{platformLabel}}</span>{{/platformLabel}}</span></li>
+        {{/updates.upcoming.changes}}
+      </ul>
+    </section>
+    {{/updates.upcoming}}
+
+    {{#updates.versions}}
+    <section class="release panel" id="{{anchor}}" aria-labelledby="{{anchor}}-titel">
+      <div class="release-head">
+        <h2 id="{{anchor}}-titel">Version {{version}}</h2>
+        {{#dateLabel}}<p class="release-date"><time datetime="{{date}}">{{dateLabel}}</time></p>{{/dateLabel}}
+      </div>
+      {{#note}}<p class="release-note">{{note}}</p>{{/note}}
+      {{#hasChanges}}
+      <ul class="changes">
+        {{#changes}}
+        <li class="change">{{#kindLabel}}<span class="change-kind change-kind-{{kind}}">{{kindLabel}}</span>{{/kindLabel}}<span class="change-text">{{text}}{{#platformLabel}} <span class="change-platform">nur {{platformLabel}}</span>{{/platformLabel}}</span></li>
+        {{/changes}}
+      </ul>
+      {{/hasChanges}}
+    </section>
+    {{/updates.versions}}
+
+    {{^updates.any}}
+    <p class="updates-empty">Hier steht, was neue Versionen von Wortschatz bringen: neue Funktionen, Verbesserungen und behobene Fehler. Bisher gibt es nur die erste Version.</p>
+    {{/updates.any}}
+  </main>
+{{> footer}}
+</body>
+</html>

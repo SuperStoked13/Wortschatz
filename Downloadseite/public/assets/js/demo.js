@@ -500,6 +500,8 @@
   function cardsScene(scene) {
     const card = el(scene, 'card');
     const turn = el(scene, 'turn');
+    const faceFront = turn.querySelector('.face-front');
+    const faceBack = turn.querySelector('.face-back');
     const front = el(scene, 'front');
     const back = el(scene, 'back');
     const sheen = el(scene, 'sheen');
@@ -517,20 +519,24 @@
     }
 
     function clearCard() {
-      cancelAnimations(card, turn, sheen);
+      cancelAnimations(card, turn, sheen, faceFront, faceBack);
       delete card.dataset.verdict;
       flipped = false;
+      card.dataset.side = 'front';
       turn.style.transform = '';
     }
 
     async function flip(ctx) {
       ctx.key('␣');
       const from = flipped ? 180 : 0;
+      const [leaving, arriving] = flipped ? [faceBack, faceFront] : [faceFront, faceBack];
       flipped = !flipped;
+      card.dataset.side = flipped ? 'back' : 'front';
       if (still.matches) {
         turn.style.transform = `rotateX(${from + 180}deg)`;
         return;
       }
+      const timing = { duration: 640, easing: EASE.turn };
       animate(
         turn,
         [
@@ -538,7 +544,18 @@
           { transform: `translateY(-10px) scale(1.045) rotateZ(-2.5deg) rotateX(${from + 90}deg)`, offset: 0.5 },
           { transform: `translateY(0) scale(1) rotateZ(0deg) rotateX(${from + 180}deg)` },
         ],
-        { duration: 640, easing: EASE.turn, fill: 'forwards' },
+        { ...timing, fill: 'forwards' },
+      );
+      // The faces swap while the card stands on its edge (see .flashcard[data-side]).
+      animate(
+        leaving,
+        [{ visibility: 'visible' }, { visibility: 'visible', offset: 0.5 }, { visibility: 'hidden', offset: 0.5 }, { visibility: 'hidden' }],
+        timing,
+      );
+      animate(
+        arriving,
+        [{ visibility: 'hidden' }, { visibility: 'hidden', offset: 0.5 }, { visibility: 'visible', offset: 0.5 }, { visibility: 'visible' }],
+        timing,
       );
       animate(
         sheen,
@@ -612,6 +629,7 @@
       still() {
         turn.style.transform = 'rotateX(180deg)';
         flipped = true;
+        card.dataset.side = 'back';
       },
       async play(ctx) {
         await ctx.wait(1400);

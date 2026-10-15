@@ -1,6 +1,7 @@
 // The request handler: pages, static files, download links and every protection
 // around them (see README, section "Sicherheit").
 
+import crypto from 'node:crypto';
 import { once } from 'node:events';
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
@@ -19,6 +20,7 @@ import { ByteRate } from './throttle.mjs';
 import { LinkSigner, randomId } from './tokens.mjs';
 import { PLATFORMS, checksumsText, loadReleases, releasesSignature } from './releases.mjs';
 import { loadSite, makeEntry } from './site.mjs';
+import { changelogView, parseChangelog } from './changelog.mjs';
 import { escapeHtml } from './templates.mjs';
 import { humanWait, parseRange, securityHeaders, send, sendEntry, sendJson, wantsJson } from './http.mjs';
 import { createStats } from './stats.mjs';
@@ -27,11 +29,17 @@ const METHODS = new Set(['GET', 'HEAD', 'POST']);
 const PAGES = new Map([
   ['/', 'index'],
   ['/datenschutz', 'datenschutz'],
+  ['/neuigkeiten', 'neuigkeiten'],
 ]);
+const CHANGELOG = '_neuigkeiten.md';
 const DEV_HOST = /^(?:localhost|127\.0\.0\.1|\[::1\])(?::\d{1,5})?$/;
 const PLATFORM_PATH = /^\/download\/(mac|windows)$/;
 const LINK_PATH = /^\/dl\/([A-Za-z0-9_-]{8,700}\.[A-Za-z0-9_-]{43})$/;
 const VERSIONED = /(?:^|&)v=[0-9a-f]{10}(?:&|$)/;
+// With SITE_PASSWORD: what is open without signing in (the login page needs the static files),
+// and how long a browser stays signed in.
+const OPEN_PATHS = new Set(['/login', '/healthz', '/datenschutz']);
+const LOGIN_DAYS = 90;
 
 // Paths only vulnerability scanners ask for. Two hits block the address.
 const TRAPS = [
@@ -41,6 +49,7 @@ const TRAPS = [
 
 const ERRORS = Object.freeze({
   400: ['Ungültige Anfrage', 'Diese Adresse kann der Server nicht verarbeiten.'],
+  401: ['Anmeldung nötig', 'Diese Seite ist passwortgeschützt. Melde dich auf der Startseite mit dem Passwort an.'],
   403: ['Kein Zugriff', 'Diese Anfrage ist nicht erlaubt.'],
   404: ['Seite nicht gefunden', 'Diese Seite gibt es nicht. Prüf die Adresse oder geh zur Startseite.'],
   405: ['Nicht erlaubt', 'Diese Art von Anfrage wird hier nicht unterstützt.'],
@@ -53,6 +62,8 @@ const ERRORS = Object.freeze({
   500: ['Serverfehler', 'Etwas ist schiefgelaufen. Versuch es in einem Moment nochmals.'],
   503: ['Gerade ausgelastet', 'Der Server ist im Moment ausgelastet. Versuch es gleich nochmals.'],
 });
+
+const sha256 = (text) => crypto.createHash('sha256').update(text, 'utf8').digest();
 
 function redirect(req, res, status, location) {
   send(req, res, status, { Location: location, 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store' }, `${location}\n`);
@@ -99,7 +110,7 @@ function seconds(n) {
 }
 
 /** The values the templates see. */
-function viewModel(releases, config) {
+function viewModel(releases, config, changelog) {
   const pick = (release) =>
     release
       ? {
@@ -124,11 +135,14 @@ function viewModel(releases, config) {
       operator: config.operator,
       contactEmail: config.contactEmail,
       mailto: config.contactEmail ? `mailto:${config.contactEmail}` : '',
+      login: Boolean(config.password),
+      loginDays: LOGIN_DAYS,
     },
     mac,
     windows,
     anyAvailable: mac.available || windows.available,
     version: mac.version || windows.version || '',
+    updates: changelogView(changelog, releases),
   };
 }
 
@@ -147,6 +161,14 @@ export async function createApp(config, log) {
   const gate = new ConcurrencyGate({ perKey: L.concurrentPerIp, total: L.concurrentTotal });
   const budget = new DailyBudget({ bytesPerDay: L.dailyBytes });
   const totalRate = new ByteRate(L.totalBytesPerSecond);
+  // Wrong passwords per address: ten tries, then one every 12 seconds (guessing takes forever).
+  const passwordRate = new TokenBucket({ capacity: 10, perSecond: 5 / 60 });
+  const passwordHash = config.password ? sha256(config.password) : null;
+  // Signs the login cookies. Derived from the password: a new password signs everybody out,
+  // a restart or a new release does not.
+  const loginKey = config.password ? crypto.createHmac('sha256', config.password).update('wortschatz-login').digest() : null;
+  // __Host-: only over HTTPS, only for this exact host and path / (no subdomain can set or read it).
+  const loginCookie = config.secure ? '__Host-wortschatz' : 'wortschatz';
   const links = new LruMap(50_000);
   const stats = await createStats(config.dataDir, log);
   const baseHeaders = securityHeaders(config);
@@ -160,10 +182,13 @@ export async function createApp(config, log) {
 
   async function build() {
     const [site, releases] = await Promise.all([loadSite(config.publicDir), loadReleases(config.releasesDir, log)]);
-    const model = viewModel(releases, config);
+    const changelog = parseChangelog(site.text(CHANGELOG));
+    for (const { line, message } of changelog.problems) log.warn('changelog', { file: CHANGELOG, line, message });
+    const model = viewModel(releases, config, changelog);
     const pages = new Map();
     for (const [route, name] of PAGES) pages.set(route, site.renderPage(name, model));
     site.renderHtml('_error', { ...model, error: { status: 404, title: 'Test', message: 'Test' } });
+    site.renderHtml('_login', { ...model, login: { next: '/', error: '' } });
     const checksums = makeEntry(Buffer.from(checksumsText(releases, config.origin), 'utf8'), 'text/plain; charset=utf-8', {
       cacheControl: 'no-cache',
     });
@@ -202,6 +227,7 @@ export async function createApp(config, log) {
   const sweeper = setInterval(() => {
     pageRate.sweep();
     assetRate.sweep();
+    passwordRate.sweep();
     hourly.sweep();
     daily.sweep();
     traffic.sweep();
@@ -269,6 +295,106 @@ export async function createApp(config, log) {
     } catch {
       return false;
     }
+  }
+
+  const passwordMatches = (password) => crypto.timingSafeEqual(sha256(String(password)), passwordHash);
+
+  /** A login cookie value: expiry (Unix seconds) and its signature. */
+  function loginToken(expires) {
+    return `${expires}.${crypto.createHmac('sha256', loginKey).update(`login:${expires}`).digest('base64url')}`;
+  }
+
+  function hasLoginCookie(req) {
+    const prefix = `${loginCookie}=`;
+    const value = String(req.headers.cookie || '')
+      .split(';')
+      .map((part) => part.trim())
+      .find((part) => part.startsWith(prefix))
+      ?.slice(prefix.length);
+    const match = /^(\d{10})\.[A-Za-z0-9_-]{43}$/.exec(value || '');
+    if (!match || Number(match[1]) < Date.now() / 1000) return false;
+    const expected = Buffer.from(loginToken(Number(match[1])));
+    return crypto.timingSafeEqual(Buffer.from(value), expected);
+  }
+
+  /**
+   * Counts a password attempt for the address: ten at once, then one every 12 seconds. On /login
+   * every attempt counts, also a right one, so guessing there really slows down; with Basic Auth
+   * only wrong ones (a browser that remembers an earlier Basic login sends it with every request).
+   * Answers 429 and returns false once there were too many.
+   */
+  function passwordAttempt(req, res, ctx) {
+    if (ctx.local) return true;
+    const limit = passwordRate.take(ctx.key);
+    if (limit.ok) return true;
+    penalize(ctx, 1);
+    fail(req, res, 429, { retryAfter: limit.retryAfter });
+    return false;
+  }
+
+  /**
+   * With SITE_PASSWORD, everything except OPEN_PATHS and the static files needs signing in.
+   * Browsers sign in on /login (only a password field) and then send a cookie; scripts may send
+   * the password with HTTP Basic Auth (user name ignored, the browser never asks for it). Without:
+   * pages redirect to /login, everything else gets 401. Returns false when it has answered.
+   */
+  function admitted(req, res, ctx, path) {
+    if (!passwordHash || hasLoginCookie(req)) return true;
+    const basic = /^Basic +([A-Za-z0-9+/]+={0,2}) *$/i.exec(String(req.headers.authorization || ''));
+    if (basic) {
+      const credentials = Buffer.from(basic[1], 'base64').toString('utf8');
+      const colon = credentials.indexOf(':');
+      if (colon !== -1 && passwordMatches(credentials.slice(colon + 1))) return true;
+      log.info('password.wrong', { ip: anonymizeIp(ctx.ip) });
+      if (!passwordAttempt(req, res, ctx)) return false;
+    }
+    if ((req.method === 'GET' || req.method === 'HEAD') && (PAGES.has(path) || path === '/index.html')) {
+      redirect(req, res, 303, path === '/' || path === '/index.html' ? '/login' : `/login?weiter=${encodeURIComponent(path)}`);
+      return false;
+    }
+    fail(req, res, 401);
+    return false;
+  }
+
+  function loginPage(req, res, status, next, error = '') {
+    const html = state.site.renderHtml('_login', { ...state.model, login: { next, error } });
+    send(req, res, status, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' }, html);
+  }
+
+  /** GET shows the password form; POST checks the password and sets the login cookie. */
+  async function login(req, res, ctx, query) {
+    const wanted = (value) => (PAGES.has(value) ? value : '/');
+    if (!passwordHash) return redirect(req, res, 303, '/');
+    if (req.method !== 'POST') {
+      const next = wanted(query.get('weiter'));
+      return hasLoginCookie(req) ? redirect(req, res, 303, next) : loginPage(req, res, 200, next);
+    }
+    // Only this website's own form may sign in.
+    const fetchSite = req.headers['sec-fetch-site'];
+    const origin = req.headers.origin;
+    if ((fetchSite && fetchSite !== 'same-origin') || (origin && !expectedOrigins(req).has(origin)) || (!fetchSite && !origin)) {
+      penalize(ctx, 2);
+      return fail(req, res, 403);
+    }
+    const type = String(req.headers['content-type'] || '').split(';')[0].trim().toLowerCase();
+    if (type !== 'application/x-www-form-urlencoded') return fail(req, res, 415);
+    const body = await readBody(req, 1024);
+    if (body === null) return fail(req, res, 413, { headers: { Connection: 'close' } });
+    const form = new URLSearchParams(body);
+    const next = wanted(form.get('weiter'));
+    if (!passwordAttempt(req, res, ctx)) return;
+    if (!passwordMatches(form.get('passwort') ?? '')) {
+      log.info('password.wrong', { ip: anonymizeIp(ctx.ip) });
+      return loginPage(req, res, 401, next, 'Das Passwort stimmt nicht.');
+    }
+    const maxAge = LOGIN_DAYS * 86_400;
+    const token = loginToken(Math.floor(Date.now() / 1000) + maxAge);
+    res.setHeader(
+      'Set-Cookie',
+      `${loginCookie}=${token}; Path=/; Max-Age=${maxAge}; HttpOnly; SameSite=Lax${config.secure ? '; Secure' : ''}`,
+    );
+    log.info('login', { ip: anonymizeIp(ctx.ip) });
+    return redirect(req, res, 303, next);
   }
 
   function tooManyDownloads(req, res, ctx, retryAfter) {
@@ -628,6 +754,8 @@ export async function createApp(config, log) {
       penalize(ctx, 1);
       return fail(req, res, 429, { retryAfter: limit.retryAfter });
     }
+    if (path === '/login') return login(req, res, ctx, new URLSearchParams(queryAt === -1 ? '' : url.slice(queryAt + 1)));
+    if (!OPEN_PATHS.has(path) && !admitted(req, res, ctx, path)) return;
 
     const page = state.pages.get(path);
     if (page) {

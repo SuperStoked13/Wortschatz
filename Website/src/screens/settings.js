@@ -1,15 +1,14 @@
 // Settings (#/settings): theme, sound effects, the voice per language, default study
 // options, backup export/import, "delete everything" and an about block. Every change is
-// saved immediately. Inside the Windows app the copy says "auf diesem Computer".
+// saved immediately, on this computer (the Windows app).
 
 import { h } from '../lib/dom.js';
 import { icon } from '../ui/icons.js';
-import { button, iconButton, segmented, toggle, openModal, confirmDialog, toast, callout } from '../ui/components.js';
+import { button, iconButton, segmented, toggle, openModal, confirmDialog, toast } from '../ui/components.js';
 import { studyOptionsForm } from '../ui/study-options.js';
 import { LANGS, LANG_ORDER, plural, langName } from '../lib/labels.js';
 import { dateKey, formatDate } from '../lib/time.js';
 import { applyTheme, resolveTheme } from '../lib/theme.js';
-import { isDesktopApp } from '../lib/host.js';
 import { PREF, onPrefChange } from '../lib/prefs.js';
 import { playSound, soundEffectsEnabled, setSoundEffectsEnabled } from '../lib/sounds.js';
 import {
@@ -27,11 +26,8 @@ import {
 import { db, createDb, memoryStorage, DEFAULT_STUDY_OPTIONS } from '../store/db.js';
 import { downloadJson, readJsonFile } from '../store/backup.js';
 import { navigate } from '../router.js';
-import { isApplePlatform } from './editor-util.js';
 
 const APP_VERSION = '1.0';
-const APP_PORT = '4173';
-const APP_HOST = `localhost:${APP_PORT}`;
 
 const THEME_OPTIONS = [
   { value: 'system', label: 'System', icon: 'monitor' },
@@ -93,14 +89,8 @@ function libraryLangs(sets) {
   return LANG_ORDER.filter((code) => used.has(code));
 }
 
-// Where more voices come from on this device.
-function voicesHint(desktop) {
-  if (desktop) return 'Weitere Stimmen fügst du in den Windows-Einstellungen unter «Zeit und Sprache» hinzu.';
-  if (isApplePlatform()) {
-    return 'Weitere Stimmen lädst du in den Systemeinstellungen unter Bedienungshilfen › Gesprochene Inhalte › Systemstimme › Stimmen verwalten. Premium- und erweiterte Stimmen klingen am natürlichsten.';
-  }
-  return 'Welche Stimmen zur Wahl stehen, hängt von deinem Gerät und deinem Browser ab.';
-}
+// Where more voices come from on this computer.
+const VOICES_HINT = 'Weitere Stimmen fügst du in den Windows-Einstellungen unter «Zeit und Sprache» hinzu.';
 
 /* ------------------------------------------------------------- render */
 
@@ -122,8 +112,6 @@ export function render(outlet) {
   });
 
   let settings = db.getSettings();
-  // Inside the Windows app the data lives on the computer, not in a browser.
-  const desktop = isDesktopApp();
 
   /* Small building blocks */
 
@@ -190,7 +178,7 @@ export function render(outlet) {
     h(
       'p',
       { class: 'ui-lead st-head__lead' },
-      desktop ? 'Alles wird sofort gespeichert – auf diesem Computer.' : 'Alles wird sofort gespeichert – in diesem Browser auf diesem Gerät.',
+      'Alles wird sofort gespeichert – auf diesem Computer.',
     ),
   );
 
@@ -275,7 +263,7 @@ export function render(outlet) {
     ? section({
         id: 'voices',
         title: 'Stimmen zum Vorlesen',
-        text: `Für jede Sprache in deinen Lernsets. ${voicesHint(desktop)}`,
+        text: `Für jede Sprache in deinen Lernsets. ${VOICES_HINT}`,
         aside: voiceSaved,
         body: voiceRows,
       })
@@ -435,7 +423,7 @@ export function render(outlet) {
       iconName: 'trash',
       tone: 'danger',
       title: 'Alle Daten löschen',
-      text: `Entfernt alle Lernsets, den Lernfortschritt, die Statistik und die Einstellungen ${desktop ? 'von diesem Computer' : 'aus diesem Browser'}.`,
+      text: 'Entfernt alle Lernsets, den Lernfortschritt, die Statistik und die Einstellungen von diesem Computer.',
       control: wipeBtn,
     }),
   );
@@ -443,9 +431,7 @@ export function render(outlet) {
   const data = section({
     id: 'data',
     title: 'Backup & Daten',
-    text: desktop
-      ? 'Sichere deine Lernsets regelmässig – zum Beispiel bevor du den Computer wechselst oder Windows neu installierst.'
-      : 'Sichere deine Lernsets regelmässig – zum Beispiel bevor du Browserdaten löschst oder das Gerät wechselst.',
+    text: 'Sichere deine Lernsets regelmässig – zum Beispiel bevor du den Computer wechselst oder Windows neu installierst.',
     body: h('div', { class: 'st-stack' }, backupPanel, dangerPanel),
   });
 
@@ -467,20 +453,13 @@ export function render(outlet) {
   /* ----------------------------------------------------------- about */
 
   function aboutBlock() {
-    const host = typeof location !== 'undefined' ? location.host : '';
-    // Storage is per origin: 127.0.0.1:4173 or [::1]:4173 do not see the sets of localhost:4173.
-    // The Windows app always runs under its own fixed address.
-    const onOtherAddress = !desktop && typeof location !== 'undefined' && /^https?:$/.test(location.protocol) && host !== APP_HOST;
-    // The Windows app is started like any program: no Start.command, no address to keep.
-    const items = desktop
-      ? [
-          [
-            'monitor',
-            'Deine Daten bleiben auf diesem Computer.',
-            'Es gibt kein Konto und keine Cloud. Mit einem Backup nimmst du deine Lernsets auf einen anderen Computer mit.',
-          ],
-        ]
-      : browserAboutItems();
+    const items = [
+      [
+        'monitor',
+        'Deine Daten bleiben auf diesem Computer.',
+        'Es gibt kein Konto und keine Cloud. Mit einem Backup nimmst du deine Lernsets auf einen anderen Computer mit.',
+      ],
+    ];
     return h(
       'div',
       { class: 'st-panel st-about' },
@@ -495,13 +474,6 @@ export function render(outlet) {
           h('p', { class: 'st-about__version' }, `Version ${APP_VERSION}`),
         ),
       ),
-      onOtherAddress
-        ? callout({
-            tone: 'warning',
-            title: 'Andere Adresse erkannt',
-            text: `Du verwendest gerade ${host}. Lernsets, die du unter ${APP_HOST} erstellt hast, sind hier nicht sichtbar.`,
-          })
-        : null,
       h(
         'ul',
         { class: 'st-about__list', role: 'list' },
@@ -515,39 +487,6 @@ export function render(outlet) {
         ),
       ),
     );
-  }
-
-  // The browser version (Start.command on the Mac).
-  function browserAboutItems() {
-    return [
-      [
-        'monitor',
-        'Deine Daten bleiben in diesem Browser auf diesem Gerät.',
-        'Es gibt kein Konto und keine Cloud. Mit einem Backup nimmst du deine Lernsets in einen anderen Browser oder auf ein anderes Gerät mit.',
-      ],
-      [
-        'play',
-        'Wortschatz starten',
-        h(
-          'span',
-          null,
-          'Doppelklicke im Wortschatz-Ordner auf ',
-          h('code', { class: 'st-code' }, 'Start.command'),
-          '. Das Terminal-Fenster, das sich dabei öffnet, bleibt offen, solange du lernst.',
-        ),
-      ],
-      [
-        'globe',
-        'Immer dieselbe Adresse verwenden',
-        h(
-          'span',
-          null,
-          'Öffne Wortschatz immer unter ',
-          h('code', { class: 'st-code' }, APP_HOST),
-          '. Der Browser speichert die Daten pro Adresse – unter einer anderen Adresse oder einem anderen Port wären deine Lernsets nicht zu sehen.',
-        ),
-      ],
-    ];
   }
 
   /* ---------------------------------------------------------- backup */
@@ -571,7 +510,7 @@ export function render(outlet) {
       const name = backupFileName();
       downloadJson(name, db.exportAll());
       // The Windows app saves without asking: say where the file went.
-      toast(desktop ? `Backup im Ordner «Downloads» gespeichert: ${name}` : `Backup gespeichert: ${name}`, { tone: 'success' });
+      toast(`Backup im Ordner «Downloads» gespeichert: ${name}`, { tone: 'success' });
     } catch (err) {
       toast(errorMessage(err, 'Das Backup konnte nicht erstellt werden.'), { tone: 'danger' });
     }
@@ -786,7 +725,7 @@ export function render(outlet) {
   async function wipeEverything() {
     const sets = db.listSets();
     const cards = sets.reduce((n, s) => n + s.cards.length, 0);
-    const fromHere = desktop ? 'von diesem Computer' : 'aus diesem Browser';
+    const fromHere = 'von diesem Computer';
     let what;
     if (!sets.length) what = `Deine Statistik und deine Einstellungen werden ${fromHere} gelöscht.`;
     else if (sets.length === 1) {

@@ -10,6 +10,7 @@ import { compile, escapeHtml, render } from '../lib/templates.mjs';
 import { humanWait, notModified, parseRange, pickEncoding } from '../lib/http.mjs';
 import { formatSize } from '../lib/releases.mjs';
 import { ByteRate } from '../lib/throttle.mjs';
+import { changelogView, compareVersions, parseChangelog } from '../lib/changelog.mjs';
 
 describe('config', () => {
   it('has safe defaults', () => {
@@ -26,6 +27,7 @@ describe('config', () => {
     assert.throws(() => loadConfig({ SITE_ORIGIN: 'https://x.org/pfad' }));
     assert.throws(() => loadConfig({ PORT: '70000' }));
     assert.throws(() => loadConfig({ DOWNLOAD_SECRET: 'kurz' }));
+    assert.throws(() => loadConfig({ SITE_PASSWORD: 'kurz' }));
     assert.throws(() => loadConfig({ CONTACT_EMAIL: 'keine-adresse' }));
     assert.throws(() => loadConfig({ DOWNLOAD_LINK_BIND_IP: 'vielleicht' }));
   });
@@ -237,11 +239,108 @@ describe('templates', () => {
     assert.equal(render(t, { a: false, name: '<' }, env), 'B<i>&lt;</i>/x.css?v=1');
   });
 
+  it('repeats a block for each item of a list, with the outer values still visible', () => {
+    const t = compile('{{#list}}[{{n}}{{#flag}}!{{/flag}}{{o.k}}]{{/list}}{{^list}}leer{{/list}}');
+    assert.equal(render(t, { list: [{ n: 1, flag: true }, { n: '<' }], o: { k: 'v' } }, env), '[1!v][&lt;v]');
+    assert.equal(render(t, { list: [] }, env), 'leer');
+  });
+
   it('reports broken templates', () => {
     assert.throws(() => compile('{{#a}}x'));
     assert.throws(() => compile('{{/a}}'));
     assert.throws(() => compile('{{@eval x}}'));
     assert.throws(() => render(compile('{{> missing}}'), {}, env));
+  });
+});
+
+describe('changelog', () => {
+  const SOURCE = [
+    '# Neuigkeiten',
+    '<!-- Erklärung',
+    '## 9.9 – nicht beachten',
+    '- Neu: im Kommentar -->',
+    '',
+    '## Nächste Version',
+    '',
+    '- Neu: Arabisch und Mandarin.',
+    '- Behoben (Mac): Nur auf dem Mac,',
+    '  über zwei Zeilen.',
+    '- Verbessert (Windows und Mac): Beide.',
+    '',
+    '## 1.1 – 2026-10-20',
+    'Kleine Version.',
+    '- Behoben (Windows): Ein Fehler.',
+    '- Ohne Art.',
+    '',
+    '## 1.0 – 14.10.2026',
+    '',
+  ].join('\n');
+  const releases = (mac, windows) => ({
+    mac: mac ? { version: mac, released: '2026-11-02' } : null,
+    windows: windows ? { version: windows, released: '2026-11-01' } : null,
+  });
+
+  it('compares version numbers', () => {
+    assert.equal(compareVersions('1.10', '1.9'), 1);
+    assert.equal(compareVersions('1.0', '1'), 0);
+    assert.equal(compareVersions('1.0.2', '1.1'), -1);
+  });
+
+  it('reads the file and skips comments', () => {
+    const log = parseChangelog(SOURCE);
+    assert.deepEqual(
+      log.upcoming.map((c) => [c.kind, c.platforms.join(), c.text]),
+      [
+        ['neu', '', 'Arabisch und Mandarin.'],
+        ['behoben', 'mac', 'Nur auf dem Mac, über zwei Zeilen.'],
+        ['verbessert', '', 'Beide.'],
+      ],
+    );
+    assert.deepEqual(log.versions.map((v) => [v.version, v.date, v.changes.length, v.note]), [
+      ['1.1', '2026-10-20', 2, 'Kleine Version.'],
+      ['1.0', '2026-10-14', 0, ''],
+    ]);
+    assert.deepEqual(log.problems.map((p) => p.line), [16]);
+    assert.equal(log.versions[0].changes[1].text, 'Ohne Art.');
+  });
+
+  it('never fails on a broken file', () => {
+    const log = parseChangelog('## Irgendwas\n- Neu: weg\n## 1.2 – 2026-13-45\n- Neu (Linux): unbekannt\n');
+    assert.equal(log.versions.length, 1);
+    assert.equal(log.versions[0].date, '');
+    assert.equal(log.versions[0].changes[0].kind, '');
+    assert.equal(log.problems.length, 4);
+    assert.deepEqual(parseChangelog('').versions, []);
+  });
+
+  it('shows coming changes until a newer app is online, and hides the empty starting point', () => {
+    const view = changelogView(parseChangelog(SOURCE), releases('1.1', '1.1'));
+    assert.equal(view.upcoming.changes.length, 3);
+    assert.deepEqual(view.versions.map((v) => v.version), ['1.1']);
+    assert.equal(view.versions[0].dateLabel, '20. Oktober 2026');
+    assert.equal(view.versions[0].changes[0].platformLabel, 'Windows');
+    assert.equal(view.versions[0].changes[0].kindLabel, 'Behoben');
+    assert.equal(view.latest.version, '1.1');
+  });
+
+  it('counts unnumbered changes as released once a newer app is online for their platform', () => {
+    const windowsOnly = changelogView(parseChangelog(SOURCE), releases('1.1', '1.2'));
+    assert.deepEqual(windowsOnly.versions.map((v) => v.version), ['1.2', '1.1']);
+    assert.deepEqual(windowsOnly.versions[0].changes.map((c) => c.text), ['Arabisch und Mandarin.', 'Beide.']);
+    assert.equal(windowsOnly.versions[0].dateLabel, '1. November 2026');
+    assert.deepEqual(windowsOnly.upcoming.changes.map((c) => c.platformLabel), ['Mac']);
+
+    const both = changelogView(parseChangelog(SOURCE), releases('1.2', '1.2'));
+    assert.equal(both.upcoming, null);
+    assert.equal(both.versions[0].changes.length, 3);
+  });
+
+  it('is empty without entries', () => {
+    const view = changelogView(parseChangelog('## Nächste Version\n\n## 1.0 – 2026-10-14\n'), releases('1.0', '1.0'));
+    assert.equal(view.any, false);
+    assert.equal(view.latest, null);
+    // Without a starting point nothing is ever counted as released.
+    assert.equal(changelogView(parseChangelog('## Nächste Version\n- Neu: X\n'), releases('1.0', '1.0')).upcoming.changes.length, 1);
   });
 });
 

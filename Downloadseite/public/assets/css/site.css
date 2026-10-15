@@ -1804,6 +1804,14 @@ main,
     color-mix(in srgb, var(--accent) 6%, rgb(255 255 255 / 0.62));
 }
 
+/* Safari lets the text of the turned-away face shine through the pane despite
+   backface-visibility, so that face is switched off outright. During a turn,
+   demo.js swaps the faces while the card stands on its edge. */
+.flashcard[data-side="front"] .face-back,
+.flashcard[data-side="back"] .face-front {
+  visibility: hidden;
+}
+
 @media (prefers-color-scheme: dark) {
   .face {
     background:
@@ -3052,6 +3060,116 @@ main,
   font-size: 0.875rem;
 }
 
+/* Neuigkeiten: one card per version, the coming changes as a dashed outline above. */
+.release {
+  margin-top: 28px;
+  padding: 22px 24px 24px;
+}
+
+.prose-lead + .release {
+  margin-top: 40px;
+}
+
+.release-upcoming {
+  border: 1.5px dashed var(--hairline-strong);
+  border-radius: var(--r-panel);
+}
+
+.release-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 2px 16px;
+}
+
+.prose .release h2 {
+  margin-top: 0;
+}
+
+.prose .release-date {
+  margin-top: 0;
+  color: var(--text-3);
+  font-size: 0.9375rem;
+}
+
+.prose .release-note {
+  margin-top: 10px;
+}
+
+.prose .changes {
+  gap: 14px;
+  margin-top: 18px;
+  padding-left: 0;
+  list-style: none;
+}
+
+.change {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+}
+
+.change-kind {
+  flex: none;
+  min-width: 6.25rem;
+  padding: 1px 10px;
+  border-radius: 999px;
+  color: var(--accent-text);
+  background: var(--accent-soft);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  line-height: 1.6;
+  text-align: center;
+}
+
+.change-kind-verbessert {
+  color: var(--info-text);
+  background: var(--info-soft);
+}
+
+.change-kind-behoben {
+  color: var(--success-text);
+  background: var(--success-soft);
+}
+
+.change-text {
+  min-width: 0;
+  color: var(--text);
+}
+
+.change-platform {
+  display: inline-block;
+  margin-left: 4px;
+  padding: 0 8px;
+  border-radius: 999px;
+  color: var(--text-2);
+  background: var(--surface-2);
+  font-size: 0.75rem;
+  font-weight: 600;
+  line-height: 1.7;
+  white-space: nowrap;
+  vertical-align: 0.1em;
+}
+
+.prose .updates-empty {
+  margin-top: 32px;
+  color: var(--text-3);
+}
+
+@media (max-width: 480px) {
+  .release {
+    padding: 18px 18px 20px;
+  }
+  .change {
+    flex-direction: column;
+    gap: 6px;
+  }
+  .change-kind {
+    min-width: 0;
+  }
+}
+
 .error-page {
   display: flex;
   flex-direction: column;
@@ -3095,6 +3213,49 @@ main,
   justify-content: center;
   gap: 12px;
   margin-top: 28px;
+}
+
+/* Login (with SITE_PASSWORD): one password field on the layout of the error page. */
+.login-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: min(100%, 22rem);
+  margin-top: 28px;
+  text-align: left;
+}
+
+.login-label {
+  color: var(--text-2);
+  font-size: 0.9375rem;
+  font-weight: 600;
+}
+
+.login-input {
+  min-height: 52px;
+  padding: 10px 16px;
+  border: 0;
+  border-radius: var(--r-field);
+  background: var(--field-fill);
+  box-shadow: inset 0 0 0 1px var(--hairline);
+  color: var(--text);
+  font: inherit;
+  font-size: 1.0625rem;
+}
+
+.login-input:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 2px var(--accent);
+}
+
+.login-error {
+  color: var(--failure-text);
+  font-size: 0.9375rem;
+  font-weight: 600;
+}
+
+.login-button {
+  margin-top: 8px;
 }
 
 /* ------------------------------------------------------------ responsive */

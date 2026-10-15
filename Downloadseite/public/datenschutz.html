@@ -12,7 +12,7 @@
 {{> nav}}
   <main id="inhalt" class="prose">
     <h1>Datenschutz</h1>
-    <p class="prose-lead">Diese Website zeigt Wortschatz und bietet die App zum Download an. Sie setzt keine Cookies, keine Analyse- oder Werbedienste und keine Inhalte von Dritten ein. Schriften, Bilder und Skripte kommen alle von diesem Server.</p>
+    <p class="prose-lead">Diese Website zeigt Wortschatz und bietet die App zum Download an. Sie setzt {{#site.login}}nur ein Cookie für die Anmeldung (siehe unten) und {{/site.login}}keine {{^site.login}}Cookies, keine {{/site.login}}Analyse- oder Werbedienste und keine Inhalte von Dritten ein. Schriften, Bilder und Skripte kommen alle von diesem Server.</p>
 
     <h2>Verantwortlich</h2>
     {{#site.operator}}<p>{{site.operator}}{{#site.contactEmail}}, <a href="{{site.mailto}}">{{site.contactEmail}}</a>{{/site.contactEmail}}</p>{{/site.operator}}
@@ -25,6 +25,7 @@
       <li>Der Server zählt, wie viele Anfragen und Downloads von einer Adresse kommen, und sperrt Adressen vorübergehend, die die Website angreifen oder überlasten. Diese Zähler liegen nur im Arbeitsspeicher, kommen nie auf die Festplatte und verschwinden nach spätestens zwei Tagen.</li>
       <li>Im Protokoll des Servers steht deine IP-Adresse nur gekürzt (zum Beispiel 203.0.113.0), sodass sie nicht mehr auf einen einzelnen Anschluss zeigt. Das Protokoll dient der Fehlersuche und wird regelmässig gelöscht.</li>
       <li>Für Downloads zählt der Server, wie oft jede Version pro Tag geladen wurde. Diese Zahl enthält nichts über die Personen, die geladen haben.</li>
+      {{#site.login}}<li>Die Website ist passwortgeschützt. Nach der Anmeldung speichert dein Browser ein Cookie, damit du das Passwort nicht bei jedem Aufruf eingeben musst. Es enthält nur sein Ablaufdatum und eine Prüfsumme, nichts über dich, und läuft nach {{site.loginDays}} Tagen ab.</li>{{/site.login}}
     </ul>
 
     <h2>Verschlüsselung und Name</h2>

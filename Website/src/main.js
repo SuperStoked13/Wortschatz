@@ -14,13 +14,10 @@ function showBootError(err) {
   title.className = 'app-error__title';
   title.textContent = 'Wortschatz konnte nicht starten';
 
-  // Checked inline: the error may come from a module (host.js too) that failed to load.
-  const desktop = typeof window !== 'undefined' && !!window.wortschatzHost && window.wortschatzHost.platform === 'windows';
   const text = document.createElement('p');
   text.className = 'app-error__text';
-  text.textContent = desktop
-    ? 'Beim Laden ist ein Fehler aufgetreten. Deine Lernsets sind auf diesem Computer gespeichert und gehen dadurch nicht verloren. Lade Wortschatz neu – hilft das nicht, schliesse Wortschatz und öffne es erneut.'
-    : 'Beim Laden ist ein Fehler aufgetreten. Deine Lernsets sind in diesem Browser gespeichert und gehen dadurch nicht verloren. Lade die Seite neu – hilft das nicht, starte Wortschatz über «Start.command» neu.';
+  text.textContent =
+    'Beim Laden ist ein Fehler aufgetreten. Deine Lernsets sind auf diesem Computer gespeichert und gehen dadurch nicht verloren. Lade Wortschatz neu – hilft das nicht, schliesse Wortschatz und öffne es erneut.';
 
   const actions = document.createElement('div');
   actions.className = 'app-error__actions';

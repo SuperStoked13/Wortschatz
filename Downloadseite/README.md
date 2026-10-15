@@ -14,7 +14,7 @@ Downloadseite/
   releases/      die Downloads und ihre Manifeste (mac.json, windows.json)
   tools/         release-mac.sh, release-windows.sh
   deploy/        Caddyfile (HTTPS), wortschatz-web.service (systemd)
-  compose.yaml   Docker: Server und Caddy zusammen
+  compose.original.yaml   Docker: Server und Caddy zusammen (auf Joans Server nicht benutzt, siehe unten)
   .env.example   Einstellungen (nach .env kopieren)
 ```
 
@@ -35,7 +35,7 @@ Dann http://localhost:8080 öffnen. Solange `releases/` leer ist, steht bei den 
 Im Terminal, im Projektordner (neben `mac/`, `windows/` und `Website/`):
 
 ```bash
-Downloadseite/tools/release-mac.sh       # baut die Mac-App, erstellt Wortschatz-1.0-macOS.dmg
+Downloadseite/tools/release-mac.sh       # baut die Mac-App, erstellt Wortschatz-1.0-macOS.dmg (--notarize: notarisiert)
 Downloadseite/tools/release-windows.sh   # baut Wortschatz.exe und legt sie als Wortschatz-1.0-Windows.exe ab
 ```
 
@@ -48,6 +48,11 @@ Version, Grösse und Prüfsumme auf der Seite an. Läuft der Server auf einem an
 Ordner `releases/` dorthin kopieren (z. B. `rsync -av Downloadseite/releases/ pi@raspberrypi:/opt/wortschatz-web/releases/`).
 
 ## Online stellen unter wortschatz.duckdns.org
+
+> **Auf Joans Server läuft es anders** (seit 14.10.2026): Dort ist schon ein Caddy für mehrere Adressen, die Seite
+> läuft als Container hinter ihm, und neue Versionen gehen über **GitHub-Releases** online – siehe
+> `../VEROEFFENTLICHEN.md` und `../CLAUDE.md`. Die Schritte unten (eigener Caddy, `compose.original.yaml`, systemd)
+> gelten nur für ein anderes, eigenes Gerät. Auf Joans Server nie `docker compose` in diesem Ordner starten.
 
 ### 1. DuckDNS
 
@@ -102,6 +107,16 @@ Seite ist dann weg. Besser ist ein Raspberry Pi, ein alter Laptop mit Linux oder
 
 Was der Server tut (alle Werte lassen sich in `.env` ändern, siehe `.env.example`):
 
+- **Passwort (optional).** Mit `SITE_PASSWORD` in `.env` leitet die Startseite auf `/login`:
+  ein einziges Passwortfeld, kein Benutzername. Danach merkt sich der Browser die Anmeldung
+  90 Tage in einem Cookie (`__Host-wortschatz`, HttpOnly, SameSite=Lax, mit HMAC signiert; der
+  Schlüssel kommt aus dem Passwort, ein neues Passwort meldet also alle ab). Ohne Anmeldung gibt
+  es keine Seite, keine Prüfsummen, keinen Download-Link und keine Datei. Offen bleiben nur
+  `/login`, `/datenschutz`, `/healthz` (Docker-Healthcheck) und die statischen Dateien, die die
+  Login-Seite braucht (CSS, Skripte, Bilder). Jeder Anmeldeversuch zählt pro Adresse: zehn auf
+  einmal, dann einer alle 12 Sekunden, auch mit dem richtigen Passwort. Skripte dürfen das
+  Passwort weiterhin per HTTP Basic Auth schicken (Benutzername egal, nur falsche zählen); der
+  Browser fragt aber nie danach. Das Passwort reist nur dank HTTPS geschützt.
 - **Signierte Download-Links.** Ein Klick auf «Laden» schickt ein Formular an `/download/mac`.
   Der Server antwortet mit einem Link, der mit HMAC-SHA256 signiert ist, nach zwei Minuten
   abläuft, höchstens dreimal benutzt werden kann und nur für die Internetadresse gilt, die ihn
@@ -144,8 +159,8 @@ Was der Server tut (alle Werte lassen sich in `.env` ändern, siehe `.env.exampl
   bei allen Besuchern dieselbe Adresse.
 
 Nicht abgedeckt: Die Apps sind nicht signiert bzw. nicht notarisiert (dafür braucht es
-kostenpflichtige Entwicklerkonten bei Apple und ein Zertifikat für Windows). Deshalb erklärt
-die Seite die Warnungen beim ersten Start. Die Prüfsummen zeigen, dass ein Download vollständig
+kostenpflichtige Entwicklerkonten bei Apple und ein Zertifikat für Windows; `release-mac.sh --notarize`
+ist vorbereitet, siehe `VEROEFFENTLICHEN.md`). Deshalb erklärt die Seite die Warnungen beim ersten Start. Die Prüfsummen zeigen, dass ein Download vollständig
 ist; sie schützen nicht davor, dass jemand den Server selbst übernimmt. Halte deshalb das
 Betriebssystem, Node und Caddy aktuell.
 
@@ -156,13 +171,16 @@ cd Downloadseite/server
 node --test test/*.test.mjs
 ```
 
-58 Tests: Bausteine (Adressen, Links, Limits, Templates) und der ganze Server mit echten
+73 Tests: Bausteine (Adressen, Links, Limits, Templates, Neuigkeiten) und der ganze Server mit echten
 Angriffsversuchen (Path Traversal, gefälschte Links, fremde Origins, Bots, Fluten, abgelaufene
-Links, hängende Downloads, ersetzte Dateien).
+Links, hängende Downloads, ersetzte Dateien, falsche Passwörter, gefälschte Login-Cookies).
 
 ## Anpassen
 
 - Texte der Startseite: `public/index.html`, Datenschutz: `public/datenschutz.html`
+- Neuigkeiten (`/neuigkeiten`): die Einträge in `public/_neuigkeiten.md` (Format oben in der Datei; die Datei selbst
+  wird nie ausgeliefert), die Seite in `public/neuigkeiten.html`. `tools/release-*.sh` setzt beim Bauen die
+  Versionsnummer über `tools/neuigkeiten.py`.
 - Design: `public/assets/css/site.css` (oben die Farben und Radien aus dem Design-System der App)
 - Animierte App-Vorschau: `public/assets/js/demo.js`, Mesh-Hintergrund: `public/assets/js/backdrop.js`
 - Download-Knöpfe, Enter-Taste, Meldungen: `public/assets/js/site.js`

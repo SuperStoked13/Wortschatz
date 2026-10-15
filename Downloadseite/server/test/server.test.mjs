@@ -127,7 +127,7 @@ describe('website', () => {
   });
 
   it('has no inline scripts or styles (the CSP would block them)', async () => {
-    for (const page of ['/', '/datenschutz', '/gibt-es-nicht']) {
+    for (const page of ['/', '/datenschutz', '/neuigkeiten', '/gibt-es-nicht']) {
       const html = (await request(s.port, 'GET', page, { ip: nextIp() })).body.toString();
       assert.doesNotMatch(html, /<script(?![^>]*\bsrc=)[^>]*>/i, `${page}: inline script`);
       assert.doesNotMatch(html, /<style\b/i, `${page}: style element`);
@@ -194,6 +194,16 @@ describe('website', () => {
     assert.ok(sums.includes(`${sha(s.files.windows)}  Wortschatz-1.0-Windows.exe`));
     assert.match((await request(s.port, 'GET', '/robots.txt', { ip: nextIp() })).body.toString(), /Disallow: \/dl\//);
     assert.equal((await request(s.port, 'GET', '/healthz', { ip: nextIp() })).body.toString(), 'ok\n');
+  });
+
+  it('shows the update list from public/_neuigkeiten.md, but never the file itself', async () => {
+    const res = await request(s.port, 'GET', '/neuigkeiten', { ip: nextIp() });
+    assert.equal(res.status, 200);
+    const html = res.body.toString();
+    assert.match(html, /<h1>Neuigkeiten<\/h1>/);
+    assert.doesNotMatch(html, /\{\{|<!--/, 'no template tags or file comments');
+    assert.match((await request(s.port, 'GET', '/', { ip: nextIp() })).body.toString(), /href="\/neuigkeiten"/);
+    assert.equal((await request(s.port, 'GET', '/_neuigkeiten.md', { ip: nextIp() })).status, 404);
   });
 
   it('answers unknown pages with the 404 page', async () => {
@@ -548,5 +558,134 @@ describe('fair use and robustness', () => {
     }
     const stale = await request(s.port, 'GET', location, { ip });
     assert.equal(stale.status, 410, 'after the reload the old link is outdated');
+  });
+});
+
+describe('password', () => {
+  let s;
+  const PASSWORD = 'Test-Pw8';
+  const basic = (user, password) => ({ Authorization: `Basic ${Buffer.from(`${user}:${password}`).toString('base64')}` });
+  const AUTH = basic('', PASSWORD);
+  const signIn = (ip, password, extra = {}, next = '/') =>
+    request(s.port, 'POST', '/login', { ip, headers: { ...FORM, ...extra }, body: `weiter=${encodeURIComponent(next)}&passwort=${encodeURIComponent(password)}` });
+  const cookieOf = (res) => String(res.headers['set-cookie'] ?? '').split(';')[0];
+  before(async () => {
+    s = await startServer({ SITE_PASSWORD: PASSWORD });
+  });
+  after(() => s.close());
+
+  it('sends pages to the login, refuses files and checksums, and never makes the browser ask for a user name', async () => {
+    const ip = nextIp();
+    const home = await request(s.port, 'GET', '/', { ip });
+    assert.equal(home.status, 303);
+    assert.equal(home.headers.location, '/login');
+    const updates = await request(s.port, 'GET', '/neuigkeiten', { ip });
+    assert.equal(updates.status, 303);
+    assert.equal(updates.headers.location, '/login?weiter=%2Fneuigkeiten');
+    for (const target of ['/checksums.txt', '/gibt-es-nicht']) {
+      const res = await request(s.port, 'GET', target, { ip });
+      assert.equal(res.status, 401, target);
+      assert.equal(res.headers['cache-control'], 'no-store');
+      assert.doesNotMatch(res.body.toString(), /Wortschatz-1\.0/, `${target}: nothing about the files`);
+    }
+    for (const target of ['/', '/checksums.txt', '/login']) {
+      assert.equal((await request(s.port, 'GET', target, { ip })).headers['www-authenticate'], undefined, target);
+    }
+  });
+
+  it('keeps the login page, its styles, the privacy page and the health check open', async () => {
+    const ip = nextIp();
+    const page = await request(s.port, 'GET', '/login', { ip });
+    assert.equal(page.status, 200);
+    const html = page.body.toString();
+    assert.match(html, /type="password"/);
+    assert.doesNotMatch(html, /name="(?:user|benutzer)/i, 'no user name field');
+    assert.doesNotMatch(html, /Wortschatz-1\.0|[0-9a-f]{64}/, 'nothing about the files');
+    assert.doesNotMatch(html, /<script(?![^>]*\bsrc=)[^>]*>|<style\b|\sstyle="|\son[a-z]+="/i, 'CSP-safe');
+    const css = html.match(/href="(\/assets\/css\/site\.css\?v=[0-9a-f]+)"/)[1];
+    assert.equal((await request(s.port, 'GET', css, { ip })).status, 200);
+    assert.equal((await request(s.port, 'GET', '/robots.txt', { ip })).status, 200);
+    // Safari asks for these on every visit; a 404 would cost penalty points and soon block the address.
+    for (const icon of ['/apple-touch-icon.png', '/apple-touch-icon-precomposed.png', '/favicon.ico']) {
+      assert.equal((await request(s.port, 'GET', icon, { ip })).status, 200, icon);
+    }
+    const privacy = await request(s.port, 'GET', '/datenschutz', { ip });
+    assert.equal(privacy.status, 200);
+    assert.match(privacy.body.toString(), /Cookie/);
+    assert.equal((await request(s.port, 'GET', '/healthz', { ip })).status, 200);
+  });
+
+  it('signs in with only the password and remembers it in a cookie', async () => {
+    const ip = nextIp();
+    const wrong = await signIn(ip, 'falsch123');
+    assert.equal(wrong.status, 401);
+    assert.match(wrong.body.toString(), /Das Passwort stimmt nicht/);
+    assert.equal(wrong.headers['set-cookie'], undefined);
+
+    const res = await signIn(ip, PASSWORD, {}, '/datenschutz');
+    assert.equal(res.status, 303);
+    assert.equal(res.headers.location, '/datenschutz');
+    const setCookie = String(res.headers['set-cookie']);
+    assert.match(setCookie, /^__Host-wortschatz=\d{10}\.[A-Za-z0-9_-]{43}; Path=\/; Max-Age=7776000; HttpOnly; SameSite=Lax; Secure$/);
+    const cookie = cookieOf(res);
+    const home = await request(s.port, 'GET', '/', { ip, headers: { Cookie: cookie } });
+    assert.equal(home.status, 200);
+    assert.ok(home.body.toString().includes(sha(s.files.mac)));
+    assert.equal((await request(s.port, 'GET', '/checksums.txt', { ip, headers: { Cookie: `x=1; ${cookie}` } })).status, 200);
+    assert.equal((await request(s.port, 'GET', '/login', { ip, headers: { Cookie: cookie } })).headers.location, '/', 'signed in: no form');
+  });
+
+  it('only accepts its own cookie and its own form', async () => {
+    const ip = nextIp();
+    const cookie = cookieOf(await signIn(ip, PASSWORD));
+    const [name, value] = cookie.split('=');
+    const flipped = `${name}=${value.slice(0, -1)}${value.endsWith('A') ? 'B' : 'A'}`;
+    const expired = `${name}=1000000000.${value.split('.')[1]}`;
+    for (const bad of [flipped, expired, `wortschatz=${value}`]) {
+      assert.equal((await request(s.port, 'GET', '/', { ip, headers: { Cookie: bad } })).status, 303, bad);
+    }
+    assert.equal((await signIn(nextIp(), PASSWORD, { Origin: 'https://evil.example', 'Sec-Fetch-Site': 'cross-site' })).status, 403);
+    assert.equal((await signIn(nextIp(), PASSWORD, {}, '//evil.example')).headers.location, '/', 'no open redirect');
+    const elsewhere = await request(s.port, 'GET', '/login?weiter=https%3A%2F%2Fevil.example', { ip: nextIp() });
+    assert.match(elsewhere.body.toString(), /name="weiter" value="\/"/);
+  });
+
+  it('downloads when signed in, not without', async () => {
+    const ip = nextIp();
+    assert.equal((await link(s.port, ip)).status, 401);
+    const cookie = cookieOf(await signIn(ip, PASSWORD));
+    const res = await link(s.port, ip, 'mac', { Cookie: cookie });
+    assert.equal(res.status, 303);
+    assert.equal((await request(s.port, 'GET', res.headers.location, { ip })).status, 401);
+    const file = await request(s.port, 'GET', res.headers.location, { ip, headers: { Cookie: cookie } });
+    assert.equal(file.status, 200);
+    assert.equal(sha(file.body), sha(s.files.mac));
+  });
+
+  it('still lets scripts in with HTTP Basic Auth, whatever the user name', async () => {
+    const ip = nextIp();
+    assert.equal((await request(s.port, 'GET', '/', { ip, headers: AUTH })).status, 200);
+    assert.equal((await request(s.port, 'GET', '/checksums.txt', { ip, headers: basic('joan', PASSWORD) })).status, 200);
+    assert.equal((await request(s.port, 'GET', '/checksums.txt', { ip, headers: basic('', 'falsch123') })).status, 401);
+    assert.equal((await request(s.port, 'GET', '/checksums.txt', { ip, headers: { Authorization: `Basic ${Buffer.from(PASSWORD).toString('base64')}` } })).status, 401, 'no colon');
+    assert.equal((await request(s.port, 'GET', '/checksums.txt', { ip, headers: { Authorization: 'Bearer x' } })).status, 401);
+    const statuses = [];
+    for (let i = 0; i < 25; i += 1) statuses.push((await request(s.port, 'GET', '/checksums.txt', { ip, headers: AUTH })).status);
+    assert.ok(statuses.every((status) => status === 200), 'a remembered right password never runs into the limit');
+  });
+
+  it('slows down guessing, even when a guess is right', async () => {
+    const ip = nextIp();
+    const statuses = [];
+    for (let i = 0; i < 11; i += 1) statuses.push((await signIn(ip, `falsch${i}xx`)).status);
+    assert.deepEqual(statuses.slice(0, 10), Array(10).fill(401));
+    assert.equal(statuses[10], 429);
+    assert.equal((await signIn(ip, PASSWORD)).status, 429, 'the right password does not help while guessing is slowed down');
+    assert.equal((await signIn(nextIp(), PASSWORD)).status, 303, 'other addresses are not affected');
+    const basicIp = nextIp();
+    const basicStatuses = [];
+    for (let i = 0; i < 12; i += 1) basicStatuses.push((await request(s.port, 'GET', '/checksums.txt', { ip: basicIp, headers: basic('', `falsch${i}xx`) })).status);
+    assert.deepEqual(basicStatuses.slice(0, 10), Array(10).fill(401));
+    assert.equal(basicStatuses[11], 429);
   });
 });

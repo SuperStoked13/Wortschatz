@@ -32,7 +32,6 @@ import {
 } from '../core/learn.js';
 import { stripDiacritics } from '../core/text.js';
 import { navigate } from '../router.js';
-import { isDesktopApp } from '../lib/host.js';
 import { streakCaption, streakTone, streakTooltip } from '../ui/daily-streak.js';
 
 const SORTS = [
@@ -762,8 +761,7 @@ export function render(outlet) {
       const fresh = db.getSet(set.id) || set;
       downloadText(fileNameFor(fresh.title), setToText(fresh));
       // The Windows app saves without asking: say where the file went.
-      const where = isDesktopApp() ? 'als Textdatei im Ordner «Downloads» gespeichert' : 'als Textdatei exportiert';
-      toast(`«${shortTitle(fresh.title)}» ${where}`, { tone: 'success' });
+      toast(`«${shortTitle(fresh.title)}» als Textdatei im Ordner «Downloads» gespeichert`, { tone: 'success' });
     } catch (err) {
       toast(errorMessage(err, 'Der Export ist fehlgeschlagen.'), { tone: 'danger' });
     }
