@@ -142,8 +142,9 @@ function openError(e) {
 }
 
 // pdf.js text items → layout items in viewport space (top-left origin, page
-// rotation and crop box applied): x = left edge, y = baseline.
-function toLayoutItems(textItems, viewport, Util) {
+// rotation and crop box applied): x = left edge, y = baseline. `dir` is passed
+// on: right-to-left runs (Arabic) hold their text in logical order.
+export function toLayoutItems(textItems, viewport, Util) {
   const items = [];
   for (const it of textItems || []) {
     if (!it || typeof it.str !== 'string' || !it.str.trim() || !Array.isArray(it.transform)) continue;
@@ -156,6 +157,7 @@ function toLayoutItems(textItems, viewport, Util) {
       y: tx[5],
       w: Math.abs(it.width || 0) * viewport.scale,
       h: it.height > 0 ? it.height * viewport.scale : fontHeight,
+      dir: it.dir,
     });
   }
   return items;

@@ -421,12 +421,15 @@ extension VocabParser {
     /// `/,(?![\s,])/` (Quizlet's comma export)
     static let tightCommaRE: RX = .seq([.text(","), .notAhead(.alt([.ws, .text(",")]))])
 
-    /// `GLUED_DASH_RE = /(\p{L}[.!?)]?)[–—](?=[\p{L}(«"„“])/u`
+    /// `/\s*：\s*/` (the full-width colon, "你好：Hallo")
+    static let fullColonRE: RX = .seq([.star(.ws), .text("："), .star(.ws)])
+
+    /// `GLUED_DASH_RE = /(\p{L}[.!?)）]?)[–—](?=[\p{L}(（«"„“])/u`
     static let gluedDashRE: RX = .seq([
         .letter,
-        .opt(.cls(oneOf(".!?)"))),
+        .opt(.cls(oneOf(".!?)）"))),
         .cls(oneOf("–—")),
-        .ahead(.cls { VocabParser.isL($0) || "(«\"„“".unicodeScalars.contains($0) }),
+        .ahead(.cls { VocabParser.isL($0) || "(（«\"„“".unicodeScalars.contains($0) }),
     ])
 
     /// `DE_ARTICLE_RE = /(?:^|\s)(?:sich|der|die|das|den|dem|des|ein|eine|einen|einem|einer)\s/`
@@ -562,5 +565,10 @@ extension VocabParser {
     /// `t.split(/,(?![\s,])/)`
     static func splitTightComma(_ t: PText) -> [PText] {
         t.contains(",") ? split(t, tightCommaRE) : [t]
+    }
+
+    /// `t.split(/\s*：\s*/)`
+    static func splitFullColon(_ t: PText) -> [PText] {
+        t.contains("：") ? split(t, fullColonRE) : [t]
     }
 }

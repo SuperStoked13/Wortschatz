@@ -28,8 +28,12 @@ the app automatically.
   chooses it. Options the letters do not start fade (`.filtered`), the typed letters are underlined in the tiles, and
   a hint below the grid shows them ("↩ wählt «…»", "Weiter tippen …", "Keine Antwort passt"). ⌫ (or fn-⌦) deletes a
   letter and keeps deleting while held, ⌥⌫ deletes a word, esc clears them first; arrows take over, digits still
-  choose directly. ⌫ arrives as U+0008 through `onKeyPress` but as U+007F through the window's key fallback
-  (`StudyKeyFallback`), so `LearnKeyRouter.isDeleteKey` accepts both.
+  choose directly (Arabic-Indic ٠–٩ too, `LearnFlow.digitValue`; the Arabic «لا» key types both letters). ⌫ arrives
+  as U+0008 through `onKeyPress` but as U+007F through the window's key fallback (`StudyKeyFallback`), so
+  `LearnKeyRouter.isDeleteKey` accepts both.
+- Any key continues after feedback. With an input method active (Pinyin, Kana …, not a plain layout like ABC or
+  Arabic: `InputSource.isInputMethodActive`) the key continues without its raw letter landing in the next answer
+  field (`LearnKeyRouter.continuing`); the answer is then typed there with the input method.
 - Synonyms outside the set: Return on a written answer that would be wrong waits (at most 3 s, "Prüfe Synonym …" in
   the answer box) while `SynonymAssistant` looks it up with Apple Intelligence; it then counts as right with
   "Auch richtig!", the chip "Synonym – nicht im Set" and "Gesucht war: …".

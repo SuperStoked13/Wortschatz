@@ -64,6 +64,23 @@ input, button, textarea, select {
   letter-spacing: inherit;
 }
 
+/* Card text in Arabic and Chinese (its lang comes from lib/labels.js textAttrs/fieldAttrs).
+   Both keep their natural spacing: tight tracking crowds Han characters and Arabic vowel
+   marks. Chinese gets fonts with Simplified Chinese shapes: Segoe UI has no Han, and the
+   fallback could pick Japanese ones. Line heights for Arabic sit with each screen's text. */
+:lang(ar),
+:lang(zh) {
+  --tracking-tight: normal;
+  --tracking-display: normal;
+  letter-spacing: normal;
+}
+
+:lang(zh) {
+  --font-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", system-ui, sans-serif;
+  --font-display: var(--font-ui);
+  font-family: var(--font-ui);
+}
+
 button {
   cursor: pointer;
   background: none;

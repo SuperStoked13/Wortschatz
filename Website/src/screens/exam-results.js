@@ -4,15 +4,13 @@
 // The bar offers «Neue Prüfung», «Falsche lernen», «Falsche prüfen» and «Fertig».
 
 import { h } from '../lib/dom.js';
-import { LANGS } from '../lib/labels.js';
+import { textAttrs, fieldAttrs } from '../lib/labels.js';
 import { button, chip } from '../ui/components.js';
 import { icon } from '../ui/icons.js';
 import { isApplePlatform } from './editor-util.js';
 import { confetti } from './write-views.js';
 import { examDock, compactLabel } from './exam-setup.js';
 import * as E from '../core/exam.js';
-
-const bcp47 = (lang) => (LANGS[lang] && LANGS[lang].bcp47) || null;
 
 function hero(result) {
   const grade = result.grade;
@@ -77,15 +75,16 @@ function markBadge(item) {
 }
 
 // What was typed, with the mistakes marked against the answer it was compared with (a
-// synonym's own word when it matched another card).
+// synonym's own word when it matched another card). Its direction follows the text, as in
+// the field.
 function diffLine(item) {
   const q = item.question;
-  const lang = bcp47(q.answerLang);
+  const attrs = fieldAttrs(q.answerLang);
   const parts = E.answerDiff(item.given, item.matched != null ? item.matched : q.expected, q.answerLang);
-  if (!parts) return h('p', { class: 'ex-answer ex-answer--wrong', lang }, item.given);
+  if (!parts) return h('p', { class: 'ex-answer ex-answer--wrong', ...attrs }, item.given);
   return h(
     'p',
-    { class: 'ex-answer', lang },
+    { class: 'ex-answer', ...attrs },
     h('span', { class: 'sr-only' }, item.given),
     h(
       'span',
@@ -97,9 +96,8 @@ function diffLine(item) {
 
 function answerRow(item) {
   const q = item.question;
-  const answerLang = bcp47(q.answerLang);
   let answer;
-  if (item.mark === 'correct') answer = h('p', { class: 'ex-answer ex-answer--right', lang: answerLang }, item.given);
+  if (item.mark === 'correct') answer = h('p', { class: 'ex-answer ex-answer--right', ...fieldAttrs(q.answerLang) }, item.given);
   else if (item.mark === 'blank') answer = h('p', { class: 'ex-answer ex-answer--none' }, 'Keine Antwort');
   else answer = diffLine(item);
   const expected = E.showsExpected(item)
@@ -108,7 +106,7 @@ function answerRow(item) {
         { class: 'ex-expected' },
         h('span', { class: 'ex-expected__label' }, E.expectedLabel(item)),
         ' ',
-        h('strong', { class: 'ex-expected__text', lang: answerLang }, q.expected),
+        h('strong', { class: 'ex-expected__text', ...textAttrs(q.answerLang) }, q.expected),
       )
     : null;
   let note = null;
@@ -129,7 +127,7 @@ function answerRow(item) {
         { class: 'ex-item__ask' },
         h('span', { class: 'ex-item__num' }, `${q.number}.`),
         ' ',
-        h('span', { class: 'ex-item__prompt', lang: bcp47(q.promptLang) }, q.prompt),
+        h('span', { class: 'ex-item__prompt', ...textAttrs(q.promptLang) }, q.prompt),
       ),
       answer,
       expected,

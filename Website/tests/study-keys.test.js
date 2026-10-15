@@ -1,9 +1,10 @@
 // The study screens' shortcuts (src/screens/write-keys.js, shared by Lernen and Schreiben):
 // which keydown is which command (⌘ → Ctrl, ⌥ → Alt, never Ctrl+Alt = AltGr), the key names
 // of the hints, characters typed with AltGr / ⌥, that the screens' modules import, and the
-// key routing of both screens on a minimal stand-in document (held keys, who owns Enter).
+// key routing of both screens on a minimal stand-in document (held keys, who owns Enter), and
+// the Arabic keyboard and Chinese input methods (Pinyin).
 import { test, expect, run } from './harness.js';
-import { studyCommand, shortcutText, shortcutAria, isTypedKey, ENTER_SETTLE_MS, bindWriteKeys } from '../src/screens/write-keys.js';
+import { studyCommand, shortcutText, shortcutAria, isTypedKey, startsComposition, settleEnter, ENTER_SETTLE_MS, bindWriteKeys } from '../src/screens/write-keys.js';
 import * as learnKeys from '../src/screens/learn-keys.js';
 import * as learnScreen from '../src/screens/learn.js';
 import * as writeScreen from '../src/screens/write.js';
@@ -66,6 +67,51 @@ test('Typed characters: plain, Shift, AltGr and ⌥; not Ctrl, ⌘ or named keys
   expect(isTypedKey(key('Backspace'))).toBe(false);
   expect(isTypedKey(key('Dead'))).toBe(false);
   expect(isTypedKey(key('😀'))).toBe(true);
+});
+
+test('Arabic keyboard: the «لا» key types two letters at once; named keys stay named', () => {
+  expect(isTypedKey(key('لا'))).toBe(true);
+  expect(isTypedKey(key('لأ', { shiftKey: true }))).toBe(true);
+  expect(isTypedKey(key('ك'))).toBe(true);
+  expect(isTypedKey(key('١'))).toBe(true);
+  expect(isTypedKey(key('لا', { ctrlKey: true }))).toBe(false);
+  for (const named of ['Process', 'Unidentified', 'Enter', 'ArrowLeft', 'ab']) expect(isTypedKey(key(named))).toBe(false);
+  // Several characters that are not all letters (a digit after a letter) are no key.
+  expect(isTypedKey(key('ل1'))).toBe(false);
+});
+
+test('Arabic keyboard: Ctrl shortcuts fall back to the key position', () => {
+  // Chromium reports the layout's letter (Ctrl+R gives «ق» on Arabic 101).
+  expect(studyCommand(key('ق', { ctrlKey: true, code: 'KeyR' }))).toBe('speak');
+  expect(studyCommand(key('ن', { ctrlKey: true, code: 'KeyK' }))).toBe('options');
+  expect(studyCommand(key('ي', { ctrlKey: true, code: 'KeyD' }))).toBe('star');
+  expect(studyCommand(key('ث', { metaKey: true, code: 'KeyE' }))).toBe('edit');
+  expect(studyCommand(key('ً', { ctrlKey: true, shiftKey: true, code: 'KeyR' }))).toBe('restart');
+  // AltGr stays typing; a Latin layout keeps its own letters (AZERTY «,» sits on KeyM).
+  expect(studyCommand(key('ق', { ctrlKey: true, altKey: true, code: 'KeyR' }))).toBe(null);
+  expect(studyCommand(key(',', { ctrlKey: true, code: 'KeyM' }))).toBe(null);
+  expect(studyCommand(key('k', { ctrlKey: true, code: 'KeyX' }))).toBe('options');
+  expect(studyCommand(key('x', { ctrlKey: true, code: 'KeyK' }))).toBe(null);
+});
+
+test('An input method\'s first key (keyCode 229, nothing composed yet) starts a composition', () => {
+  expect(startsComposition({ key: 'Process', keyCode: 229, isComposing: false })).toBe(true);
+  expect(startsComposition({ key: 'Process', keyCode: 229, isComposing: true })).toBe(false);
+  expect(startsComposition({ key: 'Process', keyCode: 229, isComposing: false, repeat: true })).toBe(false);
+  expect(startsComposition({ key: 'n', keyCode: 78, isComposing: false })).toBe(false);
+  expect(startsComposition(null)).toBe(false);
+});
+
+test('Multiple choice digits: ASCII and Arabic-Indic, never with Alt or Ctrl', () => {
+  expect(learnKeys.choiceDigit(key('3'))).toBe(3);
+  expect(learnKeys.choiceDigit(key('٣'))).toBe(3);
+  expect(learnKeys.choiceDigit(key('۲'))).toBe(2);
+  expect(learnKeys.choiceDigit(key('٠'))).toBe(0);
+  expect(learnKeys.choiceDigit(key('3', { altKey: true }))).toBe(null);
+  expect(learnKeys.choiceDigit(key('٣', { ctrlKey: true }))).toBe(null);
+  expect(learnKeys.choiceDigit(key('a'))).toBe(null);
+  expect(learnKeys.choiceDigit(key('12'))).toBe(null);
+  expect(learnKeys.choiceDigit(null)).toBe(null);
 });
 
 test('The study screens and their key and view modules import without a DOM', () => {
@@ -218,6 +264,105 @@ test('Lernen: commands are prevented (Ctrl+R must not reload), held ones do noth
     expect(keys).toEqual([['€', 'char']]);
     off();
   });
+});
+
+test('Schreiben: Pinyin\'s first key in the locked field moves on and is left to the input method', () => {
+  withDocument((dispatch) => {
+    const input = node('input');
+    const other = node('input');
+    let continued = 0;
+    let entered = 0;
+    let can = true;
+    const commands = [];
+    const off = bindWriteKeys({
+      ownInput: () => input,
+      isLocked: () => false,
+      onEnter: () => entered++,
+      canContinueOnKey: () => can,
+      onContinueKey: () => continued++,
+      onCommand: (command) => commands.push(command),
+    });
+    // Not prevented: the composition then starts in the next question's (fresh) field.
+    const first = dispatch(input, 'Process', { keyCode: 229 });
+    expect(continued).toBe(1);
+    expect(first.defaultPrevented).toBe(false);
+    // Keys while composing, held keys, other fields and a question still to answer do nothing.
+    dispatch(input, 'Process', { keyCode: 229, isComposing: true });
+    dispatch(input, 'Process', { keyCode: 229, repeat: true });
+    dispatch(other, 'Process', { keyCode: 229 });
+    can = false;
+    dispatch(input, 'Process', { keyCode: 229 });
+    expect(continued).toBe(1);
+    // Enter and Ctrl+R while composing belong to the input method.
+    const confirm = dispatch(input, 'Enter', { keyCode: 229, isComposing: true });
+    dispatch(input, 'r', { ctrlKey: true, keyCode: 229, isComposing: true });
+    expect(entered).toBe(0);
+    expect(confirm.defaultPrevented).toBe(false);
+    expect(commands).toEqual([]);
+    off();
+  });
+});
+
+test('Lernen: Pinyin\'s first key in the answer field reaches onKey as «compose», never prevented', () => {
+  withDocument((dispatch) => {
+    const input = node('input');
+    const body = node('body');
+    const keys = [];
+    const off = learnKeys.bindLearnKeys({
+      ownInput: () => input,
+      isLocked: () => false,
+      onEnter: () => {},
+      ownsEnter: () => false,
+      onKey: (e, info) => keys.push([e.key, info.kind, info.own]),
+      onCommand: () => {},
+    });
+    const first = dispatch(input, 'Process', { keyCode: 229 });
+    expect(keys).toEqual([['Process', 'compose', true]]);
+    expect(first.defaultPrevented).toBe(false);
+    dispatch(input, 'Process', { keyCode: 229, isComposing: true });
+    dispatch(body, 'Process', { keyCode: 229 });
+    expect(keys).toHaveLength(1);
+    // The Arabic «لا» key types on a multiple choice question.
+    dispatch(body, 'لا');
+    expect(keys[1]).toEqual(['لا', 'char', false]);
+    off();
+  });
+});
+
+test('The Enter swallow after leaving a screen leaves an input method\'s Enter alone', async () => {
+  const saved = globalThis.window;
+  const listeners = [];
+  globalThis.window = {
+    addEventListener: (type, l) => listeners.push(l),
+    removeEventListener: (type, l) => {
+      const i = listeners.indexOf(l);
+      if (i >= 0) listeners.splice(i, 1);
+    },
+  };
+  try {
+    settleEnter(40);
+    const press = (extra = {}) => {
+      const e = {
+        key: 'Enter',
+        keyCode: 13,
+        isComposing: false,
+        defaultPrevented: false,
+        preventDefault() {
+          this.defaultPrevented = true;
+        },
+        stopPropagation() {},
+        ...extra,
+      };
+      for (const l of listeners.slice()) l(e);
+      return e;
+    };
+    expect(press({ keyCode: 229, isComposing: true }).defaultPrevented).toBe(false);
+    expect(press().defaultPrevented).toBe(true);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(listeners).toHaveLength(0);
+  } finally {
+    globalThis.window = saved;
+  }
 });
 
 await run('study-keys.test.js');

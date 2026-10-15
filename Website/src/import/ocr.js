@@ -19,7 +19,11 @@ const MSG_DECODE = 'Das Bild konnte nicht geöffnet werden.';
 const MSG_LOADING = 'Sprachdaten werden geladen …';
 const MSG_ABORTED = 'Import abgebrochen.';
 
-const TESS_CODES = { fr: 'fra', en: 'eng', es: 'spa', it: 'ita' };
+// Simplified Chinese only (chi_tra would double the download).
+const TESS_CODES = { fr: 'fra', en: 'eng', es: 'spa', it: 'ita', ar: 'ara', zh: 'chi_sim' };
+// A space between two CJK characters (Han, kana, CJK and full-width punctuation):
+// tesseract splits Chinese text into many words, but Chinese has no spaces.
+const CJK_SPACE = /([\u3001-\u303F\u3040-\u30FF\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF\uFF01-\uFF60\u{20000}-\u{2FA1F}]) +(?=[\u3001-\u303F\u3040-\u30FF\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF\uFF01-\uFF60\u{20000}-\u{2FA1F}])/gu;
 const NOISE_WORD = /^[|¦_\u2500-\u259F]+$/; // table rules, box drawing
 const EDGE_BARS = /^[|¦]+|[|¦]+$/g;
 
@@ -182,7 +186,7 @@ export function ocrDataToText(data) {
     // A trailing space (with its width) marks a word boundary for layout.
     items.push({ str: `${text} `, x, y: baselineY(word), w: (w * (text.length + 1)) / text.length, h: y1 - y0 });
   }
-  if (!items.length) return typeof data.text === 'string' ? fixGermanUmlauts(data.text.trim().split('\n')).join('\n') : '';
+  if (!items.length) return typeof data.text === 'string' ? fixGermanUmlauts(data.text.trim().split('\n').map(joinCjk)).join('\n') : '';
 
   const lines = collect(data, 'lines');
   let slope = estimateSlope(
@@ -195,7 +199,12 @@ export function ocrDataToText(data) {
       { minWidth: 80 },
     );
   }
-  return fixGermanUmlauts(itemsToLines(deskewItems(items, slope))).join('\n');
+  return fixGermanUmlauts(itemsToLines(deskewItems(items, slope)).map(joinCjk)).join('\n');
+}
+
+// Chinese (and Japanese) text without the spaces between OCR words.
+function joinCjk(line) {
+  return line.replace(CJK_SPACE, '$1');
 }
 
 // ---------------------------------------------------------------------------

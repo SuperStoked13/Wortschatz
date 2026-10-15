@@ -4,6 +4,7 @@
 
 import { h, focusableWithin, prefersReducedMotion } from '../lib/dom.js';
 import { STATUS } from '../lib/labels.js';
+import { isComposingKey } from '../lib/shortcuts.js';
 import { icon } from './icons.js';
 
 let idCounter = 0;
@@ -630,7 +631,8 @@ function inertOutside(keep) {
 
 function onModalKeydown(e) {
   const top = modalStack[modalStack.length - 1];
-  if (!top) return;
+  // Esc of an input method (Pinyin) cancels its composition, not the dialog.
+  if (!top || isComposingKey(e)) return;
   if (e.key === 'Escape') {
     if (top.dismissible) {
       e.preventDefault();

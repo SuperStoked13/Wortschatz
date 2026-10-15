@@ -209,6 +209,8 @@ enum LearnOptionsCopy {
             case .fr: "«ecole» = «école», «ahnlich» = «ähnlich»"
             case .es: "«arbol» = «árbol», «ahnlich» = «ähnlich»"
             case .it: "«citta» = «città», «ahnlich» = «ähnlich»"
+            // Missing tones count like accents. Arabic has none: its vowel marks never count.
+            case .zh: "«ni hao» = «nǐ hǎo», «ahnlich» = «ähnlich»"
             default: "«ahnlich» = «ähnlich»"
             }
         return [

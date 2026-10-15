@@ -8,14 +8,14 @@ function accuracy(lines, lang) {
   return { rate: (lines.length - misses.length) / lines.length, misses };
 }
 
-test('SUPPORTED lists the five languages', () => {
-  expect(SUPPORTED).toEqual(['fr', 'de', 'en', 'es', 'it']);
+test('SUPPORTED lists the five Latin languages, then Arabic and Chinese', () => {
+  expect(SUPPORTED).toEqual(['fr', 'de', 'en', 'es', 'it', 'ar', 'zh']);
 });
 
 test('scoreLanguages returns non-negative scores for every language', () => {
   for (const text of ['le chat', 'die Katze', 'the house', 'el perro', 'il cane', 'xyz', 'Frau']) {
     const s = scoreLanguages(text);
-    expect(Object.keys(s).sort()).toEqual(['de', 'en', 'es', 'fr', 'it']);
+    expect(Object.keys(s).sort()).toEqual(['ar', 'de', 'en', 'es', 'fr', 'it', 'zh']);
     for (const lang of SUPPORTED) {
       expect(typeof s[lang]).toBe('number');
       expect(s[lang] >= 0).toBe(true);
@@ -28,8 +28,12 @@ test('scoreLanguages is all zero without letters and never throws', () => {
     const s = scoreLanguages(input);
     for (const lang of SUPPORTED) expect(s[lang] >= 0).toBe(true);
   }
-  expect(scoreLanguages('')).toEqual({ fr: 0, de: 0, en: 0, es: 0, it: 0 });
-  expect(scoreLanguages('12 / 40')).toEqual({ fr: 0, de: 0, en: 0, es: 0, it: 0 });
+  const zero = { fr: 0, de: 0, en: 0, es: 0, it: 0, ar: 0, zh: 0 };
+  expect(scoreLanguages('')).toEqual(zero);
+  expect(scoreLanguages('12 / 40')).toEqual(zero);
+  // Arabic punctuation and digits, the tatweel and vowel marks alone are no letters.
+  expect(scoreLanguages('١٢ ، ؟ ـ')).toEqual(zero);
+  expect(scoreLanguages('，。！')).toEqual(zero);
 });
 
 test('articles push their language up', () => {
@@ -199,6 +203,107 @@ test('English school and media words are English', () => {
   for (const w of ['lesson', 'chapter', 'exercise', 'homework', 'grammar', 'newspaper', 'advertisement', 'channel']) {
     expect(`${w}: ${detectLanguage(w).lang}`).toBe(`${w}: en`);
   }
+});
+
+// ---------------------------------------------------------------------------
+// Arabic and Chinese (by their script)
+
+const LATIN = ['fr', 'de', 'en', 'es', 'it'];
+const latinScores = (s) => LATIN.map((l) => s[l]);
+
+test('Arabic words are Arabic and give no Latin evidence', () => {
+  for (const w of ['كتاب', 'مدرسة', 'الكتاب', 'مرحبا', 'مع السلامة', 'سيارة، عربية']) {
+    const s = scoreLanguages(w);
+    expect(`${w}: ${latinScores(s).join(',')}`).toBe(`${w}: 0,0,0,0,0`);
+    expect(s.ar).toBeGreaterThan(3);
+    expect(s.zh).toBe(0);
+    const d = detectLanguage(w);
+    expect(`${w}: ${d.lang}`).toBe(`${w}: ar`);
+    expect(d.confidence).toBeGreaterThan(0.85);
+  }
+  // Every word counts.
+  expect(scoreLanguages('مع السلامة').ar).toBeGreaterThan(scoreLanguages('السلامة').ar);
+});
+
+test('Arabic vowel marks, the tatweel and presentation forms do not change the evidence', () => {
+  const plain = scoreLanguages('الكتاب');
+  expect(scoreLanguages('الْكِتَابُ')).toEqual(plain); // harakat would otherwise split the word
+  expect(scoreLanguages('الكـتـاب')).toEqual(plain);
+  expect(scoreLanguages('مَدْرَسَةٌ جَمِيلَةٌ')).toEqual(scoreLanguages('مدرسة جميلة'));
+  expect(scoreLanguages('ﻛﺘﺎﺏ')).toEqual(scoreLanguages('كتاب'));
+});
+
+test('Han runs are Chinese and give no Latin evidence', () => {
+  for (const w of ['你好', '我是学生。', '谢谢', '中国', '书']) {
+    const s = scoreLanguages(w);
+    expect(`${w}: ${latinScores(s).join(',')}`).toBe(`${w}: 0,0,0,0,0`);
+    expect(s.zh).toBeGreaterThan(3);
+    expect(s.ar).toBe(0);
+    expect(`${w}: ${detectLanguage(w).lang}`).toBe(`${w}: zh`);
+  }
+  // A run of characters is one piece of evidence; separate runs add up.
+  expect(scoreLanguages('我是学生').zh).toBe(scoreLanguages('书').zh);
+  expect(scoreLanguages('你好，朋友').zh).toBeGreaterThan(scoreLanguages('你好').zh);
+});
+
+test('pinyin tone marks are Chinese evidence', () => {
+  for (const w of ['nǐ hǎo', 'shuǐ', 'lǎoshī', 'duìbuqǐ', 'Běijīng', 'lǜ', 'māma', 'zǎoshang hǎo', 'kāfēi']) {
+    expect(`${w}: ${detectLanguage(w).lang}`).toBe(`${w}: zh`);
+  }
+  // A word with a tone mark is pinyin as a whole: no Latin evidence (shuǐ looks English).
+  expect(latinScores(scoreLanguages('shuǐ')).join(',')).toBe('0,0,0,0,0');
+  // The caron (3rd tone) counts more than the macron (1st tone); one word, one piece of evidence.
+  expect(scoreLanguages('hǎo').zh).toBeGreaterThan(scoreLanguages('hē').zh);
+  expect(scoreLanguages('lǎoshī').zh).toBe(scoreLanguages('hǎo').zh);
+  expect(scoreLanguages('nǐ hǎo').zh).toBe(2 * scoreLanguages('hǎo').zh);
+  expect(scoreLanguages('你好 (nǐ hǎo)').zh).toBeGreaterThan(scoreLanguages('你好').zh);
+  expect(detectLanguage('你好 (nǐ hǎo)').lang).toBe('zh');
+});
+
+test('Latin-script text never gets Arabic or Chinese evidence', () => {
+  for (const w of ['le chat', 'die Katze', 'the house', 'el niño', 'la città', 'Straße', 'œuvre', 'xièxie', 'ni3 hao3', 'Москва']) {
+    const s = scoreLanguages(w);
+    expect(`${w}: ${s.ar} ${s.zh}`).toBe(`${w}: 0 0`);
+  }
+  // Without evidence they take no share of the probability.
+  const fr = ['le chat', 'le chien', 'la souris', 'la maison'];
+  expect(detectColumn(fr).lang).toBe('fr');
+  expect(detectLanguage('le chat').confidence).toBeGreaterThan(0.99);
+});
+
+test('mixed lines: script words skip the Latin signals, Latin words keep them', () => {
+  const s = scoreLanguages('كتاب Buch');
+  expect(s.ar).toBe(scoreLanguages('كتاب').ar);
+  expect(s.de).toBeGreaterThan(3);
+  // Han glued to Latin letters is cut at the script boundary.
+  const g = scoreLanguages('你好Hallo');
+  expect(g.zh).toBe(scoreLanguages('你好').zh);
+  expect(g.de).toBeGreaterThan(1);
+  expect(detectLanguage('الكتاب - das Buch').lang === 'unknown').toBe(false);
+});
+
+test('detectColumn: Arabic and Chinese columns', () => {
+  const ar = detectColumn(['كتاب', 'قلم', 'بيت', 'مدرسة', 'المعلّم']);
+  expect(ar.lang).toBe('ar');
+  expect(ar.confidence).toBeGreaterThan(0.9);
+  const zh = detectColumn(['你好', '谢谢', '再见', '学生', '朋友']);
+  expect(zh.lang).toBe('zh');
+  expect(zh.confidence).toBeGreaterThan(0.9);
+  expect(detectColumn(['你好 (nǐ hǎo)', '谢谢 (xièxie)', '再见 (zàijiàn)']).lang).toBe('zh');
+  // A German column with one Arabic line stays German.
+  expect(detectColumn(['die Katze', 'der Hund', 'كتاب', 'das Haus', 'die Maus']).lang).toBe('de');
+});
+
+test('detectColumn: right language for the Arabic and Chinese fixtures', () => {
+  const ar = read('arabic-german.txt').split('\n').filter((l) => l.includes(' - ')).slice(1).map((l) => l.split(' - '));
+  expect(detectColumn(ar.map((r) => r[0])).lang).toBe('ar');
+  expect(detectColumn(ar.map((r) => r[1])).lang).toBe('de');
+  const zh = read('chinese-german.txt').split('\n').filter((l) => l.trim()).slice(1).map((l) => l.split('\t'));
+  expect(detectColumn(zh.map((r) => r[0])).lang).toBe('zh');
+  expect(detectColumn(zh.map((r) => r[2])).lang).toBe('de');
+  const dash = read('chinese-dash.txt').split('\n').filter((l) => l.trim()).slice(1).map((l) => l.split(/\s*-\s/));
+  expect(detectColumn(dash.map((r) => r[0])).lang).toBe('zh');
+  expect(detectColumn(dash.map((r) => r[1])).lang).toBe('de');
 });
 
 await run('langdetect.test.js');

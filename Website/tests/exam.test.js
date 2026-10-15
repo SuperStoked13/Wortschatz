@@ -1234,4 +1234,50 @@ test('the screen tests leave no exam running', async () => {
   expect(mounted.size).toBe(0);
 });
 
+test('Arabic and Chinese: tones are a small mistake, variants and pinyin are no mistake', () => {
+  const cards = [
+    { id: 'z1', term: '你好 (nǐ hǎo)', definition: 'Hallo' },
+    { id: 'a1', term: 'مدرسة', definition: 'Schule' },
+    { id: 'a2', term: 'الكتاب', definition: 'das Buch' },
+  ];
+  const q = (cardId, answerLang) => {
+    const card = cards.find((c) => c.id === cardId);
+    return { number: 1, cardId, ask: 'term', prompt: card.definition, expected: card.term, promptLang: 'de', answerLang };
+  };
+  expect(E.SMALL_MISTAKES).toContain('tones');
+  expect(E.SMALL_MISTAKES).not.toContain('variant');
+  expect(E.SMALL_MISTAKES).not.toContain('pinyin');
+  const han = E.markAnswer('你好', q('z1', 'zh'), cards, 'half');
+  expect([han.mark, han.points, han.note]).toEqual(['correct', 1, null]);
+  const pinyin = E.markAnswer('ni3 hao3', q('z1', 'zh'), cards, 'half');
+  expect([pinyin.mark, pinyin.points, pinyin.note]).toEqual(['correct', 1, null]);
+  const tones = E.markAnswer('ni hao', q('z1', 'zh'), cards, 'half');
+  expect([tones.mark, tones.points, tones.note]).toEqual(['minor', 0.5, 'Töne']);
+  const variant = E.markAnswer('مدرسه', q('a1', 'ar'), cards, 'half');
+  expect([variant.mark, variant.points, variant.note]).toEqual(['correct', 1, null]);
+  // A missing ال is a missing article (small); the variant adds nothing.
+  const article = E.markAnswer('كتاب', q('a2', 'ar'), cards, 'half');
+  expect([article.mark, article.note]).toEqual(['minor', 'Artikel fehlte']);
+  const wrong = E.markAnswer('谢谢', q('z1', 'zh'), cards, 'half');
+  expect(wrong.mark).toBe('wrong');
+});
+
+test('Chinese and Arabic answer diffs use the form typed and hide unwritten vowel marks', () => {
+  expect(E.answerDiff('ni hao', '你好 (nǐ hǎo), 您好 (nín hǎo)', 'zh')).toEqual([
+    { type: 'same', text: 'n' },
+    { type: 'del', text: 'i' },
+    { type: 'add', text: 'ǐ' },
+    { type: 'same', text: ' h' },
+    { type: 'del', text: 'a' },
+    { type: 'add', text: 'ǎ' },
+    { type: 'same', text: 'o' },
+  ]);
+  expect(E.closestDiff('دفتر', 'كِتَابٌ، دَفْتَرٌ', 'ar')).toEqual([{ type: 'same', text: 'دفتر' }]);
+  expect(E.closestDiff('كتب', 'كِتَابٌ، دَفْتَرٌ', 'ar')).toEqual([
+    { type: 'same', text: 'كت' },
+    { type: 'add', text: 'ا' },
+    { type: 'same', text: 'ب' },
+  ]);
+});
+
 await run('exam.test.js');

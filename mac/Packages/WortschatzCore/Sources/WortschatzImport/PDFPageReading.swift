@@ -51,6 +51,8 @@ enum PDFPageText {
         guard let first = words.first, let last = words.last else { return }
 
         // Rotated text keeps its own lines in PDFKit; their characters march along the rotation.
+        // PDFKit gives lines in logical order: with right-to-left text (Arabic) the last character
+        // may sit left of the first one, so only the slope counts there.
         let firstChar = first.lowerBound
         let lastChar = last.upperBound - 1
         if lastChar > firstChar,
@@ -58,7 +60,8 @@ enum PDFPageText {
            let b = geometry.rect(of: NSRange(location: lastChar, length: 1), on: page) {
             let dx = b.midX - a.midX
             let dy = b.midY - a.midY
-            if (dx * dx + dy * dy).squareRoot() > 1, abs(atan2(dy, dx)) > maxAngle { return }
+            let mixed = containsRightToLeft(text, line)
+            if (dx * dx + dy * dy).squareRoot() > 1, abs(atan2(dy, mixed ? abs(dx) : dx)) > maxAngle { return }
         }
 
         for word in words {
@@ -89,6 +92,17 @@ enum PDFPageText {
     private static let ligatures: [UInt32: String] = [
         0xFB00: "ff", 0xFB01: "fi", 0xFB02: "fl", 0xFB03: "ffi", 0xFB04: "ffl", 0xFB05: "st", 0xFB06: "st",
     ]
+
+    /// Whether the line holds right-to-left characters (Hebrew, Arabic, … and their presentation
+    /// forms; `RTL_CHAR` of layout.js).
+    static func containsRightToLeft(_ text: NSString, _ line: Range<Int>) -> Bool {
+        line.contains { i in
+            switch text.character(at: i) {
+            case 0x590...0x8FF, 0xFB1D...0xFDFF, 0xFE70...0xFEFE: true
+            default: false
+            }
+        }
+    }
 
     private static func isLineBreak(_ u: unichar) -> Bool {
         u == 0x0A || u == 0x0D || u == 0x2028 || u == 0x2029

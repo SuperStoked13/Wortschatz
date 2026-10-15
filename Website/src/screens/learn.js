@@ -28,7 +28,7 @@
 // screen context `c` built below.
 
 import { h } from '../lib/dom.js';
-import { LANGS } from '../lib/labels.js';
+import { textAttrs } from '../lib/labels.js';
 import { speak, stopSpeaking } from '../lib/speech.js';
 import { playStudyStep } from '../lib/sounds.js';
 import { db } from '../store/db.js';
@@ -45,7 +45,7 @@ import { settleEnter, settleOnLeave } from './write-keys.js';
 import { isApplePlatform } from './editor-util.js';
 import { STREAK_START, recordStreak, overrideStreak } from './answer-streak.js';
 import { createMcCard } from './learn-mc.js';
-import { bindLearnKeys } from './learn-keys.js';
+import { bindLearnKeys, choiceDigit } from './learn-keys.js';
 import { createAnswering, MISS_TITLE } from './learn-answer.js';
 import { createLearnDialogs } from './learn-dialogs.js';
 import {
@@ -84,8 +84,6 @@ const SUBSET_WHAT = {
   learning: 'nur die nicht gemeisterten Begriffe',
   missed: 'nur die zuletzt falsch beantworteten Begriffe',
 };
-
-const bcp47 = (lang) => (LANGS[lang] && LANGS[lang].bcp47) || null;
 
 function entryState() {
   const st = history.state;
@@ -295,7 +293,7 @@ export function render(outlet, ctx) {
     live.textContent = '';
     announceTimer = setTimeout(() => {
       if (c.disposed) return;
-      live.replaceChildren(...parts.map((p) => (typeof p === 'string' ? p : h('span', { lang: bcp47(p.lang) }, p.text))));
+      live.replaceChildren(...parts.map((p) => (typeof p === 'string' ? p : h('span', textAttrs(p.lang), p.text))));
     }, 60);
   };
 
@@ -819,8 +817,8 @@ export function render(outlet, ctx) {
   };
 
   // One key on a multiple choice question (core/typeahead.js): letters type, ⌫ deletes,
-  // the arrows highlight, Enter chooses the highlighted option, 1–4 choose, 0 = «Weiss
-  // ich nicht», Esc clears the letters before it leaves.
+  // the arrows highlight, Enter chooses the highlighted option, 1–4 choose (Arabic-Indic
+  // ١–٤ too), 0 = «Weiss ich nicht», Esc clears the letters before it leaves.
   function typeOnChoices(key, repeat = false) {
     if (!choosing()) return;
     const out = typingKey(c.typing, key, {
@@ -862,21 +860,27 @@ export function render(outlet, ctx) {
   // Multiple choice: letters, ⌫ and the arrows go to the typing (typeOnChoices); after its
   // feedback any key continues (without typing or picking anything in the next question).
   // After a correct written answer any key continues and, typed in the answer field,
-  // starts the next written answer.
+  // starts the next written answer (an input method's composition too: 'compose' is never
+  // prevented, so it starts in the next question's field).
   function onKey(e, { own, kind, word, direction }) {
     if (c.stage !== 'question' || !c.current) return;
+    if (kind === 'compose') {
+      if (c.current.q.type === 'written' && c.phase === 'correct') answers.continueNext(false);
+      return;
+    }
     if (c.current.q.type === 'mc') {
       if (c.phase === 'question') {
+        const digit = kind === 'char' ? choiceDigit(e) : null;
         if (kind === 'delete') {
           e.preventDefault();
           typeOnChoices({ kind: 'delete', word }, e.repeat);
         } else if (kind === 'arrow') {
           e.preventDefault();
           typeOnChoices({ kind: 'arrow', direction }, e.repeat);
-        } else if (/^[0-9]$/.test(e.key) && !e.altKey && !e.ctrlKey) {
+        } else if (digit != null) {
           // Digits choose: a transition, never while held or right after the question appeared.
           e.preventDefault();
-          if (!e.repeat && !c.locked()) typeOnChoices({ kind: 'digit', n: Number(e.key) });
+          if (!e.repeat && !c.locked()) typeOnChoices({ kind: 'digit', n: digit });
         } else if (e.key === ' ' && !c.typing.typed) {
           // Nothing typed yet: Space presses a focused option (the browser's own click);
           // elsewhere it must not scroll the page.

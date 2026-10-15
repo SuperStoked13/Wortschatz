@@ -12,8 +12,8 @@ function expectShape(r) {
   expect(typeof r.swapped).toBe('boolean');
   expect(Array.isArray(r.skipped)).toBe(true);
   expect(Array.isArray(r.warnings)).toBe(true);
-  expect(['fr', 'de', 'en', 'es', 'it', 'other']).toContain(r.termLang);
-  expect(['fr', 'de', 'en', 'es', 'it', 'other']).toContain(r.defLang);
+  expect(['fr', 'de', 'en', 'es', 'it', 'ar', 'zh', 'other']).toContain(r.termLang);
+  expect(['fr', 'de', 'en', 'es', 'it', 'ar', 'zh', 'other']).toContain(r.defLang);
   if (r.format !== 'delimited') expect(r.delimiter).toBe(null);
   for (const c of r.cards) {
     expect(typeof c.term).toBe('string');
@@ -1284,6 +1284,145 @@ test('alternating lines of two words in one language stay alternating', () => {
   const r = parseVocab('le chien\nder Hund\nla maison\ndas Haus\nGuten Tag\nBonjour');
   expect(r.format).toBe('alternating');
   expect(pairs(r)).toEqual([['le chien', 'der Hund'], ['la maison', 'das Haus'], ['Bonjour', 'Guten Tag']]);
+});
+
+// ---------------------------------------------------------------------------
+// Arabic and Chinese
+
+test('fixture: arabic-german.txt (Arabic kept as written, header and page number skipped)', () => {
+  const r = checkFixture('arabic-german.txt', 13, 'delimited', ' - ', 'ar', 'de', false, [
+    ['الكتاب', 'das Buch'],
+    ['مَدْرَسَة', 'die Schule'], // vowel marks stay
+    ['المعلّم', 'der Lehrer'],
+    ['سيارة، عربية', 'das Auto'], // the Arabic comma separates alternatives, not the sides
+    ['مع السلامة', 'auf Wiedersehen'],
+  ]);
+  expect(r.skipped.map((s) => s.reason)).toEqual(['heading', 'pageNumber']);
+  expect(flagged(r)).toEqual([]);
+});
+
+test('fixture: chinese-german.txt (characters | pinyin | German become one card per row)', () => {
+  const r = checkFixture('chinese-german.txt', 10, 'delimited', '\t', 'zh', 'de', false, [
+    ['你好 (nǐ hǎo)', 'hallo'],
+    ['老师 (lǎoshī)', 'der Lehrer, die Lehrerin'],
+    ['中国 (Zhōngguó)', 'China'],
+    ['我是学生。 (Wǒ shì xuésheng.)', 'Ich bin Schüler.'],
+  ]);
+  // "中文 Pinyin Deutsch" is a header row.
+  expect(r.skipped).toEqual([{ line: 1, text: '中文 Pinyin Deutsch', reason: 'heading' }]);
+  expect(flagged(r)).toEqual([]);
+});
+
+test('fixture: chinese-dash.txt (closing bracket glued to the dash)', () => {
+  const r = checkFixture('chinese-dash.txt', 9, 'delimited', ' - ', 'zh', 'de', false, [
+    ['你好（nǐ hǎo）', 'Hallo'], // full-width brackets stay as written
+    ['不客气（bú kèqi）', 'bitte, gern geschehen'],
+    ['早上好 (zǎoshang hǎo)', 'guten Morgen'],
+    ["晚安 (wǎn'ān)", 'gute Nacht'],
+    ['不 (bù)', 'nein, nicht'],
+  ]);
+  expect(r.skipped).toEqual([{ line: 1, text: 'Chinesisch - Deutsch', reason: 'heading' }]);
+});
+
+test('Chinese: a closing bracket glued to a spaced dash (hyphen, en dash, full-width or ASCII)', () => {
+  for (const text of ['你好（nǐ hǎo）- Hallo', '你好（nǐ hǎo）– Hallo', '你好 (nǐ hǎo)- Hallo']) {
+    const r = parseVocab(text);
+    expect(`${text}: ${JSON.stringify(pairs(r))}`).toBe(`${text}: ${JSON.stringify([[text.split(/[-–] /)[0], 'Hallo']])}`);
+    expect(r.termLang).toBe('zh');
+  }
+  // Glued on both sides (en dash) works like in Latin lists.
+  expect(pairs(parseVocab('你好（nǐ hǎo）–Hallo\n谢谢（xièxie）–danke'))).toEqual([
+    ['你好（nǐ hǎo）', 'Hallo'],
+    ['谢谢（xièxie）', 'danke'],
+  ]);
+});
+
+test('Chinese: the full-width colon separates like ":"', () => {
+  const r = parseVocab('你好：Hallo\n谢谢：danke\n再见： auf Wiedersehen');
+  expect(pairs(r)).toEqual([['你好', 'Hallo'], ['谢谢', 'danke'], ['再见', 'auf Wiedersehen']]);
+  expect(r.delimiter).toBe(': ');
+  expect(`${r.termLang}/${r.defLang}`).toBe('zh/de');
+  // A colon inside a side keeps its full-width form.
+  expect(pairs(parseVocab('注意：小心 - Achtung\n你好 - Hallo'))[0]).toEqual(['注意：小心', 'Achtung']);
+});
+
+test('Chinese: characters and pinyin cells in any order beside each other are merged', () => {
+  const expected = [['你好 (nǐ hǎo)', 'Hallo'], ['谢谢 (xièxie)', 'danke'], ['再见 (zàijiàn)', 'auf Wiedersehen']];
+  expect(pairs(parseVocab('nǐ hǎo\t你好\tHallo\nxièxie\t谢谢\tdanke\nzàijiàn\t再见\tauf Wiedersehen'))).toEqual(expected);
+  expect(pairs(parseVocab('你好 - nǐ hǎo - Hallo\n谢谢 - xièxie - danke\n再见 - zàijiàn - auf Wiedersehen'))).toEqual(expected);
+  // German first: the merged side is turned to the term side.
+  const de = parseVocab('Hallo\t你好\tnǐ hǎo\ndanke\t谢谢\txièxie\nauf Wiedersehen\t再见\tzàijiàn');
+  expect(pairs(de)).toEqual(expected);
+  expect(de.swapped).toBe(true);
+  // Tone numbers, toneless pinyin, brackets already around the pinyin, a single row.
+  expect(pairs(parseVocab('你好\tni3 hao3\tHallo\n谢谢\txie4xie5\tdanke'))).toEqual([['你好 (ni3 hao3)', 'Hallo'], ['谢谢 (xie4xie5)', 'danke']]);
+  expect(pairs(parseVocab('你好\tni hao\tHallo\n谢谢\txiexie\tdanke'))).toEqual([['你好 (ni hao)', 'Hallo'], ['谢谢 (xiexie)', 'danke']]);
+  expect(pairs(parseVocab('你好\t(nǐ hǎo)\tHallo\n谢谢\t（xièxie）\tdanke'))).toEqual([['你好 (nǐ hǎo)', 'Hallo'], ['谢谢 (xièxie)', 'danke']]);
+  expect(pairs(parseVocab('你好\tnǐ hǎo\tHallo'))).toEqual([['你好 (nǐ hǎo)', 'Hallo']]);
+});
+
+test('Chinese: a third column that is not pinyin is not merged', () => {
+  // Characters | German | English: no pinyin column.
+  const r = parseVocab('你好\tHallo\thello\n谢谢\tdanke\tthank you\n再见\tauf Wiedersehen\tgoodbye');
+  for (const c of r.cards) expect(c.term.includes(' (')).toBe(false);
+  // Two cells stay as they are.
+  expect(pairs(parseVocab('你好\tHallo\n谢谢\tdanke'))).toEqual([['你好', 'Hallo'], ['谢谢', 'danke']]);
+  expect(pairs(parseVocab('你好 nǐ hǎo\tHallo\n谢谢 xièxie\tdanke'))).toEqual([['你好 nǐ hǎo', 'Hallo'], ['谢谢 xièxie', 'danke']]);
+});
+
+test('Chinese and Arabic lists in other layouts', () => {
+  const alt = parseVocab('你好\nHallo\n谢谢\ndanke\n再见\nauf Wiedersehen');
+  expect(pairs(alt)).toEqual([['你好', 'Hallo'], ['谢谢', 'danke'], ['再见', 'auf Wiedersehen']]);
+  expect(`${alt.termLang}/${alt.defLang}`).toBe('zh/de');
+  const ar = parseVocab('كتاب\nBuch\nقلم\nStift\nبيت\nHaus');
+  expect(pairs(ar)).toEqual([['كتاب', 'Buch'], ['قلم', 'Stift'], ['بيت', 'Haus']]);
+  expect(`${ar.termLang}/${ar.defLang}`).toBe('ar/de');
+  // Both languages on a line without a delimiter: cut at the script boundary.
+  const bil = parseVocab('كتاب Buch\nقلم Stift\nبيت Haus\nمدرسة Schule');
+  expect(pairs(bil)).toEqual([['كتاب', 'Buch'], ['قلم', 'Stift'], ['بيت', 'Haus'], ['مدرسة', 'Schule']]);
+  // German first is turned around.
+  const de = parseVocab('Buch = كتاب\nStift = قلم\nHaus = بيت');
+  expect(pairs(de)).toEqual([['كتاب', 'Buch'], ['قلم', 'Stift'], ['بيت', 'Haus']]);
+  expect(de.swapped).toBe(true);
+});
+
+test('Arabic text is stored as written: vowel marks, tatweel and presentation forms stay, bidi marks go', () => {
+  const RLM = String.fromCharCode(0x200f);
+  expect(pairs(parseVocab('الْكِتَابُ = das Buch\nكـتـاب = Buch\nﻛﺘﺎﺏ = Buch'))).toEqual([
+    ['الْكِتَابُ', 'das Buch'],
+    ['كـتـاب', 'Buch'],
+    ['ﻛﺘﺎﺏ', 'Buch'],
+  ]);
+  expect(pairs(parseVocab(`${RLM}كتاب${RLM} = Buch\nقلم = Stift`))).toEqual([['كتاب', 'Buch'], ['قلم', 'Stift']]);
+});
+
+test('header rows name Arabic and Chinese', () => {
+  for (const text of ['Arabisch - Deutsch\nكتاب - Buch', 'العربية | Deutsch\nكتاب | Buch', 'AR ; DE\nكتاب ; Buch', 'arabe = allemand\nكتاب = Buch']) {
+    const r = parseVocab(text);
+    expect(`${text}: ${r.skipped.map((s) => s.reason).join()} ${JSON.stringify(pairs(r))}`).toBe(`${text}: heading [["كتاب","Buch"]]`);
+  }
+  for (const header of ['Chinesisch - Deutsch', '中文 - Deutsch', 'Mandarin - Deutsch', 'ZH - DE', '汉语 - Deutsch', '普通話 - Deutsch']) {
+    const r = parseVocab(`${header}\n你好 - Hallo\n谢谢 - danke`);
+    expect(`${header}: ${r.skipped.map((s) => s.reason).join()}`).toBe(`${header}: heading`);
+    expect(pairs(r)).toEqual([['你好', 'Hallo'], ['谢谢', 'danke']]);
+  }
+  // Names of one language on both sides are a card, not a header.
+  expect(pairs(parseVocab('chinois - Chinesisch'))).toEqual([['chinois', 'Chinesisch']]);
+  expect(pairs(parseVocab('arabe - Arabisch'))).toEqual([['arabe', 'Arabisch']]);
+});
+
+test('ar and zh are accepted as language hints', () => {
+  for (const lang of ['ar', 'zh']) {
+    const empty = parseVocab('', { termLang: lang, defLang: 'de' });
+    expect(`${empty.termLang}/${empty.defLang}`).toBe(`${lang}/de`);
+    expect(parseVocab('', { termLang: 'fr', defLang: lang }).defLang).toBe(lang);
+  }
+  // Pinyin without tone marks looks Romance; picked as Chinese it is Chinese.
+  const r = parseVocab('ni hao - Hallo\nxiexie - danke\nzaijian - auf Wiedersehen', { termLang: 'zh' });
+  expect(`${r.termLang}/${r.defLang}`).toBe('zh/de');
+  expect(pairs(r)).toEqual([['ni hao', 'Hallo'], ['xiexie', 'danke'], ['zaijian', 'auf Wiedersehen']]);
+  // Without the hint the detection decides.
+  expect(parseVocab('ni hao - Hallo\nxiexie - danke\nzaijian - auf Wiedersehen').termLang === 'zh').toBe(false);
 });
 
 await run('parser.test.js');

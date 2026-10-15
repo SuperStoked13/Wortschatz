@@ -31,7 +31,7 @@ struct WritePromptCard: View {
                         .foregroundStyle(.primary)
                         .multilineTextAlignment(.leading)
                         .fixedSize(horizontal: false, vertical: true)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .cardTextLine(question.promptLang)
                         // The first question glides in like every later one.
                         .entranceShift(x: StudyEntrance.promptShift)
                         .id(question.qid)
@@ -142,6 +142,7 @@ struct WritePromptCard: View {
         let wantsFocus = WriteKeyRouter.focus(for: state) == .answer
         return StudyAnswerBox(
             correctAnswer: correctAnswer,
+            lang: question.answerLang,
             // Ringed as soon as the step wants the keys there, not only once AppKit has moved
             // them (a few frames later): the ring no longer flickers in after the field.
             isActive: wantsFocus || focus.wrappedValue == .answer,
@@ -160,6 +161,7 @@ struct WritePromptCard: View {
                 selection: $selection,
                 label: WriteFlow.fieldLabel(state),
                 placeholder: WriteFlow.fieldPlaceholder(state),
+                lang: question.answerLang,
                 isCopy: isCopy,
                 isInvalid: state.inputInvalid,
                 focus: focus,
@@ -170,8 +172,10 @@ struct WritePromptCard: View {
         }
     }
 
-    /// The special-character bar inserts at the caret (or replaces the selection).
+    /// The special-character bar inserts at the caret (or replaces the selection); not while an
+    /// input method composes in the field (its marked text is not in `input` yet).
     private func insert(_ character: String) {
+        guard !LearnKeyRouter.isComposingText else { return }
         var text = state.input
         var caret = selection
         SpecialCharacters.insert(character, into: &text, selection: &caret)
@@ -192,6 +196,8 @@ private struct WriteAnswerField: View {
     @Binding var selection: TextSelection?
     let label: String
     let placeholder: String
+    /// The answer's language (Arabic is typed from the right edge).
+    let lang: Lang
     let isCopy: Bool
     let isInvalid: Bool
     var focus: FocusState<WriteKeyRouter.Focus?>.Binding
@@ -207,6 +213,7 @@ private struct WriteAnswerField: View {
         TextField(label, text: $text, selection: $selection, prompt: Text(placeholder))
             .textFieldStyle(.plain)
             .font(Typography.answerField)
+            .cardFieldDirection(lang)
             .autocorrectionDisabled()
             .writingToolsBehavior(.disabled)
             .focused(focus, equals: .answer)
@@ -239,6 +246,7 @@ private struct WriteCorrectDetails: View {
                         .foregroundStyle(.secondary)
                     Text(LearnText.spoken(expected, lang: answerLang))
                         .fontWeight(.semibold)
+                        .cardTextDirection(answerLang)
                 }
                 .font(.title3)
                 .accessibilityElement(children: .combine)
@@ -293,6 +301,7 @@ private struct WriteMissDetails<Copy: View>: View {
                         .font(Typography.answerField)
                         .foregroundStyle(Theme.success.text)
                         .fixedSize(horizontal: false, vertical: true)
+                        .cardTextDirection(question.answerLang)
                     if question.answerLang != .other {
                         LearnIconButton(label: "Antwort vorlesen", help: "Antwort vorlesen", systemImage: "speaker.wave.2", action: onSpeak)
                     }

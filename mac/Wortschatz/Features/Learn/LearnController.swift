@@ -173,8 +173,11 @@ final class LearnController {
         !isLive || model.route.study?.id == requestID
     }
 
-    /// A key press from the screen's key handler or the answer field.
+    /// A key press from the screen's key handler or the answer field. After an answer, a letter
+    /// typed with an input method continues without typing it (`LearnKeyRouter.continuing`).
     func press(_ key: KeyInput, isRepeat: Bool) {
+        let afterAnswer = if case .feedback = state.phase { true } else { false }
+        let key = LearnKeyRouter.continuing(key, afterAnswer: afterAnswer, inputMethod: InputSource.isInputMethodActive)
         send(.key(key, isRepeat: isRepeat))
     }
 
@@ -261,7 +264,7 @@ final class LearnController {
         let graded = LearnFlow.gradeQuestion(
             question, given: given, cards: state.cards, tolerance: state.options.tolerance,
             extraAnswers: synonyms.extraAnswers(for: query))
-        guard
+        guard synonyms.supports(query),
             ExtendedSynonyms.worthChecking(
                 given: given, result: graded.result, query: query, card: state.cards.first { $0.id == question.cardId },
                 cards: state.cards, ask: question.ask)

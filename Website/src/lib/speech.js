@@ -6,6 +6,7 @@
 
 import { LANGS } from './labels.js';
 import { PREF, getPref, setPref } from './prefs.js';
+import { hasHan } from '../core/text.js';
 
 let voicesHooked = false;
 const voiceCache = new Map();
@@ -75,10 +76,14 @@ function bcp47For(langCode) {
   return (LANGS[langCode] && LANGS[langCode].bcp47) || (langCode && langCode !== 'other' ? langCode : '');
 }
 
+// Cantonese voices (Hong Kong, Macau, yue) share the primary tag `zh` but cannot read Mandarin.
+const CANTONESE = /^(yue|zh-yue|zh-(hant-)?(hk|mo))(-|$)/;
+
 // How well `voice` fits the wanted tag; negative: another language.
 function scoreVoice(voice, wanted) {
   const lang = norm(voice && voice.lang);
   const primary = wanted.split('-')[0];
+  if (primary === 'zh' && CANTONESE.test(lang) && !CANTONESE.test(wanted)) return -1;
   let score = 0;
   if (lang === wanted) score += 100;
   else if (lang.split('-')[0] === primary) score += 50;
@@ -187,6 +192,8 @@ const SAMPLES = {
   en: "Hello! Today we're learning some new words.",
   es: '¡Hola! Hoy aprendemos palabras nuevas.',
   it: 'Ciao! Oggi impariamo parole nuove.',
+  ar: 'مرحبًا! اليوم نتعلّم كلمات جديدة.',
+  zh: '你好！今天我们学习新词。',
 };
 
 // A short sentence to try a voice with («Probe hören»).
@@ -194,14 +201,27 @@ export function voiceSample(langCode) {
   return SAMPLES[langCode] || 'Hallo! Heute lernen wir neue Wörter.';
 }
 
-// Makes vocabulary notation read naturally: "beau/belle" -> "beau, belle", brackets dropped.
-function speakable(text) {
-  return String(text)
-    .replace(/[()[\]{}]/g, ' ')
-    .replace(/\s*\/\s*/g, ', ')
-    .replace(/\s*;\s*/g, ', ')
+// A bracketed part (half or full width) and a run of Latin letters with its tone number.
+const BRACKETED = /[(（[［【][^()（）[\]［］【】]*[)）\]］】]/g;
+const LATIN_RUN = /\p{Script=Latin}[\p{Script=Latin}\p{M}'’]*[0-5]?/gu;
+
+/**
+ * Makes vocabulary notation read naturally: "beau/belle" -> "beau, belle", brackets dropped.
+ * Chinese with characters reads only the characters: the pinyin beside them (in brackets or
+ * not) is left out, «你好 (nǐ hǎo)» -> «你好». Pure.
+ */
+export function speakable(text, langCode = null) {
+  let s = String(text == null ? '' : text);
+  const chinese = langCode === 'zh' && hasHan(s);
+  if (chinese) s = s.replace(BRACKETED, (part) => (hasHan(part) ? part : ' ')).replace(LATIN_RUN, ' ');
+  s = s
+    .replace(/[()[\]{}（）［］【】]/g, ' ')
+    .replace(/\s*[/／]\s*/g, ', ')
+    .replace(/\s*[;；]\s*/g, ', ')
     .replace(/\s+/g, ' ')
     .trim();
+  // Separators the pinyin left behind («nǐ hǎo / ní hǎo 你好»).
+  return chinese ? s.replace(/\s*,(\s*,)*\s*/g, ', ').replace(/^[,\s]+|[,\s]+$/g, '') : s;
 }
 
 // Speaks `text` in the language `langCode` ('fr', 'de', …); cancels anything still speaking.
@@ -225,7 +245,7 @@ export function speak(text, langCode) {
     }
     return;
   }
-  const utterance = new globalThis.SpeechSynthesisUtterance(speakable(text));
+  const utterance = new globalThis.SpeechSynthesisUtterance(speakable(text, langCode));
   if (bcp47) utterance.lang = bcp47;
   if (voice) utterance.voice = voice;
   utterance.rate = 0.92;

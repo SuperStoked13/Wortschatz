@@ -15,8 +15,10 @@
 import { normalizeBasic } from './text.js';
 import { scoreLanguages, detectColumn, SUPPORTED } from './langdetect.js';
 
-const LANG_CODES = ['fr', 'de', 'en', 'es', 'it', 'other'];
-const BASE_PRIOR = { fr: 0.2, de: 0.25, en: 0.1, es: 0.05, it: 0 };
+const LANG_CODES = ['fr', 'de', 'en', 'es', 'it', 'ar', 'zh', 'other'];
+const BASE_PRIOR = { fr: 0.2, de: 0.25, en: 0.1, es: 0.05, it: 0, ar: 0, zh: 0 };
+// Recognised by their script: they take part in language votes only with evidence.
+const SCRIPT_LANGS = new Set(['ar', 'zh']);
 
 // Alignment costs are negative log probabilities (nats).
 const CLIP = 0.04;
@@ -48,6 +50,9 @@ const NUMBER_CELL_RE = /^\d{1,4}[.)]?\t/;
 const NUMBERED_RE = /^\d{1,3} ?[-:][ \t]+/;
 const BARE_NUMBER_RE = /^\d{1,4}$/;
 const ARROW_RE = /\s*(?:<->|<=>|-->|->|=>|→|⇒|⟶|↔|⟹|➔|➜)\s*/;
+// Arabic and Han (Chinese) text, by the code-point ranges of langdetect.js.
+const HAN_RE = /[\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF\u{20000}-\u{2FA1F}]/u;
+const SCRIPT_TEXT_RE = /[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB50-\uFDFF\uFE70-\uFEFE\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF\u{20000}-\u{2FA1F}]/u;
 
 const LANG_NAMES = new Map();
 for (const [concept, names] of Object.entries({
@@ -56,6 +61,8 @@ for (const [concept, names] of Object.entries({
   en: 'englisch anglais english inglés ingles inglese',
   es: 'spanisch espagnol spanish español espanol spagnolo',
   it: 'italienisch italien italian italiano',
+  ar: 'arabisch arabe arabic árabe arabo عربي العربية',
+  zh: 'chinesisch chinois chinese chino cinese mandarin 中文 汉语 漢語 普通话 普通話',
 })) {
   for (const name of names.split(' ')) LANG_NAMES.set(name, concept);
 }
@@ -66,10 +73,10 @@ const LABELS = new Map(
     mots: 'word', word: 'word', words: 'word', palabra: 'word', parola: 'word', übersetzung: 'trans',
     uebersetzung: 'trans', traduction: 'trans', translation: 'trans', traducción: 'trans', traduzione: 'trans',
     bedeutung: 'meaning', meaning: 'meaning', signification: 'meaning', frage: 'q', question: 'q',
-    antwort: 'a', answer: 'a', réponse: 'a',
+    antwort: 'a', answer: 'a', réponse: 'a', pinyin: 'pinyin',
   }),
 );
-const CODES = new Set(['FR', 'DE', 'EN', 'ES', 'IT']);
+const CODES = new Set(['FR', 'DE', 'EN', 'ES', 'IT', 'AR', 'ZH']);
 
 // Words after which a continuation line is joined with a plain space:
 // articles, conjunctions, prepositions and German object placeholders
@@ -96,6 +103,8 @@ const CANDIDATES = [
   { id: '=', kind: 'first' },
   { id: ' : ', kind: 'first' },
   { id: ': ', kind: 'first' },
+  // Full-width colon ("你好：Hallo"): reported like ": ", the text keeps "：".
+  { id: ': ', kind: 'regex', re: /\s*：\s*/, joiner: '：' },
   { id: ';', kind: 'csv' },
   { id: '|', kind: 'csv' },
   { id: '  ', kind: 'gap' },
@@ -195,18 +204,20 @@ function nlog(p) {
 }
 
 // Soft language votes over many texts (with hint-aware prior), sorted by share.
+// Arabic and Chinese vote only for texts with evidence of their script.
 function languageShares(ctx, texts) {
-  const votes = { fr: 0, de: 0, en: 0, es: 0, it: 0 };
+  const votes = { fr: 0, de: 0, en: 0, es: 0, it: 0, ar: 0, zh: 0 };
   let n = 0;
   for (const t of texts) {
     const s = ctx.score(t);
     if (!hasEvidence(s)) continue;
+    const langs = SUPPORTED.filter((l) => !SCRIPT_LANGS.has(l) || s[l] > 0);
     let max = -Infinity;
-    for (const l of SUPPORTED) max = Math.max(max, s[l] + ctx.prior[l]);
+    for (const l of langs) max = Math.max(max, s[l] + ctx.prior[l]);
     let sum = 0;
     const e = {};
-    for (const l of SUPPORTED) sum += e[l] = Math.exp(s[l] + ctx.prior[l] - max);
-    for (const l of SUPPORTED) votes[l] += e[l] / sum;
+    for (const l of langs) sum += e[l] = Math.exp(s[l] + ctx.prior[l] - max);
+    for (const l of langs) votes[l] += e[l] / sum;
     n++;
   }
   return SUPPORTED.map((lang) => ({ lang, share: n ? votes[lang] / n : 0 })).sort((a, b) => b.share - a.share);
@@ -224,9 +235,18 @@ function topTwoLanguages(ctx, texts) {
 
 // "le week-end–das Wochenende": an en/em dash glued between words, the only
 // one on a line without another delimiter.
-const GLUED_DASH_RE = /(\p{L}[.!?)]?)[–—](?=[\p{L}(«"„“])/u;
+const GLUED_DASH_RE = /(\p{L}[.!?)）]?)[–—](?=[\p{L}(（«"„“])/u;
 function gluedDash(raw) {
   return (raw.match(/[–—]/g) || []).length === 1 && !/\t|\s[-–—]\s/.test(raw) && GLUED_DASH_RE.test(raw);
+}
+
+// "你好（nǐ hǎo）- Hallo": a closing bracket glued to a dash that is spaced
+// on its other side, on an Arabic or Chinese line without another dash
+// delimiter or a tab.
+const BRACKET_DASH_RE = /([)）])([-–—])(?=[ \u00A0\u3000])/gu;
+function spaceBracketDash(raw) {
+  if (!SCRIPT_TEXT_RE.test(raw) || /\t|\s[-–—]\s/.test(raw)) return raw;
+  return raw.replace(BRACKET_DASH_RE, '$1 $2');
 }
 
 // Glued dashes are the delimiter of a dash list ("le chat–die Katze" on most
@@ -234,7 +254,8 @@ function gluedDash(raw) {
 // normalisation does not turn them into word-internal hyphens; in other lists
 // they join compounds ("la relation mère–fille") and become hyphens.
 // `dashList`: true/false when the delimiter is known, null to decide here.
-function spaceGluedDashes(raws, dashList = null) {
+function spaceGluedDashes(input, dashList = null) {
+  const raws = dashList === false ? input : input.map(spaceBracketDash);
   let rewrite = dashList;
   if (rewrite === null) {
     const content = raws.filter((r) => r.trim());
@@ -961,6 +982,78 @@ function reduceThreeCells(ctx, entries, cand) {
   }
 }
 
+const LATIN_LETTER_RE = /[A-Za-z\u00C0-\u024F]/;
+// One pinyin syllable without its tone mark (ü may be written v or, after j q x y, u).
+const PINYIN_SYLLABLE_RE =
+  /^(?:er|(?:[zcs]h|[bpmfdtnlgkhjqxrzcsyw])?(?:i(?:a(?:o|ng?)?|e|u|ng?|ong)?|u(?:a(?:i|ng?)?|o|i|e|n|eng)?|[üv](?:e|an|n)?|a(?:i|o|ng?)?|o(?:u|ng)?|e(?:i|ng?)?|ê))$/;
+const TONE_MARKS_RE = /[\u0300\u0301\u0304\u030C]/g;
+
+// "nǐ", "hǎo", "Zhōngguó", "xī'ān", "ni3hao3": syllables with tone marks or numbers.
+function isPinyinWord(word) {
+  const w = word.normalize('NFD').replace(TONE_MARKS_RE, '').normalize('NFC').toLowerCase();
+  const pieces = w.split(/['’0-5]+/).filter(Boolean);
+  return (
+    pieces.length > 0 &&
+    pieces.every((s) => {
+      // Split into syllables (at most six letters each), any way that works.
+      const ok = [true];
+      for (let i = 1; i <= s.length; i++) {
+        ok[i] = false;
+        for (let k = Math.max(0, i - 6); k < i && !ok[i]; k++) ok[i] = ok[k] && PINYIN_SYLLABLE_RE.test(s.slice(k, i));
+      }
+      return ok[s.length];
+    })
+  );
+}
+
+function unbracket(s) {
+  const m = s.match(/^[(（]([^()（）]*)[)）]$/);
+  return m ? m[1].trim() : s;
+}
+
+function isPinyinCell(cell) {
+  const t = unbracket(cell);
+  if (HAN_RE.test(t) || !LATIN_LETTER_RE.test(t)) return false;
+  const words = t
+    .split(/[\s,;/-]+/)
+    .map((w) => w.replace(/^[^\p{L}]+|[^\p{L}\d]+$/gu, ''))
+    .filter(Boolean);
+  return words.length > 0 && words.every(isPinyinWord);
+}
+
+function isHanCell(cell) {
+  return HAN_RE.test(cell) && !LATIN_LETTER_RE.test(cell);
+}
+
+// Rows of three cells holding Chinese characters, their pinyin and the
+// translation, the characters next to the pinyin (你好 | nǐ hǎo | Hallo,
+// nǐ hǎo | 你好 | Hallo, ...): the two become one side, "你好 (nǐ hǎo)".
+function mergeHanPinyin(entries, cand) {
+  const live = entries.filter((e) => !e.skip && e.parts.length >= 2);
+  const rows = live.filter((e) => e.parts.length === 3 && e.parts.every(Boolean));
+  if (!rows.length || rows.length < 0.6 * live.length) return;
+  const share = (c, f) => rows.filter((e) => f(e.parts[c])).length / rows.length;
+  // [Han column, pinyin column]
+  const found = [
+    [0, 1],
+    [1, 0],
+    [1, 2],
+    [2, 1],
+  ].find(([h, p]) => share(h, isHanCell) >= 0.8 && share(p, isPinyinCell) >= 0.8);
+  if (!found) return;
+  const [h, p] = found;
+  const at = Math.min(h, p);
+  for (const e of live) {
+    if (e.parts.length !== 3) continue;
+    const han = e.parts[h];
+    const pinyin = unbracket(e.parts[p]);
+    const merged = han && pinyin ? `${han} (${pinyin})` : han || pinyin;
+    e.parts = e.parts.filter((_, i) => i !== h && i !== p);
+    e.parts.splice(at, 0, merged);
+    e.count = pairingCount(e.parts, cand);
+  }
+}
+
 function parseDelimitedLines(ctx, lines, cand) {
   const cellKind = cand.kind === 'cells' || cand.kind === 'gap';
   // Pass 1: split every line.
@@ -970,6 +1063,7 @@ function parseDelimitedLines(ctx, lines, cand) {
     return { line, parts, joiner, count: pairingCount(parts, cand) };
   });
   const pageColumns = cellKind && splitInnerPairs(ctx, entries);
+  if (!pageColumns) mergeHanPinyin(entries, cand);
   if (cellKind && !pageColumns) reduceThreeCells(ctx, entries, cand);
 
   // Column languages from clean two-part lines (else from the outer parts of longer lines).
@@ -1652,6 +1746,10 @@ function applyTermHint(ctx, leftTexts, rightTexts, langs) {
   const hint = ctx.o.termHint;
   const target = ctx.o.defHint || 'de';
   if (!hint || hint === target || L === hint || R === hint) return langs;
+  // Pinyin without tone marks looks French or Italian; picked as Chinese it is Chinese.
+  const pinyin = (texts) => hint === 'zh' && texts.length > 0 && texts.filter(isPinyinCell).length >= 0.8 * texts.length;
+  if (knownLang(L) && L !== target && pinyin(leftTexts)) return [hint, Math.max(lConf, 0.55), R, rConf];
+  if (L === target && knownLang(R) && pinyin(rightTexts)) return [L, lConf, hint, Math.max(rConf, 0.55)];
   const close = (texts) => {
     const shares = languageShares(ctx, texts);
     const own = shares.find((s) => s.lang === hint);

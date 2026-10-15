@@ -2,7 +2,7 @@
 // Lernserie copy and celebration rules, shortcuts, voices (speech.js) and the Windows host glue.
 import { test, expect, run } from './harness.js';
 import { DIFFICULT_MISTAKES, difficultCards, mistakesOf, setPageCommand } from '../src/screens/set-model.js';
-import { commandKey, isTypingTarget } from '../src/lib/shortcuts.js';
+import { commandKey, commandLetter, isComposingKey, isTypingTarget } from '../src/lib/shortcuts.js';
 import * as streakModule from '../src/ui/daily-streak.js';
 import {
   streakTone,
@@ -70,6 +70,30 @@ test('Ctrl+Alt (AltGr on Swiss keyboards) is never a shortcut', () => {
   expect(commandKey(key('N', { ctrlKey: true, shiftKey: true }), 'n')).toBe(false);
   expect(commandKey(key('s', { metaKey: true }), 's')).toBe(true);
   expect(commandKey(null, 's')).toBe(false);
+});
+
+test('Arabic keyboard: shortcuts fall back to the key position; Latin layouts keep their letters', () => {
+  // Chromium reports the layout's letter (Ctrl+N gives «ى» on Arabic 101).
+  expect(commandKey(key('ى', { ctrlKey: true, code: 'KeyN' }), 'n')).toBe(true);
+  expect(commandKey(key('س', { metaKey: true, code: 'KeyS' }), 's')).toBe(true);
+  expect(setPageCommand(key('م', { ctrlKey: true, code: 'KeyL' }))).toBe('learn');
+  expect(setPageCommand(key('م', { ctrlKey: true, shiftKey: true, code: 'KeyL' }))).toBe('write');
+  expect(setPageCommand(key('ث', { ctrlKey: true, code: 'KeyE' }))).toBe('edit');
+  expect(commandKey(key('ى', { ctrlKey: true, altKey: true, code: 'KeyN' }), 'n')).toBe(false);
+  expect(commandLetter(key('ق', { code: 'KeyR' }))).toBe('r');
+  expect(commandLetter(key('R', { code: 'KeyR' }))).toBe('r');
+  // AZERTY: «,» sits where QWERTY has M, «a» where it has Q; the letter typed counts.
+  expect(commandLetter(key(',', { code: 'KeyM' }))).toBe('');
+  expect(commandLetter(key('a', { code: 'KeyQ' }))).toBe('a');
+  expect(commandLetter(key('Enter', { code: 'Enter' }))).toBe('');
+  expect(commandLetter(null)).toBe('');
+});
+
+test('keys an input method is composing (Pinyin) are no shortcuts', () => {
+  expect(isComposingKey({ key: 'Process', keyCode: 229, isComposing: false })).toBe(true);
+  expect(isComposingKey({ key: 'Enter', keyCode: 13, isComposing: true })).toBe(true);
+  expect(isComposingKey({ key: 'Enter', keyCode: 13, isComposing: false })).toBe(false);
+  expect(isComposingKey(null)).toBe(false);
 });
 
 test('typing targets: text fields, selects and editable content', () => {
@@ -238,6 +262,50 @@ test('voice samples per language', () => {
   expect(speech.voiceSample('fr')).toBe("Bonjour ! Aujourd'hui, nous apprenons de nouveaux mots.");
   expect(speech.voiceSample('de')).toBe('Hallo! Heute lernen wir neue Wörter.');
   expect(speech.voiceSample('other')).toBe('Hallo! Heute lernen wir neue Wörter.');
+  expect(speech.voiceSample('ar')).toBe('مرحبًا! اليوم نتعلّم كلمات جديدة.');
+  expect(speech.voiceSample('zh')).toBe('你好！今天我们学习新词。');
+});
+
+test('Chinese is never read by a Cantonese voice; Arabic takes any Arabic voice', () => {
+  const voices = [
+    voice('Microsoft Tracy - Chinese (Traditional, Hong Kong S.A.R.)', 'zh-HK'),
+    voice('Sinji', 'zh_HK'),
+    voice('Macau', 'zh-MO'),
+    voice('Google 粵語', 'yue-HK'),
+    voice('Cantonese Hant', 'zh-Hant-HK'),
+    voice('Microsoft Hanhan - Chinese (Traditional, Taiwan)', 'zh-TW'),
+    voice('Microsoft Huihui - Chinese (Simplified, PRC)', 'zh-CN'),
+    voice('Microsoft Hoda - Arabic (Egypt)', 'ar-EG'),
+    voice('Microsoft Naayf - Arabic (Saudi Arabia)', 'ar-SA'),
+    voice('Majed', 'ar-001'),
+  ];
+  // Mainland Mandarin first, Taiwan Mandarin as the fallback.
+  expect(speech.rankVoices(voices, 'zh-CN').map((v) => v.lang)).toEqual(['zh-CN', 'zh-TW']);
+  expect(speech.rankVoices(voices, 'ar').map((v) => v.lang)).toEqual(['ar-EG', 'ar-SA', 'ar-001']);
+  // Cantonese voices still read Cantonese when that is asked for.
+  expect(speech.rankVoices(voices, 'zh-HK').map((v) => v.lang)).toEqual(['zh-HK', 'zh_HK', 'zh-MO', 'zh-Hant-HK', 'zh-TW', 'zh-CN']);
+  // The region name comes from Intl («China», with some ICU versions «China, Festland»).
+  expect(speech.voiceLabel(voices[6]).startsWith('Huihui (China')).toBe(true);
+});
+
+test('speakable: Chinese with characters reads only the characters, never the pinyin', () => {
+  expect(speech.speakable('你好 (nǐ hǎo)', 'zh')).toBe('你好');
+  expect(speech.speakable('你好（nǐ hǎo）', 'zh')).toBe('你好');
+  expect(speech.speakable('你好 nǐ hǎo', 'zh')).toBe('你好');
+  expect(speech.speakable('nǐ hǎo 你好', 'zh')).toBe('你好');
+  expect(speech.speakable('ni3 hao3 你好', 'zh')).toBe('你好');
+  expect(speech.speakable('你好 (nǐ hǎo, ní hǎo)', 'zh')).toBe('你好');
+  expect(speech.speakable('nǐ hǎo / ní hǎo 你好', 'zh')).toBe('你好');
+  expect(speech.speakable('谢谢/多谢', 'zh')).toBe('谢谢, 多谢');
+  expect(speech.speakable('谢谢 (xièxie)；多谢 (duōxiè)', 'zh')).toBe('谢谢, 多谢');
+  // Characters inside brackets are read; only the brackets go.
+  expect(speech.speakable('(很) 好 (hǎo)', 'zh')).toBe('很 好');
+  // Pinyin alone is all there is to read; other languages keep their Latin letters.
+  expect(speech.speakable('nǐ hǎo', 'zh')).toBe('nǐ hǎo');
+  expect(speech.speakable('le chat (m)', 'fr')).toBe('le chat m');
+  expect(speech.speakable('beau/belle; joli', 'fr')).toBe('beau, belle, joli');
+  expect(speech.speakable('你好 (nǐ hǎo)', 'other')).toBe('你好 nǐ hǎo');
+  expect(speech.speakable('كِتَاب (m)', 'ar')).toBe('كِتَاب m');
 });
 
 test('the chosen voice per language is an app preference', () => {
@@ -332,6 +400,32 @@ test('speak never reads a word with a voice of another language', () => {
   delete globalThis.speechSynthesis;
   delete globalThis.SpeechSynthesisUtterance;
   expect(speech.canSpeak()).toBe(false);
+});
+
+test('speak reads Chinese characters with a Mandarin voice, even when Cantonese was chosen', () => {
+  const tracy = voice('Microsoft Tracy - Chinese (Traditional, Hong Kong S.A.R.)', 'zh-HK');
+  const huihui = voice('Microsoft Huihui - Chinese (Simplified, PRC)', 'zh-CN');
+  const fake = fakeSpeech([tracy, huihui]);
+  const missing = [];
+  speech.setMissingVoiceHandler((code) => missing.push(code));
+  speech.setPreferredVoice('zh', tracy.voiceURI);
+
+  speech.speak('你好 (nǐ hǎo)', 'zh');
+  expect(fake.spoken).toHaveLength(1);
+  expect(fake.spoken[0].text).toBe('你好');
+  expect(fake.spoken[0].lang).toBe('zh-CN');
+  expect(fake.spoken[0].voice.name).toBe(huihui.name);
+  expect(speech.voiceOptions('zh').map((o) => o.label.split(' ')[0])).toEqual(['Huihui']);
+
+  // No Arabic voice installed: nothing is read, the hint is shown.
+  speech.speak('كِتَاب', 'ar');
+  expect(fake.spoken).toHaveLength(1);
+  expect(missing).toEqual(['ar']);
+
+  speech.setPreferredVoice('zh', null);
+  speech.setMissingVoiceHandler(null);
+  delete globalThis.speechSynthesis;
+  delete globalThis.SpeechSynthesisUtterance;
 });
 
 /* ------------------------------------------------------------- Windows host */

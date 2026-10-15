@@ -1264,7 +1264,18 @@ struct GradingConstantsTests: GradingAssertions {
     }
 
     @Test func reflexives() {
-        #expect(Grading.REFLEXIVES == [.fr: ["se ", "s'"], .de: ["sich "], .en: ["oneself"], .es: [], .it: []])
+        #expect(Grading.REFLEXIVES == [.fr: ["se ", "s'"], .de: ["sich "], .en: ["oneself"], .es: [], .it: [], .ar: [], .zh: []])
+    }
+
+    @Test("Arabic has the glued article ال, Chinese has none")
+    func scriptArticles() {
+        #expect(Grading.ARTICLES[.ar] == ["ال"])
+        #expect(Grading.ARTICLES[.zh] == [])
+        #expect(Grading.GLUED_ARTICLES == ["ال"])
+        #expect(Set(Grading.ARTICLES.keys) == [.fr, .de, .en, .es, .it, .ar, .zh])
+        #expect(Grading.resolveLang("ar-SA") == .ar)
+        #expect(Grading.resolveLang("zh-CN") == .zh)
+        #expect(Grading.resolveLang("ZH") == .zh)
     }
 
     @Test func abbreviations() {
@@ -1279,8 +1290,16 @@ struct GradingConstantsTests: GradingAssertions {
     }
 
     @Test func orders() {
-        #expect(Grading.NOTE_ORDER.map(\.rawValue) == ["article", "pronoun", "abbreviation", "partial", "parentheses", "case", "accents", "typo", "order"])
-        #expect(Grading.HINT_ORDER.map(\.rawValue) == ["wrongArticle", "missingArticle", "accentsOnly", "caseOnly", "typo", "almost"])
+        #expect(Grading.NOTE_ORDER.map(\.rawValue) == [
+            "article", "pronoun", "abbreviation", "partial", "parentheses", "pinyin", "case", "accents", "tones", "variant",
+            "typo", "order",
+        ])
+        #expect(Grading.HINT_ORDER.map(\.rawValue) == [
+            "wrongArticle", "missingArticle", "accentsOnly", "tonesOnly", "caseOnly", "typo", "almost",
+        ])
+        // Every note a grade can give is ordered (the synonym notes are added by Synonyms).
+        #expect(Set(GradeNote.allCases).subtracting(Grading.NOTE_ORDER) == [.synonym, .extendedSynonym])
+        #expect(Set(GradeHint.allCases) == Set(Grading.HINT_ORDER))
     }
 
     @Test("GradeResult encodes like JS, with an explicit null hint")

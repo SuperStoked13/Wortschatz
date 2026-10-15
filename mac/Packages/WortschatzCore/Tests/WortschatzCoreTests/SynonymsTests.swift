@@ -256,4 +256,52 @@ struct SynonymsTests {
             given: "laid", card: Self.byTerm("moche"), cards: Self.cards, ask: .term, tolerance: .default, answerLang: .fr)
         #expect(try JSONValue(encoding: hit)["matchedCard"] == JSONValue(encoding: Self.byTerm("laid, laide")))
     }
+
+    // MARK: Arabic and Chinese
+
+    @Test("findSynonymCards: Arabic vowel marks and full-width punctuation do not matter")
+    func scriptPrompts() {
+        let cards = [
+            Card(id: "a1", term: "كِتَابٌ", definition: "Buch"),
+            Card(id: "a2", term: "كتاب", definition: "Band"),
+            Card(id: "a3", term: "ﻛﺘﺎﺏ، دفتر", definition: "Schreibzeug"),
+            Card(id: "a4", term: "قلم", definition: "Stift"),
+            Card(id: "z1", term: "你好！", definition: "Hallo"),
+            Card(id: "z2", term: "你 好", definition: "Guten Tag"),
+            Card(id: "z3", term: "谢谢，多谢", definition: "Danke"),
+            Card(id: "z4", term: "多谢", definition: "Vielen Dank"),
+            Card(id: "z5", term: "「再见」", definition: "Tschüss"),
+            Card(id: "z6", term: "再见", definition: "Auf Wiedersehen"),
+        ]
+        func ids(_ id: String) -> [String] {
+            Synonyms.findSynonymCards(cards, card: cards.first { $0.id == id }!, ask: .definition).map(\.id)
+        }
+        #expect(ids("a1") == ["a2", "a3"])
+        #expect(ids("a4") == [])
+        #expect(ids("z1") == ["z2"])
+        #expect(ids("z3") == ["z4"])
+        #expect(ids("z5") == ["z6"])
+        let r = Synonyms.gradeWithSynonyms(
+            given: "Band", card: cards[0], cards: cards, ask: .definition, tolerance: .default, answerLang: .de)
+        #expect(r.result.correct)
+        #expect(r.result.notes == [.synonym])
+        #expect(r.matchedCard?.id == "a2")
+    }
+
+    @Test("gradeWithSynonyms: Arabic and Chinese notes of a synonym card are kept")
+    func scriptNotes() {
+        let cards = [
+            Card(id: "s1", term: "Schule", definition: "المدرسة"),
+            Card(id: "s2", term: "Schule", definition: "كُلِّيَّة"),
+            Card(id: "h1", term: "Hallo", definition: "你好 (nǐ hǎo)"),
+            Card(id: "h2", term: "Hallo", definition: "喂 (wèi)"),
+        ]
+        let variant = Synonyms.gradeWithSynonyms(
+            given: "كليه", card: cards[0], cards: cards, ask: .definition, tolerance: .default, answerLang: .ar)
+        #expect(variant.result.notes == [.synonym, .variant])
+        let pinyin = Synonyms.gradeWithSynonyms(
+            given: "wei4", card: cards[2], cards: cards, ask: .definition, tolerance: .default, answerLang: .zh)
+        #expect(pinyin.result.notes == [.synonym, .pinyin])
+        #expect(pinyin.matchedCard?.id == "h2")
+    }
 }

@@ -8,8 +8,8 @@
 // an option is highlighted (by typing or the arrow keys). The card element is
 // created once and reused for every multiple choice question.
 
-import { h, replayClass } from '../lib/dom.js';
-import { LANGS } from '../lib/labels.js';
+import { h, replayClass, setTextAttrs } from '../lib/dom.js';
+import { bcp47, textAttrs } from '../lib/labels.js';
 import { canSpeak } from '../lib/speech.js';
 import { button, iconButton, starButton, kbd } from '../ui/components.js';
 import { icon } from '../ui/icons.js';
@@ -22,7 +22,6 @@ const CAPTION = 'Wähle die richtige Antwort';
 const LONG_CHOICE = 42; // characters; longer options use a smaller type size
 const TYPED_SHOWN = 28; // characters of the typed letters in the hint (the end of them)
 
-const bcp47 = (lang) => (LANGS[lang] && LANGS[lang].bcp47) || null;
 const speakable = (lang) => canSpeak() && !!bcp47(lang);
 
 // Mouse presses on the card's tools must not take the focus from the options or «Weiter»
@@ -84,7 +83,8 @@ export function createMcCard(handlers) {
   // The typing hint under the tiles: ⌨ the letters, "↩ wählt «X»" / "Weiter tippen …" /
   // "Keine Antwort passt", how to correct. It opens and closes by its height, so the row
   // below glides instead of jumping. Screen readers hear the same through announcements.
-  const taTyped = h('span', { class: 'ln-ta__typed' });
+  // The letters typed may be Arabic: their direction follows them.
+  const taTyped = h('span', { class: 'ln-ta__typed', dir: 'auto' });
   const taKey = kbd('↩');
   taKey.classList.add('ln-ta__key');
   const taText = h('span', { class: 'ln-ta__text' });
@@ -130,7 +130,7 @@ export function createMcCard(handlers) {
   function fillPrompt() {
     langLabel.textContent = q.promptLabel;
     promptText.textContent = q.prompt;
-    promptText.lang = bcp47(q.promptLang) || '';
+    setTextAttrs(promptText, textAttrs(q.promptLang));
     promptText.classList.toggle('is-long', q.prompt.length > 60);
     promptText.classList.toggle('is-very-long', q.prompt.length > 140);
     speakPrompt.hidden = !speakable(q.promptLang);
@@ -148,7 +148,7 @@ export function createMcCard(handlers) {
         onClick: () => handlers.onChoose(i),
       },
       h('span', { class: 'ln-tile__key', 'aria-hidden': 'true' }, String(i + 1)),
-      h('span', { class: 'ln-tile__text', lang: bcp47(q.answerLang) }, choice.text),
+      h('span', { class: 'ln-tile__text', ...textAttrs(q.answerLang) }, choice.text),
       h('span', { class: 'ln-tile__note sr-only' }),
     );
   }

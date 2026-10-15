@@ -51,10 +51,12 @@ const ABBREVIATION_EXAMPLES = {
   en: '«etw.» = «etwas», «sth» = «something»',
 };
 
+// Chinese: missing tones count like accents. Arabic has none here: its vowel marks never count.
 const ACCENT_EXAMPLES = {
   fr: '«ecole» = «école», «ahnlich» = «ähnlich»',
   es: '«arbol» = «árbol», «ahnlich» = «ähnlich»',
   it: '«citta» = «città», «ahnlich» = «ähnlich»',
+  zh: '«ni hao» = «nǐ hǎo», «ahnlich» = «ähnlich»',
 };
 
 function toleranceItems(termLang) {

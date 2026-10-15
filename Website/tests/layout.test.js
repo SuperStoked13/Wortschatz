@@ -453,6 +453,8 @@ test('ocrLangsFor maps the learned language to tesseract models', () => {
   expect(ocrLangsFor('en')).toEqual(['eng', 'deu']);
   expect(ocrLangsFor('es')).toEqual(['spa', 'deu']);
   expect(ocrLangsFor('it')).toEqual(['ita', 'deu']);
+  expect(ocrLangsFor('ar')).toEqual(['ara', 'deu']);
+  expect(ocrLangsFor('zh')).toEqual(['chi_sim', 'deu']);
   expect(ocrLangsFor('de')).toEqual(['deu']);
   expect(ocrLangsFor('other')).toEqual(['eng', 'deu']);
   expect(ocrLangsFor(undefined)).toEqual(['fra', 'deu']);
@@ -674,6 +676,116 @@ test('ocrDataToText restores German umlauts misread by OCR', () => {
   ];
   expect(ocrDataToText(tessTable(rows))).toBe('beau, belle\tschön\nle rôle\tdie Rolle\nla porte\tdie Tür\nfatigué\tmüde');
   expect(ocrDataToText({ text: 'die Tûr\nla porte\n', words: [] })).toBe('die Tür\nla porte');
+});
+
+// ---------------------------------------------------------------------------
+// Right-to-left text (Arabic) and Chinese
+
+// One item per word of a right-to-left phrase (logical order) whose right edge is at x1.
+function rtlWords(x1, y, text, { cw = CW, h = H } = {}) {
+  const out = [];
+  let cx = x1;
+  for (const w of text.split(' ')) {
+    cx -= w.length * cw;
+    out.push({ str: w, x: cx, y, w: w.length * cw, h });
+    cx -= cw;
+  }
+  return out;
+}
+
+const AR_ROWS = [
+  ['die alte Stadt', 'المدينة القديمة'],
+  ['der grosse Junge', 'الولد الكبير'],
+  ['das Buch', 'الكتاب'],
+  ['die Schule', 'المدرسة'],
+  ['der Lehrer', 'المعلم'],
+];
+
+test('the words of a right-to-left cell are read from right to left', () => {
+  expect(itemsToLines(rtlWords(300, 100, 'ذهب الولد إلى المدرسة'))).toEqual(['ذهب الولد إلى المدرسة']);
+  // Mostly Arabic letters with a Latin word: still right to left.
+  expect(itemsToLines(rtlWords(300, 100, 'الكتاب الجديد CD'))).toEqual(['الكتاب الجديد CD']);
+  // Mostly Latin letters with an Arabic word: left to right.
+  expect(itemsToLines(words(50, 100, 'das Wort كتاب heisst Buch'))).toEqual(['das Wort كتاب heisst Buch']);
+});
+
+test('a right-aligned Arabic column is a column of its own, read right to left', () => {
+  const items = [];
+  AR_ROWS.forEach(([de, ar], r) => {
+    items.push(...words(50, 100 + r * PITCH, de));
+    items.push(...rtlWords(400, 100 + r * PITCH, ar));
+  });
+  expect(itemsToLines(items)).toEqual(AR_ROWS.map(([de, ar]) => `${de}\t${ar}`));
+  // A long Arabic cell reaching into the gutter belongs to the column of its right edge.
+  const long = 'المدينة القديمة الجميلة جدا في الشمال';
+  const items2 = items.filter((it) => it.y !== 100 || it.x < 200).concat(rtlWords(400, 100, long));
+  expect(itemsToLines(items2)[0]).toBe(`die alte Stadt\t${long}`);
+});
+
+test('an Arabic column on the left (right-aligned) and a German column', () => {
+  const items = [];
+  AR_ROWS.forEach(([de, ar], r) => {
+    items.push(...rtlWords(200, 100 + r * PITCH, ar));
+    items.push(...words(260, 100 + r * PITCH, de));
+  });
+  expect(itemsToLines(shuffled(items))).toEqual(AR_ROWS.map(([de, ar]) => `${ar}\t${de}`));
+});
+
+test('pdf.js right-to-left runs (dir rtl) keep their logical text', () => {
+  const items = [];
+  AR_ROWS.forEach(([de, ar], r) => {
+    items.push(run_(50, 100 + r * PITCH, de));
+    items.push({ ...run_(400 - ar.length * CW, 100 + r * PITCH, ar), dir: 'rtl' });
+  });
+  expect(itemsToLines(items)).toEqual(AR_ROWS.map(([de, ar]) => `${de}\t${ar}`));
+  // Several runs of one cell are joined right to left.
+  const two = [
+    { str: 'المدينة', x: 400 - 7 * CW, y: 100, w: 7 * CW, h: H, dir: 'rtl' },
+    { str: 'القديمة', x: 400 - 15 * CW, y: 100, w: 7 * CW, h: H, dir: 'rtl' },
+  ];
+  expect(itemsToLines(two)).toEqual(['المدينة القديمة']);
+  // A wide gap inside one rtl run: the first logical piece is the right one.
+  expect(itemsToLines([{ str: 'كتاب    قلم', x: 100, y: 100, w: 11 * CW, h: H, dir: 'rtl' }])).toEqual(['قلم\tكتاب']);
+  expect(itemsToLines([{ str: 'كتاب    قلم', x: 100, y: 100, w: 11 * CW, h: H }])).toEqual(['كتاب\tقلم']);
+});
+
+test('Han characters are joined without spaces', () => {
+  const HW = 12; // a Han character is about twice as wide
+  const han = (x, y, s, trail = true) => ({ str: trail ? `${s} ` : s, x, y, w: (s.length + (trail ? 1 : 0)) * HW, h: H });
+  // OCR words with trailing spaces, and fragments further apart than a space.
+  expect(itemsToLines([han(100, 100, '你'), han(114, 100, '好'), han(128, 100, '朋友')])).toEqual(['你好朋友']);
+  expect(itemsToLines([han(100, 100, '你好', false), han(130, 100, '朋友', false)])).toEqual(['你好朋友']);
+  // Pinyin and other words keep their spaces.
+  expect(itemsToLines([han(100, 100, '你好'), ...words(130, 100, 'nǐ hǎo')])).toEqual(['你好 nǐ hǎo']);
+  // A wrapped Chinese definition continues without a space.
+  const t = [];
+  [['Hallo', '你好'], ['danke', '谢谢'], ['auf Wiedersehen', '再见'], ['', '朋友'], ['die Schule', '学校']].forEach(([de, zh], r) => {
+    if (de) t.push(run_(50, 100 + r * PITCH, de));
+    t.push({ str: zh, x: 300, y: 100 + r * PITCH, w: zh.length * HW, h: H });
+  });
+  expect(itemsToLines(t)).toEqual(['Hallo\t你好', 'danke\t谢谢', 'auf Wiedersehen\t再见朋友', 'die Schule\t学校']);
+});
+
+test('ocrDataToText: Chinese words are joined without spaces, Arabic words in reading order', () => {
+  // tesseract splits Chinese into single characters.
+  const zh = [];
+  let x = 60;
+  for (const ch of ['你', '好', '，', '朋', '友']) {
+    zh.push({ ...tessWord(ch, x, 120), bbox: { x0: x, y0: 98, x1: x + 22, y1: 124 } });
+    x += 26;
+  }
+  zh.push(tessWord('nǐ', 220, 120), tessWord('hǎo', 250, 120));
+  expect(ocrDataToText({ text: 'x', words: zh, lines: [] })).toBe('你好，朋友 nǐ hǎo');
+  expect(ocrDataToText({ text: '你 好 ， 朋 友\n谢 谢 xiè xie\n', words: [] })).toBe('你好，朋友\n谢谢 xiè xie');
+  // Arabic words come in logical order with boxes from right to left.
+  const ar = [];
+  let right = 600;
+  for (const w of ['ذهب', 'الولد', 'إلى', 'المدرسة']) {
+    const box = tessWord(w, right - w.length * 11, 120);
+    ar.push(box);
+    right -= (w.length + 1) * 11;
+  }
+  expect(ocrDataToText({ text: 'x', words: ar, lines: [] })).toBe('ذهب الولد إلى المدرسة');
 });
 
 await run('layout.test.js');

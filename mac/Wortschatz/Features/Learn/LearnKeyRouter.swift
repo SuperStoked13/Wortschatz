@@ -7,8 +7,9 @@ import WortschatzCore
 /// does. Which keys the screen takes depends on where the keyboard focus is:
 ///
 /// - **Screen focus** (multiple choice, feedback, checkpoint, finish): Return, ⌥↩, ⌘↩, esc,
-///   the arrows, digits, letters and ⌫ of a multiple-choice question (typing picks an option,
-///   `LearnFlow.typeAhead`), and any printable key after feedback ("any key continues").
+///   the arrows, digits (also Arabic-Indic ones), letters and ⌫ of a multiple-choice question
+///   (typing picks an option, `LearnFlow.typeAhead`), and any printable key after feedback ("any
+///   key continues"; with an input method it continues without typing, see `continuing`).
 /// - **Answer field focus** (written question, copy step): letters, digits and arrows belong to
 ///   the text field. Return arrives through the field's `onSubmit`; ⌥↩ and esc through the
 ///   field's own key handler (`studyFieldKeys`, see `fieldInput`), because the field editor
@@ -63,11 +64,25 @@ enum LearnKeyRouter {
         default:
             break
         }
-        guard modifiers.isDisjoint(with: [.command, .control]), characters.count == 1, let character = characters.first
-        else { return nil }
-        if character.isASCII, let digit = character.wholeNumberValue { return .digit(digit) }
+        guard modifiers.isDisjoint(with: [.command, .control]), let character = characters.first else { return nil }
+        guard characters.count == 1 else {
+            // A key that types several letters: the Arabic keyboard's «لا».
+            return characters.allSatisfy(\.isLetter) ? .character(characters) : nil
+        }
+        // ASCII and Arabic-Indic digits (٣ chooses like 3).
+        if let digit = LearnFlow.digitValue(characters) { return .digit(digit) }
         guard isPrintable(character) else { return nil }
         return .character(String(character))
+    }
+
+    /// «Any key continues» after an answer: with an input method active (Pinyin, Zhuyin, Kana …,
+    /// `InputSource.isInputMethodActive`) the letter only begins a composition, so the key
+    /// continues like the space bar and its raw letter never lands in the next answer field; the
+    /// answer is then typed there with the input method. Every other key, and every key without an
+    /// input method, stays.
+    static func continuing(_ input: KeyInput, afterAnswer: Bool, inputMethod: @autoclosure () -> Bool) -> KeyInput {
+        guard afterAnswer, case let .character(text) = input, text != " ", inputMethod() else { return input }
+        return .character(" ")
     }
 
     /// Whether the screen consumes `input` in `state` (otherwise it travels on, e.g. into the

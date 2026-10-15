@@ -141,8 +141,8 @@ private struct SettingsVoiceRow: View {
 /// change).
 @Observable
 final class SettingsVoiceCatalog {
-    /// The languages with a voice choice (the web app's languages, in detection order).
-    static let languages: [Lang] = LangDetect.SUPPORTED
+    /// The languages with a voice choice, in the order of the language pickers (without «Andere»).
+    static let languages: [Lang] = Labels.LANG_ORDER.filter { $0 != .other }
 
     private(set) var voices: [Lang: [SpeechService.Voice]] = [:]
     /// The name of the voice "Automatisch" picks per language (nil: none installed).
@@ -172,6 +172,8 @@ final class SettingsVoiceCatalog {
         case .en: "Hello! Today we're learning some new words."
         case .es: "¡Hola! Hoy aprendemos palabras nuevas."
         case .it: "Ciao! Oggi impariamo parole nuove."
+        case .ar: "مرحبًا! اليوم نتعلّم كلمات جديدة."
+        case .zh: "你好！今天我们学习新词。"
         default: "Hallo! Heute lernen wir neue Wörter."
         }
     }

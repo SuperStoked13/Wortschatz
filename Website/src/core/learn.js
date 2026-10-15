@@ -22,7 +22,7 @@
 import { cardStatus, normalizeProgress, MASTERY_STREAK } from './mastery.js';
 import { answerSide, findSynonymCards } from './synonyms.js';
 import { splitAlternatives } from './grading.js';
-import { normalizeBasic } from './text.js';
+import { normalizeBasic, foldScripts } from './text.js';
 
 export const DEFAULT_LEARN = { roundSize: 7, mc: true, written: true, retype: false };
 
@@ -123,8 +123,9 @@ const clampStage = (v) => (typeof v === 'number' && Number.isFinite(v) ? Math.ma
 // ---------------------------------------------------------------------------
 // Multiple-choice options
 
-// Comparison key for answer texts: basic normalisation + lowercase.
-const textKey = (text) => normalizeBasic(text).toLowerCase();
+// Comparison key for answer texts: basic normalisation, script folds (Arabic vowel marks,
+// full-width punctuation) + lowercase.
+const textKey = (text) => foldScripts(normalizeBasic(text)).toLowerCase();
 
 // The whole answer and each of its alternatives ("laid, laide" → laid, laide | laid | laide).
 function answerKeys(text) {

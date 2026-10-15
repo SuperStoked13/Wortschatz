@@ -6,15 +6,13 @@
 // question, Strg+↵ hand in, Esc leave) are routed by exam.js through `fieldOf`/`focusNext`.
 
 import { h, prefersReducedMotion } from '../lib/dom.js';
-import { LANGS } from '../lib/labels.js';
+import { bcp47, textAttrs, fieldAttrs } from '../lib/labels.js';
 import { charsFor, insertAtCaret } from '../lib/keyboard.js';
 import { button, kbd } from '../ui/components.js';
 import { icon } from '../ui/icons.js';
 import { isApplePlatform } from './editor-util.js';
 import { examDock, examPill } from './exam-setup.js';
 import * as E from '../core/exam.js';
-
-const bcp47 = (lang) => (LANGS[lang] && LANGS[lang].bcp47) || null;
 // Space kept free between a question scrolled into view and the sticky bars.
 const REVEAL_GAP = 16;
 
@@ -85,7 +83,7 @@ export function createSheet({ questions, termLang, defLang }, on) {
       autocapitalize: 'off',
       spellcheck: 'false',
       enterkeyhint: q.number === last ? 'done' : 'next',
-      lang: bcp47(q.answerLang),
+      ...fieldAttrs(q.answerLang),
       placeholder: E.answerPlaceholder(q, termLang, defLang),
       'aria-label': `Antwort zu Frage ${q.number}`,
       'aria-describedby': promptId,
@@ -107,7 +105,7 @@ export function createSheet({ questions, termLang, defLang }, on) {
             'p',
             { class: 'ex-q__prompt', id: promptId },
             h('span', { class: 'sr-only' }, `Frage ${q.number}, ${label}: `),
-            h('span', { lang: bcp47(q.promptLang) }, q.prompt),
+            h('span', textAttrs(q.promptLang), q.prompt),
           ),
         ),
         h('div', { class: 'ex-q__field' }, input),

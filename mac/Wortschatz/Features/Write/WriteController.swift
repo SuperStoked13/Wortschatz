@@ -196,7 +196,7 @@ final class WriteController {
         let graded = WriteFlow.gradeQuestion(
             set: state.set, question: question, given: given, tolerance: state.options.tolerance,
             extraAnswers: synonyms.extraAnswers(for: query))
-        guard
+        guard synonyms.supports(query),
             ExtendedSynonyms.worthChecking(
                 given: given, result: graded.result, query: query, card: cards.first { $0.id == question.cardId },
                 cards: cards, ask: question.ask)
@@ -257,8 +257,11 @@ final class WriteController {
         !isLive || model.route.study?.id == requestID
     }
 
-    /// A key press from the screen's key handler.
+    /// A key press from the screen's key handler. After a correct answer, a letter typed with an
+    /// input method continues without typing it (`LearnKeyRouter.continuing`).
     func press(_ key: KeyInput, isRepeat: Bool) {
+        let key = LearnKeyRouter.continuing(
+            key, afterAnswer: state.phase == .feedback(.correct), inputMethod: InputSource.isInputMethodActive)
         send(.key(key, isRepeat: isRepeat))
     }
 

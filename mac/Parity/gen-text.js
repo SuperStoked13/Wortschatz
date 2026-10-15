@@ -1,6 +1,16 @@
 // Parity fixture for src/core/text.js → Fixtures/text.json.
-// fns: normalizeBasic [s, keepTabs], stripDiacritics [s], foldUmlauts [s], isLetter [ch]
-import { normalizeBasic, stripDiacritics, foldUmlauts, isLetter } from '../../Website/src/core/text.js';
+// fns: normalizeBasic [s, keepTabs], stripDiacritics [s], foldUmlauts [s], isLetter [ch],
+//      foldScripts [s], stripArabicMarks [s], hasArabic [s], hasHan [s]
+import {
+  normalizeBasic,
+  stripDiacritics,
+  foldUmlauts,
+  isLetter,
+  foldScripts,
+  stripArabicMarks,
+  hasArabic,
+  hasHan,
+} from '../../Website/src/core/text.js';
 import { Cases, mulberry32, fuzzString, randInt, fixtureTexts } from './lib.js';
 
 const cases = new Cases('text');
@@ -70,6 +80,50 @@ for (const [lo, hi] of RANGES) {
 for (let i = 0; i < 300; i++) {
   const s = fuzzString(rng, ALPHABET, 0, 6);
   cases.add('isLetter', [s], isLetter(s));
+}
+
+// 4. Arabic and Chinese script folds (own seed, so the sections above stay as they were)
+function scripts(s) {
+  cases.add('foldScripts', [s], foldScripts(s));
+  cases.add('stripArabicMarks', [s], stripArabicMarks(s));
+  cases.add('hasArabic', [s], hasArabic(s));
+  cases.add('hasHan', [s], hasHan(s));
+}
+for (const s of [
+  'كِتَابٌ', 'مُدَرِّسَةٌ', 'قُلْ', 'هٰذا', 'عَلَيْهِؐ', 'الرَّحْمَٰنِۖ', 'كتـــاب', 'أب', 'القرآن', 'إسلام', 'اۖٔ', 'آ',
+  'ﻛﺘﺎﺏ', 'ﻻ', 'ﻵ', 'ﬁn ² ½ ﻛ', 'ﷲ', 'ﷺ', 'ﱞ', 'كتاب، دفتر؛ قلم؟', '你好（nǐ hǎo），再见！', '谢谢、多谢；再见：好吗？',
+  '我是学生。', '【注意】［x］', 'ＡＢＣ１２３～', '「你好」《书》', '你 好', '我 是  学 生', '你好 nǐ hǎo', 'nǐ hǎo 你好',
+  '𠀀 𠀁 㐀 丽', '東京 Tokyo', "l'homme", 'Straße', 'cœur', 'garçon, fille', 'a … b', '¿Qué?', '« oui »', 'ﬁ', 'é',
+  '', ' ', 'ݐ', '\uFEFF', 'かな', '。、', '‏كتاب‏', '你\u3000好', '你\t好', '你 \u00A0好',
+]) {
+  scripts(s);
+  all(s);
+}
+const SCRIPT_ALPHABET = [
+  'a', 'b', 'n', 'i', 'o', 'ǎ', 'ü', ' ', ' ', '  ', '\t', ',', '.', '(', ')', '?', '!', ';', ':', '-', '1', 'é', 'é',
+  // Arabic letters, variants, marks (vowel, Quranic, madda/hamza), tatweel, punctuation, digits
+  'ك', 'ت', 'ا', 'ب', 'ل', 'م', 'ة', 'ه', 'ى', 'ي', 'أ', 'إ', 'آ', 'ٱ', 'ؤ', 'ئ', 'ء', 'َ', 'ُ', 'ِ', 'ً', 'ٌ', 'ٍ', 'ّ', 'ْ',
+  'ٰ', 'ٓ', 'ٔ', 'ٕ', 'ٖ', 'ؐ', 'ۖ', 'ۜ', '۟', 'ۭ', 'ـ', '،', '؛', '؟', '٣', '۴', 'ݐ', 'ࢠ',
+  // presentation forms (letters, ligatures, marks)
+  'ﻛ', 'ﺘ', 'ﺎ', 'ﺏ', 'ﻻ', 'ﻵ', 'ﷲ', 'ﱞ', 'ﹰ', 'ﹼ', 'ﭐ', 'ﷺ',
+  // Han, CJK punctuation, full-width forms
+  '你', '好', '学', '生', '㐀', '丽', '𠀀', '，', '、', '。', '；', '：', '！', '？', '（', '）', '［', '］', '【', '】',
+  '「', '」', '《', '》', 'Ａ', 'ａ', '１', '～', '｟', '　',
+  // bidi controls
+  '\u200E', '\u200F', '\u061C', '\u202A', '\u202B', '\u202C', '\u202D', '\u202E', '\u2066', '\u2067', '\u2068', '\u2069',
+];
+const srng = mulberry32(20261015);
+for (let i = 0; i < 2500; i++) {
+  const s = fuzzString(srng, SCRIPT_ALPHABET, 0, randInt(srng, 1, 16));
+  scripts(s);
+  if (i % 3 === 0) all(s);
+}
+for (const ch of SCRIPT_ALPHABET) scripts(ch);
+// Every line of the Arabic and Chinese fixtures
+for (const { name, text } of fixtureTexts()) {
+  if (!/arabic|chinese/.test(name)) continue;
+  scripts(text);
+  for (const line of text.split(/\r\n|\r|\n/)) scripts(line);
 }
 
 cases.emit();

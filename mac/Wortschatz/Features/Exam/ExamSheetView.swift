@@ -145,7 +145,9 @@ struct ExamSheetView: View {
         }
     }
 
+    /// Not while an input method composes in the field (its marked text is not in the answer yet).
     private func insert(_ character: String, into number: Int) {
+        guard !LearnKeyRouter.isComposingText else { return }
         var text = controller.answers[number] ?? ""
         var caret = selection
         SpecialCharacters.insert(character, into: &text, selection: &caret)
@@ -209,6 +211,7 @@ private struct ExamQuestionRow: View {
                     Text(LearnText.spoken(question.prompt, lang: question.promptLang))
                         .font(.system(.title3, design: .rounded).weight(.semibold))
                         .fixedSize(horizontal: false, vertical: true)
+                        .cardTextDirection(question.promptLang)
                         .accessibilityLabel(
                             Text(
                                 AttributedString("Frage \(question.number), \(promptLabel): ")
@@ -236,6 +239,7 @@ private struct ExamQuestionRow: View {
         return TextField("Antwort \(question.number)", text: $text, selection: $selection, prompt: Text(placeholder))
             .textFieldStyle(.plain)
             .font(Typography.answer)
+            .cardFieldDirection(question.answerLang)
             .autocorrectionDisabled()
             .writingToolsBehavior(.disabled)
             .focused(focus, equals: question.number)

@@ -1903,4 +1903,32 @@ test('review: functions never mutate a review state', () => {
   expect(snapshot(frozen)).toBe(before);
 });
 
+test('buildChoices: Arabic and Chinese spellings that grading treats as equal are no wrong options', () => {
+  const cards = [
+    { id: 'kitab', term: 'كِتَابٌ', definition: 'Buch' },
+    { id: 'kitab2', term: 'كتاب', definition: 'Band' },
+    { id: 'daftar', term: 'دفتر', definition: 'Heft' },
+    { id: 'both', term: 'قلم، دَفْتَر', definition: 'Stift' },
+    { id: 'bait', term: 'بيت', definition: 'Haus' },
+    { id: 'madrasa', term: 'مدرسة', definition: 'Schule' },
+    { id: 'nihao', term: '你好！', definition: 'Hallo' },
+    { id: 'nihao2', term: '你 好!', definition: 'Guten Tag' },
+    { id: 'xiexie', term: '谢谢，多谢', definition: 'Danke' },
+    { id: 'duoxie', term: '多谢', definition: 'Vielen Dank' },
+  ];
+  const byId = Object.fromEntries(cards.map((c) => [c.id, c]));
+  // Never together: the same text without vowel marks, with ASCII instead of full-width
+  // punctuation or with spaces between characters, or a shared alternative (، ，).
+  const apart = [['kitab', 'kitab2'], ['daftar', 'both'], ['nihao', 'nihao2'], ['xiexie', 'duoxie']];
+  for (let seed = 1; seed <= 120; seed++) {
+    for (const [a, b] of apart) {
+      for (const [x, y] of [[a, b], [b, a]]) {
+        const ids = buildChoices(cards, byId[x], 'term', mulberry32(seed)).map((c) => c.cardId);
+        expect(ids).toHaveLength(4);
+        expect(ids).not.toContain(y);
+      }
+    }
+  }
+});
+
 await run('learn.test.js');

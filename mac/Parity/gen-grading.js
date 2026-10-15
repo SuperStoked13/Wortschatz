@@ -8,8 +8,9 @@
 //                                                             expectedDisplay is checked by the grade cases
 //   splitAlternatives [expected, lang]                     → [string]
 //   diffChars         [given, expected]                    → [{type, text}]
-//   diffAnswer        [given, expected]                    → [{type, text}]
-//   constants         [name]                               → ARTICLES | REFLEXIVES | DEFAULT_TOLERANCE |
+//   diffAnswer        [given, expected, lang]              → [{type, text}] (lang null: none)
+//   constants         [name]                               → ARTICLES | REFLEXIVES | GLUED_ARTICLES |
+//                                                             DEFAULT_TOLERANCE |
 //                                                             ABBREVIATIONS ([source, flags, canonical])
 //
 // Inputs: every call with literal arguments in tests/grading.test.js and every string literal in it, plus
@@ -18,7 +19,9 @@
 // transliteration, ß/ss, ligatures, seeded typos and swaps, abbreviation forms, single and reordered
 // alternatives, brackets kept/dropped, punctuation, spacing, empty, garbage, other cards' answers) and
 // graded under the default, all-on, all-off and single-toggle tolerances in the answer's language
-// (and sometimes none or a wrong one).
+// (and sometimes none or a wrong one). Arabic and Chinese answers also get their script variants
+// (vowel marks, tatweel, letter variants, presentation forms, characters or pinyin alone, tone
+// numbers, spaces, full-width punctuation).
 import {
   grade,
   splitAlternatives,
@@ -26,10 +29,11 @@ import {
   diffAnswer,
   ARTICLES,
   REFLEXIVES,
+  GLUED_ARTICLES,
   ABBREVIATIONS,
   DEFAULT_TOLERANCE,
 } from '../../Website/src/core/grading.js';
-import { stripDiacritics, foldUmlauts } from '../../Website/src/core/text.js';
+import { stripDiacritics, foldUmlauts, stripArabicMarks, hasArabic, hasHan } from '../../Website/src/core/text.js';
 import { parseVocab } from '../../Website/src/core/parser.js';
 import { Cases, mulberry32, pick, randInt, chance, fuzzString, fixtureTexts, readText } from './lib.js';
 
@@ -80,6 +84,7 @@ function someMasks() {
 
 cases.add('constants', ['ARTICLES'], ARTICLES);
 cases.add('constants', ['REFLEXIVES'], REFLEXIVES);
+cases.add('constants', ['GLUED_ARTICLES'], GLUED_ARTICLES);
 cases.add('constants', ['DEFAULT_TOLERANCE'], DEFAULT_TOLERANCE);
 cases.add('constants', ['ABBREVIATIONS'], ABBREVIATIONS.map(([re, canonical]) => [re.source, re.flags, canonical]));
 
@@ -141,9 +146,10 @@ for (const call of extractCalls(TEST_SRC, ['accepts', 'rejects', 'exactMatch', '
   if (!args) continue;
   if (call.name === 'splitAlternatives') {
     cases.add('splitAlternatives', [args[0] ?? null, args[1] ?? null], splitAlternatives(args[0], args[1]));
-  } else if (call.name === 'diffChars' || call.name === 'diffAnswer') {
-    const f = call.name === 'diffChars' ? diffChars : diffAnswer;
-    cases.add(call.name, [args[0] ?? null, args[1] ?? null], f(args[0], args[1]));
+  } else if (call.name === 'diffChars') {
+    cases.add('diffChars', [args[0] ?? null, args[1] ?? null], diffChars(args[0], args[1]));
+  } else if (call.name === 'diffAnswer') {
+    cases.add('diffAnswer', [args[0] ?? null, args[1] ?? null, args[2] ?? null], diffAnswer(args[0], args[1], args[2]));
   } else {
     // accepts/rejects/exactMatch(given, expected, lang, tol) and grade(given, expected, tol, lang)
     const [given, expected] = args;
@@ -177,7 +183,7 @@ for (const [given, expected] of [[42, 42], ['42', 42], [42, '42'], [-1.5, '-1.5'
   cases.add('grade', [given, expected, null, 'de'], grade(given, expected, null, 'de'));
   cases.add('splitAlternatives', [expected, null], splitAlternatives(expected));
   cases.add('diffChars', [given, expected], diffChars(given, expected));
-  cases.add('diffAnswer', [given, expected], diffAnswer(given, expected));
+  cases.add('diffAnswer', [given, expected, null], diffAnswer(given, expected));
 }
 
 // Every string literal of the test file.
@@ -210,7 +216,7 @@ const SETS = fixtureTexts().map(({ name, text }) => {
 // ---------------------------------------------------------------------------
 // Given-answer variants
 
-const LANGS = ['fr', 'de', 'en', 'es', 'it'];
+const LANGS = ['fr', 'de', 'en', 'es', 'it', 'ar', 'zh'];
 const LETTERS = Array.from('abcdefghijklmnopqrstuvwxyzäöüéèàçêßœ');
 const GARBAGE = Array.from("abcxyz éäöüßœ'’-–/,;.()[]?!… 12 «»\"*~");
 const ABBR_PAIRS = [
@@ -262,9 +268,56 @@ function articleSplit(s, lang) {
   for (const t of tokens) {
     if (!low.startsWith(t)) continue;
     const rest = s.slice(t.length);
-    if (t.endsWith("'") || rest[0] === ' ') return { article: s.slice(0, t.length), core: rest.trim() };
+    if (t.endsWith("'") || GLUED_ARTICLES.includes(t) || rest[0] === ' ') return { article: s.slice(0, t.length), core: rest.trim() };
   }
   return null;
+}
+
+// Arabic and Chinese answers: the forms grading folds or accepts (none for other text).
+const TONE_NUMBERS = { 'ā': 'a1', 'á': 'a2', 'ǎ': 'a3', 'à': 'a4', 'ē': 'e1', 'é': 'e2', 'ě': 'e3', 'è': 'e4', 'ī': 'i1', 'í': 'i2', 'ǐ': 'i3', 'ì': 'i4', 'ō': 'o1', 'ó': 'o2', 'ǒ': 'o3', 'ò': 'o4', 'ū': 'u1', 'ú': 'u2', 'ǔ': 'u3', 'ù': 'u4', 'ǖ': 'v1', 'ǘ': 'v2', 'ǚ': 'v3', 'ǜ': 'v4', 'ü': 'v' };
+function scriptVariants(expected) {
+  const out = [];
+  if (hasArabic(expected)) {
+    const bare = stripArabicMarks(expected);
+    out.push(bare);
+    out.push(bare.replace(/[أإآٱ]/g, 'ا'));
+    out.push(bare.replace(/ة/g, 'ه').replace(/ى/g, 'ي'));
+    out.push(bare.replace(/ؤ/g, 'و').replace(/ئ/g, 'ي'));
+    out.push(bare.replace(/^ال/, ''));
+    out.push(`ال${bare}`);
+    out.push(bare.replace(/(\p{L})(\p{L})/u, '$1ـ$2'));
+    out.push(expected.replace(/،/g, ',').replace(/؟/g, ''));
+    out.push(`\u200F${expected}\u200F`);
+    out.push(bare.replace(/ا/g, 'ﺍ').replace(/ب/g, 'ﺏ'));
+  }
+  if (hasHan(expected)) {
+    const han = (expected.match(/[\u3400-\u9FFF\uF900-\uFAFF]+/gu) || []).join('');
+    const latin = expected.replace(/[\u3400-\u9FFF\uF900-\uFAFF（）()]+/gu, ' ').replace(/\s+/g, ' ').trim();
+    out.push(han);
+    out.push(Array.from(han).join(' '));
+    if (latin) {
+      out.push(latin);
+      out.push(latin.replace(/ /g, ''));
+      out.push(stripDiacritics(latin));
+      // Tone numbers after each syllable's vowel run: nǐ hǎo → ni3 hao3 (roughly; the grader decides).
+      out.push(latin.replace(/\p{L}+/gu, (w) => {
+        let tone = '';
+        const plain = Array.from(w).map((c) => {
+          const t = TONE_NUMBERS[c];
+          if (!t) return c;
+          if (t.length > 1) tone = t[1];
+          return t[0];
+        }).join('');
+        return plain + tone;
+      }));
+      out.push(`${han}（${latin}）`);
+      out.push(`${latin} ${han}`);
+    }
+    out.push(expected.replace(/,/g, '，').replace(/\(/g, '（').replace(/\)/g, '）'));
+    out.push(`${expected}。`);
+    out.push(`「${expected}」`);
+  }
+  return out;
 }
 
 function variants(expected, lang, others, rich) {
@@ -292,9 +345,10 @@ function variants(expected, lang, others, rich) {
     if (!sp) continue;
     add(sp.core);
     add(sp.core.toLowerCase());
-    const pool = ARTICLES[lang] || ARTICLES.de;
-    const other = pick(rng, pool.filter((a) => a.toLowerCase() !== sp.article.toLowerCase()));
-    add(other.endsWith("'") ? other + sp.core : `${other} ${sp.core}`);
+    const pool = (ARTICLES[lang] || []).length ? ARTICLES[lang] : ARTICLES.de;
+    const others = pool.filter((a) => a.toLowerCase() !== sp.article.toLowerCase());
+    const other = others.length ? pick(rng, others) : pick(rng, ARTICLES.de);
+    add(other.endsWith("'") || GLUED_ARTICLES.includes(other) ? other + sp.core : `${other} ${sp.core}`);
     add(sp.article.endsWith("'") ? `${sp.article.slice(0, -1)}e ${sp.core}` : `${sp.article}${sp.core}`);
     add(`${sp.article.toUpperCase()} ${sp.core}`);
   }
@@ -358,6 +412,7 @@ function variants(expected, lang, others, rich) {
     add(fuzzString(rng, GARBAGE, 1, 12));
   }
   for (const o of others) add(o);
+  scriptVariants(expected).forEach(add);
   return [...out];
 }
 
@@ -399,7 +454,7 @@ function gradeAll(expected, lang, others, rich, masks = someMasks) {
     cases.add('splitAlternatives', [expected, L], splitAlternatives(expected, L));
     for (const given of vs) {
       gradeMatrix(given, expected, L, rich ? masks() : [DEFAULT_MASK, pick(rng, STANDARD)]);
-      if (chance(rng, 0.07)) diffPairs.push([given, expected]);
+      if (chance(rng, 0.07)) diffPairs.push([given, expected, L]);
     }
   }
 }
@@ -454,6 +509,17 @@ const CURATED = {
     'il cane', 'lo studente', "l'amico", "un'amica", 'gli amici', 'le ragazze', 'i ragazzi', 'la casa', 'uno zaino',
     'una mela', 'chiamarsi', 'perché', 'la città', 'il caffè', 'buongiorno, buonasera', "l'acqua (f)",
   ],
+  ar: [
+    'كِتَابٌ', 'الكتاب', 'المَدْرَسَةُ', 'مدرسة', 'مستشفى', 'أب', 'إسلام', 'القرآن', 'ٱسم', 'مسؤول', 'رئيس',
+    'كتاب، دفتر', 'كتاب؛ قلم', 'هل؟', 'كيف حالك، يا أحمد؟', 'مرحبا، أنا طالب.', 'كتـــاب', 'ﻛﺘﺎﺏ', '\u200Fكتاب\u200F',
+    'كتاب، ال', '(ال)كتاب', 'الرَّحْمَٰنِ', 'هٰذَا', 'كتاب/دفتر', 'مدرسة كبيرة', 'الشَّمْسُ', 'لا', 'ﻻ',
+  ],
+  zh: [
+    '你好 (nǐ hǎo)', '你好（nǐ hǎo）', '你好 nǐ hǎo', 'nǐ hǎo 你好', '谢谢 (xiè xie)', '再见（zài jiàn）', '你好',
+    '中国 (zhōng guó)', '你好 (nǐ hǎo, ní hǎo)', '谢谢，多谢', '谢谢、多谢', '谢谢；多谢', '谢谢/多谢', '你/您',
+    '你好，我是学生。', '你好，你叫什么名字？', '《红楼梦》', '「你好」', '女 (nǚ)', '绿 (lǜ)', '妈 (ma1)', '你好 (ni3 hao3)',
+    '我是学生', '你 好', 'mā', 'lǜ', '你好 (问候)', 'nǐ hǎo (你好)', '3个', 'MP3',
+  ],
 };
 for (const [lang, list] of Object.entries(CURATED)) {
   list.forEach((s, i) => gradeAll(s, lang, [list[(i + 3) % list.length], pick(rng, list)], true, () => [DEFAULT_MASK, pick(rng, STANDARD.slice(1))]));
@@ -461,7 +527,8 @@ for (const [lang, list] of Object.entries(CURATED)) {
 
 // String literals of the test file as stored answers (lighter: fewer tolerances).
 for (const s of TEST_STRINGS) {
-  const lang = pick(rng, ['de', 'fr', 'en', 'de', 'fr', null]);
+  const picked = pick(rng, ['de', 'fr', 'en', 'de', 'fr', null]);
+  const lang = hasArabic(s) ? 'ar' : hasHan(s) ? 'zh' : picked;
   gradeAll(s, lang, [pick(rng, TEST_STRINGS)], false);
   cases.add('splitAlternatives', [s, null], splitAlternatives(s));
   cases.add('splitAlternatives', [s, 'de'], splitAlternatives(s, 'de'));
@@ -513,11 +580,16 @@ const FUZZ = [
   'usw.', 'bzw.', 'od.', 'u.', 'u.a.', 'Etw.', 'SB',
   'il/elle', 'er/sie', 'Lehrer/in', 'm', 'f', 'pl.', 'Pl.', 'm./f.', ', -e', ', ¨', ', f',
   'chat', 'Herr', 'maison', 'Haus', 'freuen', 'gross', 'groß', 'Straße', 'cœur',
+  // Arabic and Chinese
+  'كتاب', 'ال', 'الكتاب', 'مدرسة', 'مدرسه', 'أ', 'ا', 'إ', 'آ', 'ٱ', 'ؤ', 'ئ', 'ى', 'ي', 'ة', 'ه', 'ـ', 'َ', 'ِ', 'ٌ', 'ّ',
+  'ٰ', 'ٔ', '،', '؛', '؟', 'ﻛ', 'ﻻ', '\u200F', '\u061C',
+  '你', '好', '你好', '谢谢', ' (nǐ hǎo)', '（', '）', '，', '、', '；', '。', '！', '？', '「', '」', '《', '》', '【', '】',
+  'nǐ', 'hǎo', 'ni3', 'hao3', 'lv4', 'nu:3', 'ma5', 'xie4', 'ü', '𠀀',
 ];
 
 for (let k = 0; k < 2200; k++) {
   const expected = fuzzString(rng, FUZZ, 1, randInt(rng, 2, 9));
-  const lang = pick(rng, ['fr', 'de', 'en', 'es', 'it', null, 'de', 'fr']);
+  const lang = pick(rng, ['fr', 'de', 'en', 'es', 'it', null, 'de', 'fr', 'ar', 'zh']);
   const givens = [
     expected,
     chance(rng, 0.5) ? typo(expected) : fuzzString(rng, FUZZ, 1, 6),
@@ -525,15 +597,16 @@ for (let k = 0; k < 2200; k++) {
   ];
   for (const given of new Set(givens)) gradeMatrix(given, expected, lang, [DEFAULT_MASK, pick(rng, STANDARD)]);
   cases.add('splitAlternatives', [expected, lang], splitAlternatives(expected, lang));
-  if (chance(rng, 0.3)) diffPairs.push([givens[1], expected]);
+  if (chance(rng, 0.3)) diffPairs.push([givens[1], expected, lang]);
 }
 
 // ---------------------------------------------------------------------------
 // 5. diffChars / diffAnswer
 
-for (const [given, expected] of diffPairs) {
+for (const [given, expected, lang] of diffPairs) {
   cases.add('diffChars', [given, expected], diffChars(given, expected));
-  cases.add('diffAnswer', [given, expected], diffAnswer(given, expected));
+  cases.add('diffAnswer', [given, expected, null], diffAnswer(given, expected));
+  if (lang === 'zh' || hasHan(expected)) cases.add('diffAnswer', [given, expected, 'zh'], diffAnswer(given, expected, 'zh'));
 }
 const userCards = SETS.find((s) => s.name === 'user-example.txt').cards;
 const words = userCards.flatMap((c) => [c.term, c.definition]);
@@ -541,7 +614,7 @@ for (let i = 0; i < words.length; i++) {
   const a = words[i];
   const b = words[(i + 5) % words.length];
   cases.add('diffChars', [a, b], diffChars(a, b));
-  cases.add('diffAnswer', [a, b], diffAnswer(a, b));
+  cases.add('diffAnswer', [a, b, null], diffAnswer(a, b));
 }
 for (const [a, b] of [
   ['x' + 'a'.repeat(3000), 'y' + 'b'.repeat(3000)],
@@ -556,9 +629,23 @@ for (const [a, b] of [
   ['ẞ', 'ß'],
   ['ß́', 'sś'],
   ["l '  homme", 'l’homme'],
+  ['كتاب', 'كِتَابٌ'],
+  ['كتب', 'كِتَابٌ'],
+  ['كِتاب', 'كِتَابٌ'],
+  ['كتاب', 'كتـاب'],
+  ['q', 'q́'],
+  ['́', 'á'],
+  ['ni hao', '你好 (nǐ hǎo)'],
+  ['ni3 hao', '你好（nǐ hǎo）'],
+  ['你们', '你好 (nǐ hǎo)'],
+  ['nǐ hǎo', 'nǐ hǎo 你好'],
+  ['xie4xie', '谢谢 (xiè xie)'],
+  ['𠀀a', '𠀁a'],
 ]) {
   cases.add('diffChars', [a, b], diffChars(a, b));
-  cases.add('diffAnswer', [a, b], diffAnswer(a, b));
+  cases.add('diffAnswer', [a, b, null], diffAnswer(a, b));
+  cases.add('diffAnswer', [a, b, 'zh'], diffAnswer(a, b, 'zh'));
+  cases.add('diffAnswer', [a, b, 'ar'], diffAnswer(a, b, 'ar'));
 }
 
 cases.emit();

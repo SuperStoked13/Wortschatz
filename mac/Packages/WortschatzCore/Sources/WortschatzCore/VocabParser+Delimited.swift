@@ -310,6 +310,143 @@ extension VocabParser {
         }
     }
 
+    // MARK: Chinese characters and pinyin
+
+    /// `LATIN_LETTER_RE = /[A-Za-z\u00C0-\u024F]/`
+    static func isLatinLetter(_ c: Unicode.Scalar) -> Bool {
+        switch c.value {
+        case 0x41...0x5A, 0x61...0x7A, 0xC0...0x24F: return true
+        default: return false
+        }
+    }
+
+    /// `PINYIN_SYLLABLE_RE`: one pinyin syllable without its tone mark (ü may be written v or,
+    /// after j q x y, u). The regex is anchored and has no repetition, so it matches exactly this
+    /// finite set of strings: "er" and every initial (or none) followed by a final.
+    private static let pinyinSyllables: Set<[UInt32]> = {
+        let initials = ["", "zh", "ch", "sh"] + "bpmfdtnlgkhjqxrzcsyw".map(String.init)
+        let finals = [
+            "i", "ia", "iao", "ian", "iang", "ie", "iu", "in", "ing", "iong",
+            "u", "ua", "uai", "uan", "uang", "uo", "ui", "ue", "un", "ueng",
+            "ü", "üe", "üan", "ün", "v", "ve", "van", "vn",
+            "a", "ai", "ao", "an", "ang", "o", "ou", "ong", "e", "ei", "en", "eng", "ê",
+        ]
+        var out: Set<[UInt32]> = [Array("er".unicodeScalars.map(\.value))]
+        for i in initials {
+            for f in finals { out.insert((i + f).unicodeScalars.map(\.value)) }
+        }
+        return out
+    }()
+
+    /// `TONE_MARKS_RE = /[\u0300\u0301\u0304\u030C]/g`
+    private static let toneMarks: Set<UInt32> = [0x300, 0x301, 0x304, 0x30C]
+
+    /// "nǐ", "hǎo", "Zhōngguó", "xī'ān", "ni3hao3": syllables with tone marks or numbers
+    /// (`isPinyinWord`).
+    static func isPinyinWord(_ word: PText) -> Bool {
+        // word.normalize('NFD').replace(TONE_MARKS_RE, '').normalize('NFC').toLowerCase()
+        var bare = String.UnicodeScalarView()
+        for u in word.string.decomposedStringWithCanonicalMapping.unicodeScalars where !toneMarks.contains(u.value) {
+            bare.append(u)
+        }
+        let w = PText(String(bare).precomposedStringWithCanonicalMapping).lowercased()
+        // w.split(/['’0-5]+/).filter(Boolean)
+        var pieces: [[UInt32]] = []
+        var current: [UInt32] = []
+        for u in w.u {
+            if u == "'" || u == "’" || (u.value >= 0x30 && u.value <= 0x35) {
+                if !current.isEmpty { pieces.append(current) }
+                current = []
+            } else {
+                current.append(u.value)
+            }
+        }
+        if !current.isEmpty { pieces.append(current) }
+        return !pieces.isEmpty && pieces.allSatisfy { s in
+            // Split into syllables (at most six letters each), any way that works.
+            var ok = [Bool](repeating: false, count: s.count + 1)
+            ok[0] = true
+            if s.count > 0 {
+                for i in 1...s.count {
+                    var k = max(0, i - 6)
+                    while k < i && !ok[i] {
+                        ok[i] = ok[k] && pinyinSyllables.contains(Array(s[k..<i]))
+                        k += 1
+                    }
+                }
+            }
+            return ok[s.count]
+        }
+    }
+
+    /// `unbracket`: the text inside one pair of round brackets ("(nǐ hǎo)", "（nǐ hǎo）"), trimmed.
+    static func unbracket(_ s: PText) -> PText {
+        // s.match(/^[(（]([^()（）]*)[)）]$/)
+        guard s.count >= 2, s[0] == "(" || s[0] == "（", s[s.count - 1] == ")" || s[s.count - 1] == "）" else { return s }
+        let inner = s.slice(1, s.count - 1)
+        if inner.contains(where: { $0 == "(" || $0 == ")" || $0 == "（" || $0 == "）" }) { return s }
+        return inner.trimmed()
+    }
+
+    /// A cell of pinyin words (no Han characters, at least one Latin letter).
+    static func isPinyinCell(_ cell: PText) -> Bool {
+        let t = unbracket(cell)
+        if t.contains(where: TextNormalizer.isHanScalar) || !t.contains(where: isLatinLetter) { return false }
+        // t.split(/[\s,;/-]+/).map((w) => w.replace(/^[^\p{L}]+|[^\p{L}\d]+$/gu, '')).filter(Boolean)
+        var words: [PText] = []
+        var current: [Unicode.Scalar] = []
+        func flush() {
+            // Leading non-letters (all of a word without letters), trailing non-letters other than digits.
+            if let first = current.firstIndex(where: isL) {
+                var end = current.count
+                while end > first && !isL(current[end - 1]) && !isDigit(current[end - 1]) { end -= 1 }
+                words.append(PText(current[first..<end]))
+            }
+            current = []
+        }
+        for c in t.u {
+            if isWS(c) || c == "," || c == ";" || c == "/" || c == "-" {
+                flush()
+            } else {
+                current.append(c)
+            }
+        }
+        flush()
+        return !words.isEmpty && words.allSatisfy(isPinyinWord)
+    }
+
+    /// Han characters and no Latin letters.
+    static func isHanCell(_ cell: PText) -> Bool {
+        cell.contains(where: TextNormalizer.isHanScalar) && !cell.contains(where: isLatinLetter)
+    }
+
+    /// Rows of three cells holding Chinese characters, their pinyin and the translation, the
+    /// characters next to the pinyin (你好 | nǐ hǎo | Hallo, nǐ hǎo | 你好 | Hallo, …): the two
+    /// become one side, "你好 (nǐ hǎo)".
+    static func mergeHanPinyin(_ entries: [Entry], _ cand: Candidate) {
+        let live = entries.filter { !$0.skip && $0.parts.count >= 2 }
+        let rows = live.filter { $0.parts.count == 3 && $0.parts.allSatisfy { !$0.isEmpty } }
+        if rows.isEmpty || Double(rows.count) < 0.6 * Double(live.count) { return }
+        func share(_ c: Int, _ f: (PText) -> Bool) -> Double {
+            Double(rows.filter { f($0.parts[c]) }.count) / Double(rows.count)
+        }
+        // [Han column, pinyin column]
+        let columns = [(han: 0, pinyin: 1), (han: 1, pinyin: 0), (han: 1, pinyin: 2), (han: 2, pinyin: 1)]
+        guard let found = columns.first(where: { share($0.han, isHanCell) >= 0.8 && share($0.pinyin, isPinyinCell) >= 0.8 })
+        else { return }
+        let (h, p) = found
+        let at = min(h, p)
+        for e in live where e.parts.count == 3 {
+            let han = e.parts[h]
+            let pinyin = unbracket(e.parts[p])
+            let merged = !han.isEmpty && !pinyin.isEmpty ? han + " (" + pinyin + ")" : han.isEmpty ? pinyin : han
+            var parts = e.parts.enumerated().filter { $0.offset != h && $0.offset != p }.map(\.element)
+            parts.insert(merged, at: at)
+            e.parts = parts
+            e.count = pairingCount(e.parts, cand)
+        }
+    }
+
     // MARK: Parsing
 
     static func parseDelimitedLines(_ ctx: Context, _ lines: [Line], _ cand: Candidate) -> Outcome {
@@ -325,6 +462,7 @@ extension VocabParser {
             return e
         }
         let pageColumns = cellKind && splitInnerPairs(ctx, entries)
+        if !pageColumns { mergeHanPinyin(entries, cand) }
         if cellKind && !pageColumns { reduceThreeCells(ctx, entries, cand) }
 
         // Column languages from clean two-part lines (else from the outer parts of longer lines).

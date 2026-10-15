@@ -74,6 +74,17 @@ export function h(tag, props = null, ...children) {
   return el;
 }
 
+// Sets or removes `lang` and `dir` on an element reused for other text (lib/labels.js
+// textAttrs/fieldAttrs; a null value removes the attribute).
+export function setTextAttrs(el, { lang = null, dir = null } = {}) {
+  if (!el) return el;
+  if (lang) el.setAttribute('lang', lang);
+  else el.removeAttribute('lang');
+  if (dir) el.setAttribute('dir', dir);
+  else el.removeAttribute('dir');
+  return el;
+}
+
 export function clear(el) {
   if (el) while (el.firstChild) el.removeChild(el.firstChild);
   return el;

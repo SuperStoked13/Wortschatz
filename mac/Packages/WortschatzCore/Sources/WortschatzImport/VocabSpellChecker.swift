@@ -58,7 +58,9 @@ public final class VocabSpellChecker {
         case .en: ["en_GB", "en"]
         case .es: ["es"]
         case .it: ["it"]
-        case .other: []
+        case .ar: ["ar"]
+        // No Chinese dictionary on macOS.
+        case .zh, .other: []
         }
         return candidates.first(where: available.contains)
     }

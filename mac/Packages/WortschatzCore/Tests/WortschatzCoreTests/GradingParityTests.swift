@@ -58,11 +58,12 @@ struct GradingParityTests {
         case "diffChars":
             return try encodeToJSONValue(Grading.diffChars(text(c.arg(0)), text(c.arg(1))))
         case "diffAnswer":
-            return try encodeToJSONValue(Grading.diffAnswer(text(c.arg(0)), text(c.arg(1))))
+            return try encodeToJSONValue(Grading.diffAnswer(text(c.arg(0)), text(c.arg(1)), lang: lang(c.arg(2))))
         case "constants":
             switch try c.string(0) {
             case "ARTICLES": return try encodeToJSONValue(Grading.ARTICLES)
             case "REFLEXIVES": return try encodeToJSONValue(Grading.REFLEXIVES)
+            case "GLUED_ARTICLES": return try encodeToJSONValue(Grading.GLUED_ARTICLES)
             case "DEFAULT_TOLERANCE": return try encodeToJSONValue(Grading.DEFAULT_TOLERANCE)
             case "ABBREVIATIONS":
                 return .array(Grading.ABBREVIATIONS.map { [.string($0.pattern), "giu", .string($0.canonical)] })

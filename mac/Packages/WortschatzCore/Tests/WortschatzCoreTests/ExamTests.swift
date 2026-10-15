@@ -194,4 +194,37 @@ struct ExamTests {
         #expect(own.mark == .minor)
         #expect(own.matched == nil)
     }
+
+    // MARK: - Arabic and Chinese
+
+    @Test("Tones are a small mistake, letter variants and pinyin are no mistake")
+    func arabicAndChinese() {
+        let cards = [
+            Card(id: "z1", term: "你好 (nǐ hǎo)", definition: "Hallo"),
+            Card(id: "a1", term: "مدرسة", definition: "Schule"),
+            Card(id: "a2", term: "الكتاب", definition: "das Buch"),
+        ]
+        func mark(_ given: String, _ cardId: String, _ answerLang: Lang) -> ExamItemResult {
+            let card = cards.first { $0.id == cardId }!
+            let q = ExamQuestion(
+                number: 1, cardId: cardId, ask: .term, prompt: card.definition, expected: card.term, promptLang: .de,
+                answerLang: answerLang)
+            return Exam.mark(given, question: q, cards: cards, tolerance: .half)
+        }
+        #expect(Exam.smallMistakes.contains(.tones))
+        #expect(!Exam.smallMistakes.contains(.variant))
+        #expect(!Exam.smallMistakes.contains(.pinyin))
+        let han = mark("你好", "z1", .zh)
+        #expect(han.mark == .correct && han.points == 1 && han.note == nil)
+        let pinyin = mark("ni3 hao3", "z1", .zh)
+        #expect(pinyin.mark == .correct && pinyin.points == 1 && pinyin.note == nil)
+        let tones = mark("ni hao", "z1", .zh)
+        #expect(tones.mark == .minor && tones.points == 0.5 && tones.note == "Töne")
+        let variant = mark("مدرسه", "a1", .ar)
+        #expect(variant.mark == .correct && variant.points == 1 && variant.note == nil)
+        // A missing ال is a missing article (small); the variant adds nothing.
+        let article = mark("كتاب", "a2", .ar)
+        #expect(article.mark == .minor && article.note == "Artikel fehlte")
+        #expect(mark("谢谢", "z1", .zh).mark == .wrong)
+    }
 }

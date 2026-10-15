@@ -15,6 +15,14 @@ struct TextParityTests {
                 return .string(TextNormalizer.foldUmlauts(try c.string(0)))
             case "isLetter":
                 return .bool(TextNormalizer.isLetter(try c.string(0)))
+            case "foldScripts":
+                return .string(TextNormalizer.foldScripts(try c.string(0)))
+            case "stripArabicMarks":
+                return .string(TextNormalizer.stripArabicMarks(try c.string(0)))
+            case "hasArabic":
+                return .bool(TextNormalizer.hasArabic(try c.string(0)))
+            case "hasHan":
+                return .bool(TextNormalizer.hasHan(try c.string(0)))
             default:
                 return nil
             }

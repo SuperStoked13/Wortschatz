@@ -144,10 +144,11 @@ public enum Synonyms {
     /// The JS code compares cards by identity or by id; Swift cards are values, so the id decides.
     private static func isSameCard(_ a: Card, _ b: Card) -> Bool { JSCompat.identical(a.id, b.id) }
 
-    /// Comparison key: case, ß/ss, ligatures, hyphens and punctuation do not matter.
+    /// Comparison key: case, ß/ss, ligatures, hyphens and punctuation do not matter, nor Arabic
+    /// vowel marks or full-width punctuation (`foldScripts`).
     private static func keyOf(_ text: String) -> JSText {
         var out: [Unicode.Scalar] = []
-        for u in Grading.normalizeBasic(JSText(text)).lowercased().scalars {
+        for u in Grading.foldScripts(Grading.normalizeBasic(JSText(text))).lowercased().scalars {
             switch u {
             case "ß": out.append(contentsOf: ["s", "s"])
             case "œ": out.append(contentsOf: ["o", "e"])

@@ -14,6 +14,7 @@ Swift files in this folder are compiled into the app automatically.
 | `SetEditorSnapshots.swift` | DEBUG snapshot scenes `editor-*` (new, pasted user list, applied, edit, validation, review). |
 
 Keys: Return moves on (title → description → import box or first card; term → definition → next card, a new card
-after a filled last one); ⇥ in the last definition adds a card; ⌫ in an empty term removes the card; ⌥↩ breaks a line;
+after a filled last one); ⇥ in the last definition adds a card; ⌫ in an empty term removes the card (neither while an
+input method composes in the field); ⌥↩ breaks a line;
 ⌘↩ / ⌘S save (a list still waiting in the import box is taken over first); esc stops a running import, else cancels
 (asking "Änderungen verwerfen?" when there are unsaved changes).

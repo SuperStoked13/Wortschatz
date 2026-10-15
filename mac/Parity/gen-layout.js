@@ -5,8 +5,9 @@
 // pages: 2/3/4-column tables (per word or per run, y/x jitter, shuffled, wrapped cells, headings,
 // page numbers, fake bold, missing sizes), stacked pairs, paragraphs, two page columns,
 // unaligned columns, monospace runs, skewed photos (raw and deskewed), option variations, odd
-// items and random soup. deskewItems only gets well-formed {str,x,y,w,h} items (its output keeps
-// every input key, the Swift TextItem has exactly these five).
+// items and random soup, and right-to-left (Arabic, Hebrew) and Chinese pages (section 4).
+// deskewItems only gets well-formed {str,x,y,w,h} items, some with a string `dir` (its output
+// keeps every input key, the Swift TextItem has exactly these six).
 import { itemsToLines, estimateSlope, deskewItems } from '../../Website/src/import/layout.js';
 import { Cases, mulberry32, randInt, pick, chance, readText } from './lib.js';
 
@@ -661,6 +662,254 @@ for (let i = 0; i < 700; i++) {
       items.push({ str: pick(rng, VOCAB)[0], x: r2(rng() * 600 - 50), y: r2(rng() * 800 - 50), w: r2(rng() * 120), h: r2(rng() * 20) });
     }
     deskew(items, r2((rng() * 2 - 1) * 0.6 * 1000) / 1000);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 4. Right-to-left text and Chinese (tests/layout.test.js, tests/pdf.test.js, synthetic pages)
+
+// One item per word of a right-to-left phrase (logical order) whose right edge is at x1.
+function rtlWords(x1, y, text, { cw = CW, h = H } = {}) {
+  const out = [];
+  let cx = x1;
+  for (const w of text.split(' ')) {
+    cx -= w.length * cw;
+    out.push({ str: w, x: cx, y, w: w.length * cw, h });
+    cx -= cw;
+  }
+  return out;
+}
+
+const AR_ROWS = [
+  ['die alte Stadt', 'المدينة القديمة'],
+  ['der grosse Junge', 'الولد الكبير'],
+  ['das Buch', 'الكتاب'],
+  ['die Schule', 'المدرسة'],
+  ['der Lehrer', 'المعلم'],
+];
+
+{
+  // tests/layout.test.js
+  lines(rtlWords(300, 100, 'ذهب الولد إلى المدرسة'));
+  lines(rtlWords(300, 100, 'الكتاب الجديد CD'));
+  lines(words(50, 100, 'das Wort كتاب heisst Buch'));
+  const items = [];
+  AR_ROWS.forEach(([de, ar], r) => {
+    items.push(...words(50, 100 + r * PITCH, de));
+    items.push(...rtlWords(400, 100 + r * PITCH, ar));
+  });
+  lines(items);
+  const long = 'المدينة القديمة الجميلة جدا في الشمال';
+  lines(items.filter((it) => it.y !== 100 || it.x < 200).concat(rtlWords(400, 100, long)));
+  const left = [];
+  AR_ROWS.forEach(([de, ar], r) => {
+    left.push(...rtlWords(200, 100 + r * PITCH, ar));
+    left.push(...words(260, 100 + r * PITCH, de));
+  });
+  lines(shuffled(left));
+  lines(left);
+  const runs = [];
+  AR_ROWS.forEach(([de, ar], r) => {
+    runs.push(run_(50, 100 + r * PITCH, de));
+    runs.push({ ...run_(400 - ar.length * CW, 100 + r * PITCH, ar), dir: 'rtl' });
+  });
+  lines(runs);
+  lines(runs.map((it) => (it.dir ? { ...it, dir: 'ltr' } : it)));
+  lines([
+    { str: 'المدينة', x: 400 - 7 * CW, y: 100, w: 7 * CW, h: H, dir: 'rtl' },
+    { str: 'القديمة', x: 400 - 15 * CW, y: 100, w: 7 * CW, h: H, dir: 'rtl' },
+  ]);
+  lines([{ str: 'كتاب    قلم', x: 100, y: 100, w: 11 * CW, h: H, dir: 'rtl' }]);
+  lines([{ str: 'كتاب    قلم', x: 100, y: 100, w: 11 * CW, h: H }]);
+  lines([{ str: 'كتاب    قلم', x: 100, y: 100, w: 11 * CW, h: H, dir: 'ttb' }]);
+  lines([{ str: 'كتاب    قلم', x: 100, y: 100, w: 11 * CW, h: H, dir: 1 }]);
+  lines([{ str: ' كتاب\tقلم ', x: 100, y: 100, w: 11 * CW, h: H, dir: 'rtl' }]);
+  const HW = 12;
+  const han = (x, y, str, trail = true) => ({ str: trail ? `${str} ` : str, x, y, w: (str.length + (trail ? 1 : 0)) * HW, h: H });
+  lines([han(100, 100, '你'), han(114, 100, '好'), han(128, 100, '朋友')]);
+  lines([han(100, 100, '你好', false), han(130, 100, '朋友', false)]);
+  lines([han(100, 100, '你好'), ...words(130, 100, 'nǐ hǎo')]);
+  const t = [];
+  [['Hallo', '你好'], ['danke', '谢谢'], ['auf Wiedersehen', '再见'], ['', '朋友'], ['die Schule', '学校']].forEach(([de, zh], r) => {
+    if (de) t.push(run_(50, 100 + r * PITCH, de));
+    t.push({ str: zh, x: 300, y: 100 + r * PITCH, w: zh.length * HW, h: H });
+  });
+  lines(t);
+  // tests/pdf.test.js runs through toLayoutItems (viewport flips y at 800; rtl runs end at x).
+  const pdfItem = (str, x, y, dir = 'ltr') => {
+    const width = str.length * 6;
+    return { str, x: dir === 'rtl' ? x - width : x, y: 800 - y, w: width, h: 12, dir };
+  };
+  const PDF_ROWS = AR_ROWS.slice(0, 4);
+  const rowItems = () => PDF_ROWS.flatMap(([de, ar], k) => [pdfItem(de, 50, 700 - k * 20), pdfItem(ar, 400, 700 - k * 20, 'rtl')]);
+  lines(rowItems());
+  lines([pdfItem('die alte Stadt', 50, 700), pdfItem('المدينة', 400, 700, 'rtl'), pdfItem('القديمة', 400 - 8 * 6, 700, 'rtl'), ...rowItems().slice(2)]);
+  // deskewItems keeps `dir`.
+  deskew(runs, 0.05);
+  deskew(rowItems(), -0.03);
+}
+
+{
+  const rng3 = mulberry32(0x2a1b);
+  const AR_PAIRS = [
+    ['كتاب', 'das Buch'], ['قلم', 'der Stift'], ['بيت', 'das Haus'], ['مدرسة جديدة', 'die neue Schule'],
+    ['المعلّم', 'der Lehrer'], ['سيارة، عربية', 'das Auto'], ['مع السلامة', 'auf Wiedersehen'], ['الكتاب CD', 'die CD'],
+    ['الْكِتَابُ', 'das Buch'], ['ﻛﺘﺎﺏ', 'das Buch'], ['שלום עולם', 'Hallo Welt'], ['ذهب الولد إلى المدرسة', 'der Junge ging zur Schule'],
+  ];
+  const ZH_PAIRS = [
+    ['你好', 'hallo'], ['谢谢', 'danke'], ['再见', 'auf Wiedersehen'], ['老师', 'der Lehrer'], ['我是学生。', 'Ich bin Schüler.'],
+    ['你好，朋友', 'hallo, Freund'], ['中国', 'China'], ['对不起', 'Entschuldigung'], ['你好 (nǐ hǎo)', 'hallo'], ['ＣＤ', 'die CD'],
+  ];
+  const PINYIN = ['nǐ hǎo', 'xièxie', 'zàijiàn', 'lǎoshī', 'Wǒ shì xuésheng.', 'nǐ hǎo, péngyou', 'Zhōngguó', 'duìbuqǐ', 'nǐ hǎo', 'CD'];
+  const r = (v) => Math.round(v * 100) / 100;
+  const jit = (a) => (a ? (rng3() * 2 - 1) * a : 0);
+
+  // A cell of words: per word (OCR boxes), as one run (PDF), as an rtl run, or Han per character.
+  function cell(items, g, x, y, text, rtl, align) {
+    const cw = /[\u3400-\u9FFF]/.test(text) ? g.hw : g.cw;
+    const width = text.length * cw;
+    const start = align === 'right' ? x - width : x;
+    const yy = y + jit(g.jy);
+    const mode = g.mode;
+    if (mode === 'run' || (mode === 'mixed' && chance(rng3, 0.5))) {
+      const it = { str: text, x: r(start + jit(g.jx)), y: r(yy), w: r(width), h: g.h };
+      if (rtl && chance(rng3, 0.8)) it.dir = 'rtl';
+      items.push(it);
+    } else if (mode === 'chars' && !rtl) {
+      let cx = start;
+      for (const ch of text) {
+        const w = (ch === ' ' ? g.cw : cw) * ch.length;
+        if (ch !== ' ') items.push({ str: chance(rng3, 0.7) ? `${ch} ` : ch, x: r(cx + jit(g.jx)), y: r(yy + jit(g.jy / 3)), w: r(w * 1.5), h: g.h });
+        cx += w + (chance(rng3, 0.3) ? cw * 0.4 : 0);
+      }
+    } else {
+      const parts = text.split(' ');
+      if (rtl) {
+        let cx = start + width;
+        for (const w of parts) {
+          cx -= w.length * cw;
+          if (w) items.push({ str: chance(rng3, 0.4) ? `${w} ` : w, x: r(cx + jit(g.jx)), y: r(yy + jit(g.jy / 3)), w: r(w.length * cw), h: g.h });
+          cx -= cw;
+        }
+      } else {
+        let cx = start;
+        for (const w of parts) {
+          if (w) items.push({ str: w, x: r(cx + jit(g.jx)), y: r(yy + jit(g.jy / 3)), w: r(w.length * cw), h: g.h });
+          cx += (w.length + 1) * cw;
+        }
+      }
+    }
+  }
+
+  function geometry3() {
+    const cw = pick(rng3, [5, 6, 6, 7]);
+    return {
+      cw,
+      hw: cw * pick(rng3, [1.6, 2, 2]),
+      h: r(cw * 2),
+      jy: chance(rng3, 0.4) ? rng3() * 2.5 : 0,
+      jx: chance(rng3, 0.2) ? rng3() * 2 : 0,
+      mode: pick(rng3, ['words', 'words', 'run', 'mixed', 'chars']),
+    };
+  }
+
+  function shuffle3(items) {
+    if (!chance(rng3, 0.35)) return items;
+    const a = items.slice();
+    for (let i = a.length - 1; i > 0; i--) {
+      const j = Math.floor(rng3() * (i + 1));
+      [a[i], a[j]] = [a[j], a[i]];
+    }
+    return a;
+  }
+
+  // Arabic | German tables (Arabic left or right, right- or left-aligned), with wrapped cells.
+  for (let i = 0; i < 500; i++) {
+    const g = geometry3();
+    const n = randInt(rng3, 2, 9);
+    const start = randInt(rng3, 0, AR_PAIRS.length - 1);
+    const pitch = g.h * pick(rng3, [1.3, 1.6, 2.4]);
+    const arRight = chance(rng3, 0.5);
+    const align = chance(rng3, 0.7) ? 'right' : 'left';
+    const xAr = arRight ? (align === 'right' ? 520 : 300) : align === 'right' ? 220 : 40;
+    const xDe = arRight ? 40 : 280;
+    const items = [];
+    let row = 0;
+    for (let k = 0; k < n; k++) {
+      const [ar, de] = AR_PAIRS[(start + k) % AR_PAIRS.length];
+      const y = 100 + row * pitch;
+      cell(items, g, xDe, y, de, false, 'left');
+      if (chance(rng3, 0.12) && ar.includes(' ')) {
+        const cut = ar.indexOf(' ');
+        cell(items, g, xAr, y, ar.slice(0, cut), true, align);
+        row++;
+        cell(items, g, xAr, 100 + row * pitch, ar.slice(cut + 1), true, align);
+      } else {
+        cell(items, g, xAr, y, ar, true, align);
+      }
+      row++;
+    }
+    lines(shuffle3(items));
+  }
+
+  // Chinese | German (| pinyin) tables, Han per character or per word, wrapped definitions.
+  for (let i = 0; i < 450; i++) {
+    const g = geometry3();
+    const n = randInt(rng3, 2, 9);
+    const start = randInt(rng3, 0, ZH_PAIRS.length - 1);
+    const pitch = g.h * pick(rng3, [1.3, 1.6, 2.4]);
+    const withPinyin = chance(rng3, 0.35);
+    const items = [];
+    for (let k = 0; k < n; k++) {
+      const idx = (start + k) % ZH_PAIRS.length;
+      const [zh, de] = ZH_PAIRS[idx];
+      const y = 100 + k * pitch;
+      cell(items, g, 40, y, zh, false, 'left');
+      if (withPinyin) cell(items, { ...g, mode: g.mode === 'chars' ? 'words' : g.mode }, 200, y, PINYIN[idx], false, 'left');
+      if (chance(rng3, 0.85)) cell(items, { ...g, mode: g.mode === 'chars' ? 'words' : g.mode }, withPinyin ? 420 : 300, y, de, false, 'left');
+    }
+    lines(shuffle3(items));
+  }
+
+  // Mixed lines: Arabic words inside Latin text and the other way round, ties, Han and Latin glued.
+  for (let i = 0; i < 300; i++) {
+    const g = geometry3();
+    const parts = [];
+    const n = randInt(rng3, 1, 6);
+    for (let k = 0; k < n; k++) parts.push(pick(rng3, ['كتاب', 'قلم', 'das', 'Buch', 'CD', '你好', '朋友', 'nǐ', 'שלום', '١٢', '،', 'x']));
+    const text = parts.join(' ');
+    const items = [];
+    const rtl = chance(rng3, 0.5);
+    cell(items, g, rtl ? 400 : 40, 100, text, rtl, rtl ? 'right' : 'left');
+    if (chance(rng3, 0.5)) cell(items, g, rtl ? 40 : 400, 100, pick(rng3, ['das Buch', 'الكتاب', '你好']), !rtl, 'left');
+    if (chance(rng3, 0.3)) cell(items, g, rtl ? 400 : 40, 100 + g.h * 1.5, pick(rng3, ['قلم', 'Stift', '朋友']), rtl, rtl ? 'right' : 'left');
+    lines(shuffle3(items));
+  }
+
+  // Right-to-left runs with internal column gaps (monospace) and odd items.
+  for (let i = 0; i < 120; i++) {
+    const items = [];
+    const n = randInt(rng3, 1, 5);
+    for (let k = 0; k < n; k++) {
+      const [ar, de] = pick(rng3, AR_PAIRS);
+      const gap = pick(rng3, ['   ', '\t', '    ', '  ']);
+      const str = chance(rng3, 0.5) ? `${ar}${gap}${de}` : `${de}${gap}${ar}`;
+      const it = { str, x: 40, y: 100 + k * 20, w: str.length * 6, h: 12 };
+      if (chance(rng3, 0.6)) it.dir = pick(rng3, ['rtl', 'rtl', 'ltr', 'ttb']);
+      items.push(it);
+    }
+    lines(items);
+  }
+
+  // deskewItems with directions.
+  for (let i = 0; i < 40; i++) {
+    const items = [];
+    for (let k = 0; k < randInt(rng3, 1, 6); k++) {
+      const it = { str: pick(rng3, AR_PAIRS)[0], x: r(rng3() * 500), y: r(rng3() * 700), w: r(rng3() * 100), h: 12 };
+      if (chance(rng3, 0.7)) it.dir = pick(rng3, ['rtl', 'ltr']);
+      items.push(it);
+    }
+    deskew(items, r((rng3() * 2 - 1) * 0.3 * 1000) / 1000);
   }
 }
 

@@ -6,6 +6,10 @@ export const SPECIAL_CHARS = {
   es: ['á', 'é', 'í', 'ó', 'ú', 'ñ', 'ü', '¿', '¡'],
   it: ['à', 'è', 'é', 'ì', 'ò', 'ù'],
   en: [],
+  // Arabic needs an Arabic keyboard (vowel marks never count); pinyin tones can be typed as
+  // numbers (ni3), so only ü.
+  ar: [],
+  zh: ['ü'],
   other: [],
 };
 

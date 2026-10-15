@@ -5,8 +5,8 @@
 // transform / opacity only, sampled from the Mac's curves. Reduced motion: sides cross-fade, cards
 // only fade. The pure helpers at the top are tested under jsc.
 
-import { h, prefersReducedMotion } from '../lib/dom.js';
-import { LANGS } from '../lib/labels.js';
+import { h, prefersReducedMotion, setTextAttrs } from '../lib/dom.js';
+import { bcp47, textAttrs } from '../lib/labels.js';
 import { canSpeak } from '../lib/speech.js';
 import { iconButton, kbd } from '../ui/components.js';
 import { icon } from '../ui/icons.js';
@@ -148,7 +148,6 @@ export function sampledFrames(curve, fn, steps = 30) {
 
 const bezierCss = (c) => `cubic-bezier(${c.join(', ')})`;
 const direction = (verdict) => (verdict === 'know' ? 1 : -1);
-const bcp47 = (lang) => (LANGS[lang] && LANGS[lang].bcp47) || '';
 const hasText = (text) => typeof text === 'string' && text.trim() !== '';
 
 /* ------------------------------------------------------------- the stage */
@@ -227,9 +226,8 @@ export function createCardStage({ onSpeak, onStar, onEdit, apple = false }) {
     const filled = hasText(side.text);
     face.text.classList.toggle('fc-face__text--empty', !filled);
     face.text.textContent = filled ? side.text : 'Keine Angabe';
-    const lang = filled ? bcp47(side.lang) : '';
-    if (lang) face.text.setAttribute('lang', lang);
-    else face.text.removeAttribute('lang');
+    // «Keine Angabe» is German, without the side's language and direction.
+    setTextAttrs(face.text, filled ? textAttrs(side.lang) : {});
     const { size, weight } = filled ? cardTextSize(side.text) : { size: 20, weight: 500 };
     face.size = size;
     face.text.style.fontSize = `${size}px`;

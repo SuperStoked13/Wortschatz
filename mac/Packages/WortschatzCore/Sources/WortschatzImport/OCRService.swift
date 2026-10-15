@@ -6,8 +6,9 @@ import WortschatzCore
 /// `ocrDataToText` in src/import/ocr.js on top of Vision).
 ///
 /// Word boxes become `TextItem`s, the page is straightened (`TextLayout.deskewItems`), rows and table
-/// columns are rebuilt (`TextLayout.itemsToLines`, columns separated by tabs) and umlauts misread
-/// as circumflexes are restored (`OCRPostprocess.fixGermanUmlauts`).
+/// columns are rebuilt (`TextLayout.itemsToLines`, columns separated by tabs), Chinese words are
+/// joined (`OCRPostprocess.joinCJK`) and umlauts misread as circumflexes are restored
+/// (`OCRPostprocess.fixGermanUmlauts`).
 public struct OCRService: Sendable {
     public var recognizer: any TextRecognizing
 
@@ -80,6 +81,8 @@ public enum RecognitionLanguages {
         case .en: "en-US"
         case .es: "es-ES"
         case .it: "it-IT"
+        case .ar: "ar-SA"
+        case .zh: "zh-Hans"
         case .other: nil
         }
     }
@@ -89,8 +92,8 @@ public enum RecognitionLanguages {
 public enum OCRTextAssembler {
     /// Rebuilds rows and table columns from the word boxes: noise words (table rules, box drawing)
     /// are dropped, border bars glued to words are stripped, the page is straightened using the
-    /// median baseline slope, and German umlauts misread as circumflexes are restored. Falls back to
-    /// the plain line texts when no word box is usable.
+    /// median baseline slope, Chinese words are joined without spaces and German umlauts misread as
+    /// circumflexes are restored. Falls back to the plain line texts when no word box is usable.
     public static func lines(from recognized: [OCRLine]) -> [String] {
         var items: [TextItem] = []
         for line in recognized {
@@ -100,10 +103,11 @@ public enum OCRTextAssembler {
         }
         if items.isEmpty {
             let plain = JSCompat.trim(recognized.map(\.text).joined(separator: "\n"))
-            return plain.isEmpty ? [] : OCRPostprocess.fixGermanUmlauts(plain.components(separatedBy: "\n"))
+            return plain.isEmpty ? [] : OCRPostprocess.plainTextLines(plain)
         }
         let slope = estimateSkew(recognized)
-        return OCRPostprocess.fixGermanUmlauts(TextLayout.itemsToLines(TextLayout.deskewItems(items, slope: slope)))
+        let lines = TextLayout.itemsToLines(TextLayout.deskewItems(items, slope: slope))
+        return OCRPostprocess.fixGermanUmlauts(lines.map(OCRPostprocess.joinCJK))
     }
 
     /// The slope (dy/dx, top-left origin) of the text rows.

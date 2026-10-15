@@ -3,7 +3,7 @@ import Foundation
 /// A detected language: one of `LangDetect.SUPPORTED` or "unknown" (the only place where JS
 /// returns "unknown").
 public enum DetectedLanguage: String, Codable, Sendable, CaseIterable, Hashable {
-    case fr, de, en, es, it, unknown
+    case fr, de, en, es, it, ar, zh, unknown
 
     /// The set-side language, nil for `.unknown`.
     public var lang: Lang? { Lang(rawValue: rawValue) }
@@ -28,7 +28,7 @@ public struct LanguageDetection: Codable, Sendable, Equatable, Hashable {
 }
 
 /// Port of src/core/langdetect.js: language identification for short vocabulary lines
-/// (fr / de / en / es / it).
+/// (fr / de / en / es / it, plus ar / zh by their script).
 ///
 /// Vocabulary lines are tiny ("calme", "der Mut", "sage"), so classic n-gram detectors fail on
 /// them. Several weak signals are combined into additive evidence scores (roughly log-odds units):
@@ -39,21 +39,27 @@ public struct LanguageDetection: Codable, Sendable, Equatable, Hashable {
 /// - typical suffixes (-tion, -euse, -ung, -keit, -ing, -ción, -zione …),
 /// - characteristic letter groups (sch, eau, th, w, k, z, gli …),
 /// - a character-trigram model trained lazily on the lexicon itself, which generalises to words
-///   that are not in the lexicon.
+///   that are not in the lexicon,
+/// - the script: every Arabic word is Arabic evidence, every run of Han characters and every
+///   pinyin word with tone marks (ǎ ě ǐ, ā) Chinese evidence. Such words skip the Latin signals.
 ///
 /// Column-level detection aggregates soft votes over many lines, so a single ambiguous line never
-/// decides the language of a whole column.
+/// decides the language of a whole column. Arabic and Chinese come last and take part in
+/// probabilities only with evidence, so results for Latin-script text are the same as with five
+/// languages.
 ///
 /// The port works on Unicode scalars and UTF-16 code units exactly like the JS code (lengths,
 /// suffixes and trigrams are UTF-16 based) and adds the evidence in the same order, so the
 /// rounded scores are bit-identical.
 public enum LangDetect {
-    /// Detectable languages, in the JS order (`['fr', 'de', 'en', 'es', 'it']`).
-    public static let SUPPORTED: [Lang] = [.fr, .de, .en, .es, .it]
+    /// Detectable languages, in the JS order (`['fr', 'de', 'en', 'es', 'it', 'ar', 'zh']`): the five
+    /// Latin languages of the lexicon, trigram, suffix and letter-group signals, then the two
+    /// recognised by their script.
+    public static let SUPPORTED: [Lang] = [.fr, .de, .en, .es, .it, .ar, .zh]
 
     /// Additive, non-negative evidence per language (higher = more likely); every supported
     /// language is present (0 when there is no evidence). Values are rounded to 3 decimals.
-    /// Encodes as `{"fr": …, "de": …, "en": …, "es": …, "it": …}`.
+    /// Encodes as `{"fr": …, "de": …, "en": …, "es": …, "it": …, "ar": …, "zh": …}`.
     public static func scoreLanguages(_ text: String?) -> [Lang: Double] {
         let scores = score(text)
         var out: [Lang: Double] = [:]
@@ -83,6 +89,7 @@ public enum LangDetect {
             var best = 0.0
             for l in 0..<languageCount { best = max(best, scores[l]) }
             for l in 0..<languageCount {
+                // Languages left out of the probabilities have p 0 (JS: undefined, not added).
                 votes[l] += p[l]
                 // Cap the influence of a single long line on the evidence sum.
                 evidence[l] += max(-8, scores[l] - best)
@@ -109,12 +116,26 @@ public enum LangDetect {
 
 extension LangDetect {
     /// Number of supported languages; scores are `[Double]` indexed like `SUPPORTED`.
-    static let languageCount = 5
-    private static let fr = 0, de = 1, en = 2, es = 3, it = 4
+    static let languageCount = 7
+    /// The Latin languages (`LATIN`) come first: indices `0..<latinCount`.
+    static let latinCount = 5
+    private static let fr = 0, de = 1, en = 2, es = 3, it = 4, ar = 5, zh = 6
 
     /// Small tie-breaking prior: the app is used by German speakers learning French (sometimes
     /// English). Only applied when turning scores into probabilities (`PRIOR`).
-    static let prior: [Double] = [0.2, 0.25, 0.1, 0.05, 0]
+    static let prior: [Double] = [0.2, 0.25, 0.1, 0.05, 0, 0, 0]
+
+    /// Evidence per Arabic word or Han run (`W_SCRIPT`).
+    private static let wScript = 4.0
+    /// Evidence per pinyin word with a caron or a ü with a tone (`W_PINYIN`), and per word with
+    /// only macrons (`W_PINYIN_MACRON`): the Latin languages never write the former, the latter
+    /// can also mark long vowels.
+    private static let wPinyin = 3.5
+    private static let wPinyinMacron = 2.8
+    /// `PINYIN_STRONG = /[ǎěǐǒǔǚǜǘǖ]/`
+    private static let pinyinStrong: Set<UInt32> = Set("ǎěǐǒǔǚǜǘǖ".unicodeScalars.map(\.value))
+    /// `PINYIN_MACRON = /[āēīōū]/`
+    private static let pinyinMacron: Set<UInt32> = Set("āēīōū".unicodeScalars.map(\.value))
 
     /// One `{ lang: weight }` entry of the JS weight tables.
     private struct LangWeight: Sendable {
@@ -342,11 +363,11 @@ extension LangDetect {
         // Lexicon: word -> { lang: weight }
         var raw: [String: [Double?]] = [:]
         func add(_ word: String, _ lang: Int, _ w: Double) {
-            var entry = raw[word] ?? [Double?](repeating: nil, count: languageCount)
+            var entry = raw[word] ?? [Double?](repeating: nil, count: latinCount)
             entry[lang] = max(entry[lang] ?? 0, w)
             raw[word] = entry
         }
-        for (i, lang) in SUPPORTED.enumerated() {
+        for (i, lang) in SUPPORTED.prefix(latinCount).enumerated() {
             for w in splitWords(functionWords[lang] ?? "") { add(w, i, wFunction) }
             for w in splitWords(vocabWords[lang] ?? "") { add(w, i, wVocab) }
             for w in splitWords(lexiconOnly[lang] ?? "") { add(w, i, wLexiconOnly) }
@@ -363,10 +384,10 @@ extension LangDetect {
         }
 
         // Character-trigram model per language, trained on the lexicon words (not LEXICON_ONLY).
-        var counts = [[UInt64: Int]](repeating: [:], count: languageCount)
-        var totals = [Int](repeating: 0, count: languageCount)
+        var counts = [[UInt64: Int]](repeating: [:], count: latinCount)
+        var totals = [Int](repeating: 0, count: latinCount)
         var vocab = Set<UInt64>()
-        for (i, lang) in SUPPORTED.enumerated() {
+        for (i, lang) in SUPPORTED.prefix(latinCount).enumerated() {
             let all = splitWords(functionWords[lang] ?? "") + splitWords(vocabWords[lang] ?? "")
             for word in all {
                 let w = word.utf16.filter { $0 != apostrophe }
@@ -379,12 +400,12 @@ extension LangDetect {
             }
         }
         let v = Double(vocab.count + 2000)
-        let denom = (0..<languageCount).map { log(Double(totals[$0]) + trigramK * v) }
-        let unknown = (0..<languageCount).map { log(0 + trigramK) - denom[$0] }
+        let denom = (0..<latinCount).map { log(Double(totals[$0]) + trigramK * v) }
+        let unknown = (0..<latinCount).map { log(0 + trigramK) - denom[$0] }
         var terms: [UInt64: [Double]] = [:]
         terms.reserveCapacity(vocab.count)
         for g in vocab {
-            terms[g] = (0..<languageCount).map { log(Double(counts[$0][g] ?? 0) + trigramK) - denom[$0] }
+            terms[g] = (0..<latinCount).map { log(Double(counts[$0][g] ?? 0) + trigramK) - denom[$0] }
         }
         return Tables(lexicon: lexicon, trigramTerms: terms, unknownTrigramTerms: unknown)
     }
@@ -429,7 +450,7 @@ extension LangDetect {
     /// dictionary (for callers that score many lines).
     static func score(_ text: String?) -> [Double] {
         var out = [Double](repeating: 0, count: languageCount)
-        // normalizeBasic(text).slice(0, 4000)
+        // normalizeBasic(text).replace(ARABIC_MARKS, '').slice(0, 4000)
         let s = prefixUTF16(TextNormalizer.normalizeBasic(text), 4000)
         guard s.contains(where: TextNormalizer.isLetterScalar) else { return out }
         let t = tables
@@ -448,24 +469,22 @@ extension LangDetect {
             }
         }
 
-        // Tokens: /\p{L}+'?/gu
-        let n = s.count
         var prevEnd = 0
         var prevLower: String?
         var index = 0
-        var i = 0
-        while i < n {
-            guard TextNormalizer.isLetterScalar(s[i]) else {
-                i += 1
-                continue
-            }
-            let start = i
-            repeat { i += 1 } while i < n && TextNormalizer.isLetterScalar(s[i])
-            if i < n && s[i] == "'" { i += 1 }
-            let token = s[start..<i]
-
+        for (start, end, script) in tokens(s) {
+            let token = s[start..<end]
             var lowerScalars: [Unicode.Scalar] = []
             for u in token { appendLowercased(u, to: &lowerScalars) }
+            let pinyin = script == nil ? pinyinWeight(lowerScalars) : 0
+            if script != nil || pinyin > 0 {
+                // Arabic word, Han run or pinyin with tone marks: the script is the evidence.
+                if let script { out[script] += wScript } else { out[zh] += pinyin }
+                prevEnd = end
+                prevLower = string(lowerScalars)
+                index += 1
+                continue
+            }
             var keyScalars: [Unicode.Scalar] = []
             for u in lowerScalars {
                 if u.value == 0xDF {
@@ -503,7 +522,7 @@ extension LangDetect {
             if bare.count >= 2 {
                 // Suffixes
                 if bare.count >= 4 {
-                    for l in 0..<languageCount {
+                    for l in 0..<latinCount {
                         var best = 0.0
                         for (suffix, w) in suffixes[l]
                         where w > best && bare.count >= suffix.count + 2 && hasSuffix(bare, suffix) {
@@ -520,7 +539,7 @@ extension LangDetect {
                 trigramEvidence(bare, t, &out)
             }
 
-            prevEnd = i
+            prevEnd = end
             prevLower = lower
             index += 1
         }
@@ -528,17 +547,71 @@ extension LangDetect {
         return out
     }
 
+    /// The letter tokens of `s` (`/\p{L}+'?/gu`) as scalar ranges. A token holding Arabic or Han
+    /// letters is cut into script runs (`tokensOf`): Arabic runs, Han runs and the rest; a run
+    /// without a letter (a lone apostrophe) is dropped. `script` is the language index of an
+    /// Arabic or Han run, nil for other tokens and runs.
+    private static func tokens(_ s: [Unicode.Scalar]) -> [(start: Int, end: Int, script: Int?)] {
+        var out: [(start: Int, end: Int, script: Int?)] = []
+        let n = s.count
+        var i = 0
+        while i < n {
+            guard TextNormalizer.isLetterScalar(s[i]) else {
+                i += 1
+                continue
+            }
+            let start = i
+            repeat { i += 1 } while i < n && TextNormalizer.isLetterScalar(s[i])
+            if i < n && s[i] == "'" { i += 1 }
+            // SCRIPT_RUN_RE: consecutive scalars of the same class form a run.
+            var r = start
+            while r < i {
+                let script = scriptOf(s[r])
+                var e = r + 1
+                while e < i && scriptOf(s[e]) == script { e += 1 }
+                if script != nil || s[r..<e].contains(where: TextNormalizer.isLetterScalar) {
+                    out.append((r, e, script))
+                }
+                r = e
+            }
+        }
+        return out
+    }
+
+    /// `ar` for an Arabic-script scalar, `zh` for a Han character, nil otherwise (`SCRIPT_RUN_RE`).
+    private static func scriptOf(_ u: Unicode.Scalar) -> Int? {
+        if TextNormalizer.isArabicScalar(u) { return ar }
+        if TextNormalizer.isHanScalar(u) { return zh }
+        return nil
+    }
+
+    /// Chinese evidence of a (lowercased) word with pinyin tone marks, 0 without.
+    private static func pinyinWeight(_ lower: [Unicode.Scalar]) -> Double {
+        if lower.contains(where: { pinyinStrong.contains($0.value) }) { return wPinyin }
+        if lower.contains(where: { pinyinMacron.contains($0.value) }) { return wPinyinMacron }
+        return 0
+    }
+
+    /// `ARABIC_MARKS` of langdetect.js: Arabic vowel and Quranic marks (U+064B–065F in full,
+    /// unlike text.js) and the tatweel. Removed before tokenising, since they would split words.
+    private static func isArabicMark(_ u: Unicode.Scalar) -> Bool {
+        switch u.value {
+        case 0x610...0x61A, 0x64B...0x65F, 0x670, 0x6D6...0x6DC, 0x6DF...0x6E8, 0x6EA...0x6ED, 0x640: return true
+        default: return false
+        }
+    }
+
     private static func trigramEvidence(_ word: [UInt16], _ t: Tables, _ out: inout [Double]) {
         let terms = trigramKeys(word).map { t.trigramTerms[$0] ?? t.unknownTrigramTerms }
-        var ll = [Double](repeating: 0, count: languageCount)
+        var ll = [Double](repeating: 0, count: latinCount)
         var minimum = Double.infinity
-        for l in 0..<languageCount {
+        for l in 0..<latinCount {
             var sum = 0.0
             for term in terms { sum += term[l] }
             ll[l] = sum
             if sum < minimum { minimum = sum }
         }
-        for l in 0..<languageCount { out[l] += min(trigramCap, (ll[l] - minimum) * trigramWeight) }
+        for l in 0..<latinCount { out[l] += min(trigramCap, (ll[l] - minimum) * trigramWeight) }
     }
 
     /// `addWeights(out, weights, factor)`
@@ -546,17 +619,25 @@ extension LangDetect {
         for w in weights { out[w.lang] += w.value * factor }
     }
 
-    /// Scores (plus the tie-breaking prior) → probability distribution.
+    /// The languages a score (or vote) map can be about (`contenders`): the Latin ones always,
+    /// Arabic and Chinese only with evidence, so that they never dilute the Latin languages.
+    static func contenders(_ map: [Double]) -> [Int] {
+        (0..<languageCount).filter { $0 < latinCount || map[$0] > 0 }
+    }
+
+    /// Scores (plus the tie-breaking prior) → probability distribution over the contenders. The
+    /// other languages get 0 (JS leaves them out of the object).
     static func softmax(_ scores: [Double]) -> [Double] {
+        let langs = contenders(scores)
         var maximum = -Double.infinity
-        for l in 0..<languageCount { maximum = max(maximum, scores[l] + prior[l]) }
+        for l in langs { maximum = max(maximum, scores[l] + prior[l]) }
         var p = [Double](repeating: 0, count: languageCount)
         var sum = 0.0
-        for l in 0..<languageCount {
+        for l in langs {
             p[l] = exp(scores[l] + prior[l] - maximum)
             sum += p[l]
         }
-        for l in 0..<languageCount { p[l] /= sum }
+        for l in langs { p[l] /= sum }
         return p
     }
 
@@ -564,13 +645,17 @@ extension LangDetect {
         scores.contains { $0 >= 0.3 }
     }
 
-    /// Language indices sorted by `map` (descending), ties broken by the prior.
+    /// The contenders of `map` sorted by `map` (descending), ties broken by the prior, then by
+    /// `SUPPORTED` order.
     static func rank(_ map: [Double]) -> [Int] {
-        // JS: (a, b) => map[b] - map[a] || PRIOR[b] - PRIOR[a]. The priors are distinct, so this is
-        // a strict total order and every sort algorithm gives the same result.
-        (0..<languageCount).sorted { a, b in
+        // JS: contenders(map).sort((a, b) => map[b] - map[a] || PRIOR[b] - PRIOR[a]). Italian,
+        // Arabic and Chinese share the prior 0; the stable JS sort keeps them in SUPPORTED order.
+        contenders(map).sorted { a, b in
             let d = map[b] - map[a]
-            return (d != 0 && !d.isNaN ? d : prior[b] - prior[a]) < 0
+            if d != 0 && !d.isNaN { return d < 0 }
+            let pd = prior[b] - prior[a]
+            if pd != 0 { return pd < 0 }
+            return a < b
         }
     }
 
@@ -578,12 +663,13 @@ extension LangDetect {
 
     // MARK: Text helpers
 
-    /// The scalars of `s.slice(0, limit)` (UTF-16 based). An astral character cut in half by the
-    /// limit is dropped: the lone high surrogate JS keeps at the very end never matters for scoring.
+    /// The scalars of `s.replace(ARABIC_MARKS, '').slice(0, limit)` (UTF-16 based). An astral
+    /// character cut in half by the limit is dropped: the lone high surrogate JS keeps at the very
+    /// end never matters for scoring.
     private static func prefixUTF16(_ s: String, _ limit: Int) -> [Unicode.Scalar] {
         var out: [Unicode.Scalar] = []
         var units = 0
-        for u in s.unicodeScalars {
+        for u in s.unicodeScalars where !isArabicMark(u) {
             units += UTF16.width(u)
             if units > limit { break }
             out.append(u)

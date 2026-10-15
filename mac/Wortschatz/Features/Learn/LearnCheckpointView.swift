@@ -10,6 +10,8 @@ struct LearnCheckpointView: View {
     let from: LearnEngine.Counts?
     let segments: Int
     let cards: [Card]
+    let termLang: Lang
+    let defLang: Lang
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.isSnapshotRendering) private var isSnapshot
@@ -45,7 +47,7 @@ struct LearnCheckpointView: View {
             }
 
             if !rows.isEmpty {
-                LearnTermList(title: "In dieser Runde", rows: rows)
+                LearnTermList(title: "In dieser Runde", rows: rows, termLang: termLang, defLang: defLang)
             }
         }
         .onAppear {
@@ -143,7 +145,8 @@ struct LearnSegmentedBar: View {
     }
 }
 
-/// A plain (non-glass) list of cards: term and definition with a status or a misses chip.
+/// A plain (non-glass) list of cards: term and definition (in their languages) with a status or
+/// a misses chip.
 struct LearnTermList: View {
     struct Row: Identifiable {
         enum Trailing {
@@ -159,6 +162,8 @@ struct LearnTermList: View {
 
     let title: String
     let rows: [Row]
+    let termLang: Lang
+    let defLang: Lang
 
     var body: some View {
         VStack(alignment: .leading, spacing: Spacing.s) {
@@ -193,10 +198,12 @@ struct LearnTermList: View {
     private func rowView(_ row: Row) -> some View {
         HStack(spacing: Spacing.m) {
             VStack(alignment: .leading, spacing: 2) {
-                Text(row.term)
+                Text(LearnText.spoken(row.term, lang: termLang))
                     .font(.body.weight(.semibold))
-                Text(row.definition)
+                    .cardTextLine(termLang)
+                Text(LearnText.spoken(row.definition, lang: defLang))
                     .foregroundStyle(.secondary)
+                    .cardTextLine(defLang)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             trailing(row.trailing)

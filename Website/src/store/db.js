@@ -36,7 +36,7 @@ const flashcardsKey = (setId) => `flashcards:${setId}`;
 // Per-set keys that belong to a set (removed with it).
 const SET_KEY_RE = /^(progress|session|learn|flashcards):(.*)$/;
 
-const LANG_CODES = ['fr', 'en', 'es', 'it', 'de', 'other'];
+const LANG_CODES = ['fr', 'en', 'es', 'it', 'ar', 'zh', 'de', 'other'];
 const ANSWER_WITH = ['term', 'definition', 'both'];
 const THEMES = ['system', 'light', 'dark'];
 const BOOLEAN_OPTIONS = ['shuffle', 'copyAnswer', 'autoAdvance', 'audio'];

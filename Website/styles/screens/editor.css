@@ -1222,10 +1222,13 @@
   min-width: 0;
 }
 
+/* The hidden copy that sizes the field: same language (set on .ed-grow) and, like the
+   field's dir="auto", each line in the direction of its text, so it wraps the same. */
 .ed-grow::after {
   content: attr(data-value) " ";
   visibility: hidden;
   white-space: pre-wrap;
+  unicode-bidi: plaintext;
 }
 
 .ed-grow::after,

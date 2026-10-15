@@ -33,7 +33,7 @@ export const backspaceText = (apple) => (apple ? '⌫' : 'Rücktaste');
 /* ----------------------------------------------------------------- sidebar */
 
 export function createFlashcardsSidebar({ setId, title, apple = false, onOptions, onRestart }) {
-  const titleEl = h('span', { class: 'wr-side__title' }, title);
+  const titleEl = h('span', { class: 'wr-side__title', dir: 'auto' }, title);
   const back = h(
     'a',
     { class: 'wr-side__back', href: `#/set/${setId}`, 'aria-label': `Zurück zum Lernset ${title}` },

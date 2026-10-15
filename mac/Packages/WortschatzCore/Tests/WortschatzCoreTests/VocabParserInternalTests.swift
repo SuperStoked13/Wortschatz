@@ -23,6 +23,9 @@ struct VocabParserInternalTests {
             "–", "—", "−", "-", "1", "12", "(", ")", ".", ":", ";", ",", "|", "=", ">", "→", "⇒", "<->", "•", "▶", "*", "'", "\"",
             "«", "»", "Seite", "page", "Lektion", "Unité", "IV", "www.", "http://", "©", "(c) ", "le ", "der ", "s'", "qu'", "🐱",
             "𝄞", "\u{2000}", "\u{2001}", "A\u{30A}", "\u{FB01}",
+            // Arabic and Chinese: bidi controls, harakat, tatweel, presentation forms, full-width forms.
+            "\u{200F}", "\u{200E}", "\u{61C}", "\u{202B}", "\u{2067}", "كِتَاب", "كـتـاب", "ﻛﺘﺎﺏ", "،", "你好", "（", "）", "：",
+            "nǐ", "\u{FF0C}",
         ]
         var state: UInt64 = 0x9E37_79B9_7F4A_7C15
         func next(_ n: Int) -> Int {

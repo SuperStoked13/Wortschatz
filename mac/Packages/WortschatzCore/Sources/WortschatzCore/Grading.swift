@@ -12,9 +12,10 @@ import Foundation
 //
 // Strings are processed as code-point arrays (`Grading.JSText`) and compared by identity like JS
 // `===`; Swift `String ==` would treat canonically equivalent texts ("é" and "e\u{301}") as equal.
-// Every position the JS code cuts at (brackets, separators, slashes, article prefixes) is an ASCII
-// character, so code-point indices give exactly the slices of the JS UTF-16 indices. The JS
-// regular expressions are ported by hand (see the comment above each helper).
+// Every position the JS code cuts at (brackets, separators, slashes, article prefixes, spaces) is
+// a character of the Basic Multilingual Plane, so code-point indices give exactly the slices of
+// the JS UTF-16 indices. The JS regular expressions are ported by hand (see the comment above
+// each helper).
 
 /// A tolerance that was needed to accept an answer (`result.notes`, in `NOTE_ORDER`).
 public enum GradeNote: String, Codable, Sendable, CaseIterable, Hashable {
@@ -23,9 +24,15 @@ public enum GradeNote: String, Codable, Sendable, CaseIterable, Hashable {
     case abbreviation
     case partial
     case parentheses
+    /// A Chinese answer typed in pinyin only («nǐ hǎo» for «你好 (nǐ hǎo)»).
+    case pinyin
     /// JSON "case" (a Swift keyword): capitalisation differed (German only).
     case letterCase = "case"
     case accents
+    /// The accents of a Chinese answer (pinyin tones).
+    case tones
+    /// An Arabic letter variant (hamza forms, ة/ه, ى/ي); always accepted.
+    case variant
     case typo
     case order
     /// Accepted as the answer of a synonym card (only added by `Synonyms.gradeWithSynonyms`).
@@ -37,7 +44,8 @@ public enum GradeNote: String, Codable, Sendable, CaseIterable, Hashable {
 
 /// The most helpful hint for a wrong answer (`result.hint`, priority in `HINT_ORDER`).
 public enum GradeHint: String, Codable, Sendable, CaseIterable, Hashable {
-    case wrongArticle, missingArticle, accentsOnly, caseOnly, typo, almost
+    /// `tonesOnly` is `accentsOnly` of a Chinese answer (pinyin).
+    case wrongArticle, missingArticle, accentsOnly, tonesOnly, caseOnly, typo, almost
 }
 
 /// Result of `grade`. `hint` is encoded as explicit `null` when absent (like JS).
@@ -121,6 +129,8 @@ public enum Grading {
         .en: ["the", "a", "an", "to"],
         .es: ["el", "la", "los", "las", "un", "una", "unos", "unas"],
         .it: ["il", "lo", "la", "i", "gli", "le", "l'", "un", "uno", "una", "un'"],
+        .ar: ["ال"],
+        .zh: [],
     ]
 
     /// Reflexive pronouns per answer language (note the trailing spaces, as in JS).
@@ -130,7 +140,13 @@ public enum Grading {
         .en: ["oneself"],
         .es: [],
         .it: [],
+        .ar: [],
+        .zh: [],
     ]
+
+    /// Articles written onto the word without a space or an apostrophe (الكتاب = ال + كتاب); they
+    /// behave like an elided article ("l'homme").
+    public static let GLUED_ARTICLES: [String] = ["ال"]
 
     /// `[pattern, canonical expansion]`, applied in order, case-insensitive.
     public static let ABBREVIATIONS: [AbbreviationRule] = [
@@ -154,14 +170,17 @@ public enum Grading {
     /// `DEFAULT_TOLERANCE` (= `DEFAULT_STUDY_OPTIONS.tolerance`).
     public static let DEFAULT_TOLERANCE = Tolerance.default
 
-    /// Order of `notes` in a result.
+    /// Order of `notes` in a result. `.tones` and `.tonesOnly` are `.accents` and `.accentsOnly` of
+    /// a Chinese answer (pinyin), `.variant` an Arabic letter variant (always accepted), `.pinyin`
+    /// a Chinese answer typed in pinyin only.
     public static let NOTE_ORDER: [GradeNote] = [
-        .article, .pronoun, .abbreviation, .partial, .parentheses, .letterCase, .accents, .typo, .order,
+        .article, .pronoun, .abbreviation, .partial, .parentheses, .pinyin, .letterCase, .accents, .tones, .variant,
+        .typo, .order,
     ]
 
     /// Priority of hints.
     public static let HINT_ORDER: [GradeHint] = [
-        .wrongArticle, .missingArticle, .accentsOnly, .caseOnly, .typo, .almost,
+        .wrongArticle, .missingArticle, .accentsOnly, .tonesOnly, .caseOnly, .typo, .almost,
     ]
 
     /// More alternatives than this → compare as a single string.
@@ -177,10 +196,11 @@ public enum Grading {
     // MARK: - Public API
 
     /// The alternatives of an answer ("laid, laide" → ["laid", "laide"]), without grammar
-    /// annotations. `lang` is the language of the answer (sentences are not split at commas).
+    /// annotations. `lang` is the language of the answer (sentences are not split at commas). The
+    /// alternatives keep their characters as written (vowel marks, full-width brackets).
     public static func splitAlternatives(_ expected: String, lang: Lang? = nil) -> [String] {
         let s = normalizeBasic(JSText(expected))
-        return splitInternal(s, commas: !isSentenceLike(s, lang: resolvedLang(lang))).alts.map(\.string)
+        return splitInternal(s, commas: !isSentenceLike(foldScripts(s), lang: resolvedLang(lang))).alts.map(\.string)
     }
 
     /// Whether `given` matches `expected` under `tolerance`; `lang` is the answer's language.
@@ -197,8 +217,9 @@ public enum Grading {
             GradeResult(correct: correct, exact: exact, notes: notes, hint: hint, expectedDisplay: expected)
         }
 
-        let gPrep = prep(JSText(given))
-        let ePrep = prep(JSText(expected))
+        // Chinese: tone numbers are tone marks (ni3 hao3 = nǐ hǎo) on both sides.
+        let gPrep = lang == .zh ? toneMarks(prep(JSText(given))) : prep(JSText(given))
+        let ePrep = lang == .zh ? toneMarks(prep(JSText(expected))) : prep(JSText(expected))
         if gPrep.isEmpty { return result(false, false) }
 
         // A sentence is one answer for both sides: its commas are not separators.
@@ -238,15 +259,39 @@ public enum Grading {
         return result(false, false, [], hint)
     }
 
-    /// Character diff for highlighting (code points, NFC, trimmed): `del` = typed but wrong,
-    /// `add` = missing.
+    /// Character diff for highlighting (NFC, trimmed): `del` = typed but wrong, `add` = missing.
+    /// It compares a letter with its combining marks as one character (`/\P{M}\p{M}*|\p{M}+/gu`),
+    /// so an Arabic vowel mark never stands alone.
     public static func diffChars(_ given: String, _ expected: String) -> [DiffSegment] {
-        let a = JSText(JSCompat.nfc(given)).trimmed().scalars
-        let b = JSText(JSCompat.nfc(expected)).trimmed().scalars
+        // Clusters as small integers (equal ids = identical code points), for the LCS table.
+        var ids: [JSText: Int] = [:]
+        var texts: [JSText] = []
+        func clusters(_ s: String) -> [Int] {
+            let scalars = JSText(JSCompat.nfc(s)).trimmed().scalars
+            var out: [Int] = []
+            var i = 0
+            while i < scalars.count {
+                // A letter (or any non-mark) and the marks after it, or a run of lone marks.
+                var j = i + 1
+                while j < scalars.count && TextNormalizer.isMark(scalars[j]) { j += 1 }
+                let cluster = JSText(scalars[i..<j])
+                if let id = ids[cluster] {
+                    out.append(id)
+                } else {
+                    ids[cluster] = texts.count
+                    out.append(texts.count)
+                    texts.append(cluster)
+                }
+                i = j
+            }
+            return out
+        }
+        let a = clusters(given)
+        let b = clusters(expected)
         var out: [DiffSegment] = []
-        func push(_ type: DiffType, _ chars: ArraySlice<Unicode.Scalar>) {
+        func push(_ type: DiffType, _ chars: ArraySlice<Int>) {
             guard !chars.isEmpty else { return }
-            let text = JSText(chars).string
+            let text = JSText.joined(chars.map { texts[$0] }, separator: "").string
             if let last = out.last, last.type == type {
                 out[out.count - 1].text += text
             } else {
@@ -300,8 +345,10 @@ public enum Grading {
 
     /// `diffChars` for the answer feedback: both sides get the normalisation that grading treats
     /// as equal (apostrophes, spaces, ß ≡ ss, œ ≡ oe), so only real mistakes are highlighted. A
-    /// ligature is kept when the learner typed one.
-    public static func diffAnswer(_ given: String, _ expected: String) -> [DiffSegment] {
+    /// ligature is kept when the learner typed one; Arabic vowel marks only show when the learner
+    /// typed some. `lang` (the answer language): Chinese reads tone numbers as marks and diffs
+    /// against the form typed (characters and pinyin, characters or pinyin).
+    public static func diffAnswer(_ given: String, _ expected: String, lang: Lang? = nil) -> [DiffSegment] {
         var g = squeezeApostrophes(normalizeBasic(JSText(given)))
         var e = squeezeApostrophes(normalizeBasic(JSText(expected)))
         if !g.contains(where: isLigature) {
@@ -309,7 +356,25 @@ public enum Grading {
         } else if !e.contains(where: isLigature) {
             g = foldLigatures(g)
         }
-        return diffChars(g.string, e.string)
+        if e.contains(where: TextNormalizer.isArabicScalar) && JSText(TextNormalizer.stripArabicMarks(g.string)) == g {
+            e = JSText(TextNormalizer.stripArabicMarks(e.string))
+        }
+        guard resolvedLang(lang) == .zh else { return diffChars(g.string, e.string) }
+        g = toneMarks(g)
+        e = toneMarks(e)
+        var best = diffChars(g.string, e.string)
+        if let parts = hanLatinParts(e) {
+            for form in [parts.han, parts.latin] {
+                let d = diffChars(g.string, form.string)
+                if diffCost(d) < diffCost(best) { best = d }
+            }
+        }
+        return best
+    }
+
+    /// The characters a diff marks (`del` and `add`), in UTF-16 units like JS `text.length`.
+    static func diffCost(_ parts: [DiffSegment]) -> Int {
+        parts.reduce(0) { $0 + ($1.type == .same ? 0 : $1.text.utf16.count) }
     }
 
     /// JS `resolveLang`: the grading language of a language code ("de", "DE", " de-CH" → `.de`),
@@ -485,6 +550,13 @@ extension Grading {
     static func normalizeBasic(_ s: JSText) -> JSText {
         JSText(TextNormalizer.normalizeBasic(s.string))
     }
+
+    /// `foldScripts` of text.js for NFC text (`normalizeBasic` output): only a text with a
+    /// character at or above U+0600 can change.
+    static func foldScripts(_ s: JSText) -> JSText {
+        guard s.contains(where: { $0.value >= 0x600 }) else { return s }
+        return JSText(TextNormalizer.foldScripts(s.string))
+    }
 }
 
 // MARK: - Character classes
@@ -514,11 +586,11 @@ extension Grading {
     /// `\d` (ASCII digits, no `u` flag).
     static func isDigit(_ u: Unicode.Scalar) -> Bool { u.value >= 0x30 && u.value <= 0x39 }
 
-    /// `PUNCT = /[.,!?;:"«»‹›¿¡…~*„“”‚]/`
+    /// `PUNCT = /[.,!?;:"«»‹›¿¡…~*„“”‚「」『』《》〈〉]/`
     static func isPunct(_ u: Unicode.Scalar) -> Bool {
         switch u.value {
         case 0x2E, 0x2C, 0x21, 0x3F, 0x3B, 0x3A, 0x22, 0xAB, 0xBB, 0x2039, 0x203A, 0xBF, 0xA1, 0x2026, 0x7E, 0x2A,
-             0x201E, 0x201C, 0x201D, 0x201A:
+             0x201E, 0x201C, 0x201D, 0x201A, 0x300C, 0x300D, 0x300E, 0x300F, 0x300A, 0x300B, 0x3008, 0x3009:
             return true
         default:
             return false
@@ -541,15 +613,51 @@ extension Grading {
         }
     }
 
-    /// `"(" | "["`
-    fileprivate static func isOpening(_ u: Unicode.Scalar) -> Bool { u == "(" || u == "[" }
-    /// `")" | "]"`
-    fileprivate static func isClosing(_ u: Unicode.Scalar) -> Bool { u == ")" || u == "]" }
+    /// `OPENERS`: `( [ （ ［ 【`. Graded text has ASCII brackets (`prep`); `splitAlternatives` reads
+    /// the stored text as written, with full-width ones.
+    fileprivate static func isOpening(_ u: Unicode.Scalar) -> Bool {
+        switch u.value {
+        case 0x28, 0x5B, 0xFF08, 0xFF3B, 0x3010: return true
+        default: return false
+        }
+    }
 
-    /// `[\s"»«”“„)\]]` (stripped from the end of a sentence).
+    /// `CLOSERS`: `) ] ） ］ 】`
+    fileprivate static func isClosing(_ u: Unicode.Scalar) -> Bool {
+        switch u.value {
+        case 0x29, 0x5D, 0xFF09, 0xFF3D, 0x3011: return true
+        default: return false
+        }
+    }
+
+    /// `COMMAS`: `, ، ， 、`
+    fileprivate static func isComma(_ u: Unicode.Scalar) -> Bool {
+        switch u.value {
+        case 0x2C, 0x60C, 0xFF0C, 0x3001: return true
+        default: return false
+        }
+    }
+
+    /// `SEMICOLONS`: `; ؛ ；`
+    fileprivate static func isSemicolon(_ u: Unicode.Scalar) -> Bool {
+        switch u.value {
+        case 0x3B, 0x61B, 0xFF1B: return true
+        default: return false
+        }
+    }
+
+    /// `[?!…؟？！]` (a comma after it cuts a sentence).
+    fileprivate static func isSentenceEnd(_ u: Unicode.Scalar) -> Bool {
+        switch u.value {
+        case 0x3F, 0x21, 0x2026, 0x61F, 0xFF1F, 0xFF01: return true
+        default: return false
+        }
+    }
+
+    /// `[\s"»«”“„)\]」』》〉]` (stripped from the end of a sentence).
     fileprivate static func isSentenceCloser(_ u: Unicode.Scalar) -> Bool {
         switch u.value {
-        case 0x22, 0xBB, 0xAB, 0x201D, 0x201C, 0x201E, 0x29, 0x5D: return true
+        case 0x22, 0xBB, 0xAB, 0x201D, 0x201C, 0x201E, 0x29, 0x5D, 0x300D, 0x300F, 0x300B, 0x3009: return true
         default: return JSCompat.isWhitespace(u)
         }
     }
@@ -588,11 +696,15 @@ extension Grading {
     /// Entries per language, longest token first (stable for equal lengths, like the JS sort).
     fileprivate static let articleTable: [Lang: [ArticleEntry]] = {
         var table: [Lang: [ArticleEntry]] = [:]
-        for lang in [Lang.fr, .de, .en, .es, .it] {
+        let glued = Set(GLUED_ARTICLES.map { JSText($0) })
+        for lang in [Lang.fr, .de, .en, .es, .it, .ar, .zh] {
             var entries: [ArticleEntry] = []
             func add(_ raw: String, _ kind: GradeNote) {
                 let token = JSText(raw).trimmed().lowercased()
-                if !token.isEmpty { entries.append(ArticleEntry(token: token, kind: kind, elided: token.last == "'")) }
+                if !token.isEmpty {
+                    let elided = token.last == "'" || glued.contains(token)
+                    entries.append(ArticleEntry(token: token, kind: kind, elided: elided))
+                }
             }
             ARTICLES[lang, default: []].forEach { add($0, .article) }
             REFLEXIVES[lang, default: []].forEach { add($0, .pronoun) }
@@ -912,9 +1024,11 @@ extension Grading {
     }
 
     /// Normalisation that always applies: whitespace, apostrophes, dashes, ligatures, no spaces
-    /// around apostrophes ("s' appeler").
+    /// around apostrophes ("s' appeler"), and the script folds (Arabic vowel marks and tatweel,
+    /// presentation forms, ، ؛ ؟ and full-width punctuation, spaces between Han characters), which
+    /// never produce a note.
     fileprivate static func prep(_ value: JSText) -> JSText {
-        squeezeApostrophes(foldLigatures(normalizeBasic(value)))
+        squeezeApostrophes(foldLigatures(foldScripts(normalizeBasic(value))))
     }
 
     /// Whitespace collapsed, no spaces around apostrophes, trimmed.
@@ -1001,8 +1115,8 @@ extension Grading {
         }
     }
 
-    /// Splits on top-level ',' ';' and spaced '/' (never between digits: "1,5 kg"). With
-    /// `commas` false (a sentence) a comma only cuts after '?', '!' or '…'.
+    /// Splits on top-level ',' ';' (and ، ， 、 ؛ ；) and spaced '/' (never between digits:
+    /// "1,5 kg"). With `commas` false (a sentence) a comma only cuts after '?', '!' or '…'.
     fileprivate static func splitSegments(_ s: JSText, commas: Bool = true) -> [JSText] {
         var out: [JSText] = []
         var start = 0
@@ -1010,11 +1124,12 @@ extension Grading {
             let prev = s.at(i - 1) ?? " "
             let next = s.at(i + 1) ?? " "
             let cut: Bool
-            switch ch {
-            case ";": cut = true
-            case ",": cut = commas ? !(isDigit(prev) && isDigit(next)) : (prev == "?" || prev == "!" || prev == "…")
-            case "/": cut = prev == " " || next == " "
-            default: cut = false
+            if isSemicolon(ch) {
+                cut = true
+            } else if isComma(ch) {
+                cut = commas ? !(isDigit(prev) && isDigit(next)) : isSentenceEnd(prev)
+            } else {
+                cut = ch == "/" && (prev == " " || next == " ")
             }
             if cut {
                 out.append(s.slice(start, i))
@@ -1030,7 +1145,8 @@ extension Grading {
     /// answers. A final dot only ends a sentence that starts with a capital and ends in a real
     /// word, not a list ("ja, nein.") or one ending in an abbreviation, marker or article
     /// ("jdn. fragen, etw. tun.", "maison, f.", "Herr, der."). German capitalises nouns, so
-    /// "Mappe, Tasche." is a list of nouns.
+    /// "Mappe, Tasche." is a list of nouns. Arabic and Chinese have no capitals: there a final dot
+    /// is enough. `s` is folded (`prep`, `foldScripts`).
     fileprivate static func isSentenceLike(_ s: JSText, lang: Lang?) -> Bool {
         guard s.contains(",") else { return false }
         var end = s.count
@@ -1039,6 +1155,9 @@ extension Grading {
         // /(?:[?!…]|\.\.\.)$/
         if let last = t.last, last == "?" || last == "!" || last == "…" { return true }
         if t.hasSuffix("...") { return true }
+        if t.last == "." && t.contains(where: { TextNormalizer.isArabicScalar($0) || TextNormalizer.isHanScalar($0) }) {
+            return true
+        }
         // /^[\s"«„“¿¡([]*\p{Lu}/u
         var i = 0
         while i < t.count && isSentenceOpener(t[i]) { i += 1 }
@@ -1151,9 +1270,11 @@ extension Grading {
         if isBareArticle(lw) && isBareArticle(rw) { return true } // "le/la", "der/die"
         if startsPhrase(rw) && rightWords >= 2 && countLetters(lw) >= 2 { return true } // "le chat/la chatte"
         // A short object placeholder is a word too ("habiller qn/s'habiller"); "se" is not, it
-        // is also a suffix ("gros/se").
+        // is also a suffix ("gros/se"). Chinese characters are words of any length ("谢谢/多谢",
+        // "你/您").
         func wordLike(_ w: JSText) -> Bool {
-            countLetters(w) >= 3 || (isSlot(w) && !reflexiveSlots.contains(slotWord(w)))
+            countLetters(w) >= 3 || w.contains(where: TextNormalizer.isHanScalar)
+                || (isSlot(w) && !reflexiveSlots.contains(slotWord(w)))
         }
         return wordLike(lw) && wordLike(rw)
     }
@@ -1228,7 +1349,7 @@ extension Grading {
         for seg in splitSegments(s, commas: commas) {
             for piece in expandSlashes(seg.trimmed()) {
                 let alt = normalizeBasic(piece)
-                if clean(alt).isEmpty || seen.contains(alt) { continue }
+                if clean(foldScripts(alt)).isEmpty || seen.contains(alt) { continue }
                 let annotation = !alts.isEmpty && isAnnotation(alt) && !isAnnotation(alts[alts.count - 1])
                 if annotation && (allowed.map { $0.contains(noteKey(alt)) } ?? true) {
                     notes.append(alt)
@@ -1255,6 +1376,8 @@ extension Grading {
         let text: JSText
         let omitted: Bool
         let lock: Bool
+        /// The pinyin alone of a Chinese answer (note `.pinyin`).
+        var pinyin = false
     }
 
     fileprivate static func bracketGroups(_ s: JSText) -> [BracketGroup] {
@@ -1314,6 +1437,121 @@ extension Grading {
             text.append(contentsOf: alt.scalars[pos...])
             return ParenVariant(text: tidy(JSText(text)), omitted: p.contains { $0.omitted }, lock: lock)
         }
+    }
+}
+
+// MARK: - Chinese: tone numbers (ni3 hao3) and answers in characters and pinyin
+
+extension Grading {
+    /// Tone marks 1–4 (macron, acute, caron, grave); 5 and 0 are the neutral tone.
+    fileprivate static let toneMarkScalars: [Unicode.Scalar?] = [nil, "\u{304}", "\u{301}", "\u{30C}", "\u{300}", nil]
+
+    /// `[A-Za-zÜü]` (the letters of a tone syllable).
+    private static func isToneLetter(_ u: Unicode.Scalar) -> Bool {
+        let v = u.value
+        return (v >= 0x41 && v <= 0x5A) || (v >= 0x61 && v <= 0x7A) || v == 0xDC || v == 0xFC
+    }
+
+    /// The vowel that carries the tone mark: a or e, o in "ou", otherwise the last vowel; -1 for
+    /// none. `syllable` is ASCII letters and ü/Ü.
+    private static func toneVowel(_ syllable: [Unicode.Scalar]) -> Int {
+        let low = syllable.map { u -> Unicode.Scalar in
+            let v = u.value
+            if v >= 0x41 && v <= 0x5A { return Unicode.Scalar(v + 0x20)! }
+            return v == 0xDC ? "ü" : u
+        }
+        for vowel: Unicode.Scalar in ["a", "e"] {
+            if let at = low.firstIndex(of: vowel) { return at }
+        }
+        for i in low.indices.dropLast() where low[i] == "o" && low[i + 1] == "u" { return i }
+        return low.lastIndex { "aeiouü".unicodeScalars.contains($0) } ?? -1
+    }
+
+    /// "ni3 hao3" → "nǐ hǎo", "lv4" → "lǜ", "ma5" → "ma"; syllables without a vowel stay as
+    /// typed. A syllable (`/((?:[A-Za-zÜü]|[Uu]:)+)([0-5])/g`) is a run of Latin letters (u: and
+    /// v stand for ü) directly followed by a digit 0–5.
+    fileprivate static func toneMarks(_ s: JSText) -> JSText {
+        guard s.contains(where: { $0.value >= 0x30 && $0.value <= 0x35 }) else { return s }
+        let x = s.scalars
+        var out: [Unicode.Scalar] = []
+        var i = 0
+        while i < x.count {
+            // The longest run of letters and "u:" from i; the regex matches only when a digit
+            // follows it (no shorter run from i or from inside it is followed by a digit).
+            var j = i
+            while j < x.count && isToneLetter(x[j]) {
+                j += (x[j] == "u" || x[j] == "U") && j + 1 < x.count && x[j + 1] == ":" ? 2 : 1
+            }
+            guard j > i, j < x.count, x[j].value >= 0x30 && x[j].value <= 0x35 else {
+                out.append(contentsOf: x[i..<max(j, i + 1)])
+                i = max(j, i + 1)
+                continue
+            }
+            var syllable: [Unicode.Scalar] = []
+            var k = i
+            while k < j {
+                let u = x[k]
+                if (u == "u" || u == "U") && k + 1 < j && x[k + 1] == ":" {
+                    syllable.append(u == "u" ? "ü" : "Ü")
+                    k += 2
+                } else {
+                    syllable.append(u == "v" ? "ü" : u == "V" ? "Ü" : u)
+                    k += 1
+                }
+            }
+            let at = toneVowel(syllable)
+            if at < 0 {
+                out.append(contentsOf: x[i...j])
+            } else {
+                if let mark = toneMarkScalars[Int(x[j].value - 0x30)] { syllable.insert(mark, at: at + 1) }
+                out.append(contentsOf: JSText(JSCompat.nfc(JSText(syllable).string)).scalars)
+            }
+            i = j + 1
+        }
+        return JSText(out)
+    }
+
+    /// `[A-Za-zÀ-ɏḀ-ỿ]`
+    private static func isLatinLetter(_ u: Unicode.Scalar) -> Bool {
+        let v = u.value
+        return (v >= 0x41 && v <= 0x5A) || (v >= 0x61 && v <= 0x7A) || (v >= 0xC0 && v <= 0x24F)
+            || (v >= 0x1E00 && v <= 0x1EFF)
+    }
+
+    /// `BRACKET`: `( ) [ ] （ ） ［ ］ 【 】`
+    private static func isAnyBracket(_ u: Unicode.Scalar) -> Bool { isOpening(u) || isClosing(u) }
+
+    /// An answer written in characters and pinyin: «你好 (nǐ hǎo)», «你好（nǐ hǎo）»,
+    /// «你好 nǐ hǎo» or «nǐ hǎo 你好» → (han: 你好, latin: nǐ hǎo); nil for anything else.
+    fileprivate static func hanLatinParts(_ text: JSText) -> (han: JSText, latin: JSText)? {
+        func isHanPart(_ s: JSText) -> Bool {
+            s.contains(where: TextNormalizer.isHanScalar) && !s.contains(where: isLatinLetter)
+        }
+        func isLatinPart(_ s: JSText) -> Bool {
+            s.contains(where: isLatinLetter) && !s.contains(where: TextNormalizer.isHanScalar)
+        }
+        func pair(_ a: JSText, _ b: JSText) -> (han: JSText, latin: JSText)? {
+            if isHanPart(a) && isLatinPart(b) { return (a.trimmed(), b.trimmed()) }
+            if isLatinPart(a) && isHanPart(b) { return (b.trimmed(), a.trimmed()) }
+            return nil
+        }
+        // /^([^B]+?) ?[(（[［【]([^B]+)[)）\]］】]$/: the first bracket opens, the last character
+        // closes, nothing else is a bracket; the part before loses one space.
+        if let open = text.scalars.firstIndex(where: isAnyBracket), isOpening(text[open]),
+            let last = text.last, isClosing(last), open < text.count - 2,
+            !text.slice(open + 1, text.count - 1).contains(where: isAnyBracket)
+        {
+            var head = text.slice(0, open)
+            if head.count > 1 && head.last == " " { head = head.slice(0, head.count - 1) }
+            if !head.isEmpty { return pair(head, text.slice(open + 1, text.count - 1)) }
+        }
+        if text.contains(where: isAnyBracket) { return nil }
+        var i = text.scalars.firstIndex(of: " ") ?? -1
+        while i > 0 {
+            if let found = pair(text.slice(0, i), text.slice(i + 1)) { return found }
+            i = text.scalars[(i + 1)...].firstIndex(of: " ") ?? -1
+        }
+        return nil
     }
 }
 
@@ -1399,6 +1637,8 @@ extension Grading {
         let a: Bool
         /// One or two typos allowed.
         let t: Bool
+        /// Arabic letter variants folded (always allowed).
+        var v = false
     }
 
     /// Least tolerant first.
@@ -1412,6 +1652,10 @@ extension Grading {
         Combo(c: false, a: true, t: true),
         Combo(c: true, a: true, t: true),
     ]
+
+    /// Arabic text adds the letter variants (`v`, always allowed): each combo is tried right after
+    /// its twin without them, so a hamza difference is a variant, not an accent.
+    fileprivate static let variantCombos: [Combo] = combos.flatMap { [$0, Combo(c: $0.c, a: $0.a, t: $0.t, v: true)] }
 
     /// The tolerances a comparison may use.
     fileprivate struct Allow {
@@ -1427,9 +1671,29 @@ extension Grading {
     fileprivate static let nonTypo = Allow(c: true, a: true, t: false)
     fileprivate static let anyCombo = Allow(c: true, a: true, t: true)
 
-    fileprivate static func foldForms(_ s: JSText, _ c: Bool, _ a: Bool) -> [JSText] {
-        let base = c ? s.lowercased() : s
-        guard a else { return [base] }
+    /// Arabic letter variants: hamza forms and alef wasla → ا, ؤ → و, ئ → ي, ى → ي, ة → ه (and a
+    /// madda or hamza left on another letter goes).
+    fileprivate static func foldVariants(_ s: JSText) -> JSText {
+        guard s.contains(where: TextNormalizer.isArabicScalar) else { return s }
+        var out: [Unicode.Scalar] = []
+        out.reserveCapacity(s.count)
+        for u in s.scalars {
+            switch u.value {
+            case 0x623, 0x625, 0x622, 0x671: out.append("\u{627}") // أ إ آ ٱ → ا
+            case 0x624: out.append("\u{648}") // ؤ → و
+            case 0x626, 0x649: out.append("\u{64A}") // ئ ى → ي
+            case 0x629: out.append("\u{647}") // ة → ه
+            case 0x653...0x655: continue
+            default: out.append(u)
+            }
+        }
+        return JSText(out)
+    }
+
+    fileprivate static func foldForms(_ s: JSText, _ combo: Combo) -> [JSText] {
+        var base = combo.c ? s.lowercased() : s
+        if combo.v { base = foldVariants(base) }
+        guard combo.a else { return [base] }
         // ASCII has no diacritics, umlauts or ligatures.
         if base.isASCII { return [base, base] }
         let string = base.string
@@ -1443,21 +1707,26 @@ extension Grading {
             let text: JSText
             let c: Bool
             let a: Bool
+            let v: Bool
         }
 
         private var forms: [Key: [JSText]] = [:]
 
-        func forms(_ s: JSText, _ c: Bool, _ a: Bool) -> [JSText] {
-            let key = Key(text: s, c: c, a: a)
+        func forms(_ s: JSText, _ combo: Combo) -> [JSText] {
+            let key = Key(text: s, c: combo.c, a: combo.a, v: combo.v)
             if let hit = forms[key] { return hit }
-            let value = Grading.foldForms(s, c, a)
+            let value = Grading.foldForms(s, combo)
             forms[key] = value
             return value
         }
     }
 
-    fileprivate static func typoBudget(_ s: JSText) -> Int {
-        let n = countLetters(s)
+    /// The Han characters of a text, in order.
+    fileprivate static func hanOf(_ s: JSText) -> [Unicode.Scalar] { s.scalars.filter(TextNormalizer.isHanScalar) }
+
+    /// Chinese characters earn no typo budget: a wrong character is never a typo.
+    fileprivate static func typoBudget(_ s: JSText, lang: Lang?) -> Int {
+        let n = countLetters(s) - (lang == .zh ? hanOf(s).count : 0)
         return n >= 10 ? 2 : n >= 4 ? 1 : 0
     }
 
@@ -1491,24 +1760,32 @@ extension Grading {
         return prev[m]
     }
 
-    fileprivate static func comboMatches(_ g: JSText, _ e: JSText, _ combo: Combo, _ folds: FoldCache) -> Bool {
-        let gs = folds.forms(g, combo.c, combo.a)
-        let es = folds.forms(e, combo.c, combo.a)
+    fileprivate static func comboMatches(_ g: JSText, _ e: JSText, _ combo: Combo, lang: Lang?, _ folds: FoldCache)
+        -> Bool
+    {
+        let gs = folds.forms(g, combo)
+        let es = folds.forms(e, combo)
         for i in es.indices {
             if gs[i] == es[i] { return true }
             if combo.t {
-                let max = typoBudget(es[i])
-                if max > 0 && editDistance(gs[i], es[i], max) <= max { return true }
+                let max = typoBudget(es[i], lang: lang)
+                // Chinese: the typo may only be in the pinyin, the characters must be the same.
+                let sameHan = lang != .zh || hanOf(gs[i]) == hanOf(es[i])
+                if max > 0 && sameHan && editDistance(gs[i], es[i], max) <= max { return true }
             }
         }
         return false
     }
 
     /// First (least tolerant) permitted comparator under which `g` matches `e`.
-    fileprivate static func findCombo(_ g: JSText, _ e: JSText, _ allow: Allow, _ folds: FoldCache) -> Combo? {
-        for combo in combos {
+    fileprivate static func findCombo(_ g: JSText, _ e: JSText, _ allow: Allow, lang: Lang?, _ folds: FoldCache)
+        -> Combo?
+    {
+        let arabic = g.contains(where: TextNormalizer.isArabicScalar)
+            || e.contains(where: TextNormalizer.isArabicScalar)
+        for combo in arabic ? variantCombos : combos {
             if (combo.c && !allow.c) || (combo.a && !allow.a) || (combo.t && !allow.t) { continue }
-            if comboMatches(g, e, combo, folds) { return combo }
+            if comboMatches(g, e, combo, lang: lang, folds) { return combo }
         }
         return nil
     }
@@ -1535,25 +1812,27 @@ extension Grading {
         var r = PairResult()
         func consider(_ combo: Combo?, _ art: GradeNote?) {
             guard let combo else { return }
-            let rank = (combo.c ? 1 : 0) + (combo.a ? 2 : 0) + (combo.t ? 8 : 0) + (art != nil ? 4 : 0)
+            let rank = (combo.c ? 1 : 0) + (combo.a ? 2 : 0) + (combo.v ? 2 : 0) + (combo.t ? 8 : 0)
+                + (art != nil ? 4 : 0)
             if r.best == nil || rank < r.best!.rank { r.best = PairBest(combo: combo, art: art, rank: rank) }
         }
+        func find(_ g: JSText, _ e: JSText, _ allow: Allow) -> Combo? { findCombo(g, e, allow, lang: lang, folds) }
         if let eArticle = e.article {
             if let gArticle = g.article {
                 if sameArticle(gArticle, eArticle, lang: lang) {
-                    consider(findCombo(g.core, e.core, allow, folds), nil)
-                } else if findCombo(g.core, e.core, nonTypo, folds) != nil {
+                    consider(find(g.core, e.core, allow), nil)
+                } else if find(g.core, e.core, nonTypo) != nil {
                     r.wrongArticle = true // "la monsieur", "den Herr"
-                } else if allow.hintPass && findCombo(g.core, e.core, anyCombo, folds) != nil {
+                } else if allow.hintPass && find(g.core, e.core, anyCombo) != nil {
                     r.near = true
                 }
             } else {
-                if artOk { consider(findCombo(g.text, e.core, allow, folds), e.kind) }
-                consider(findCombo(g.text, e.text, allow, folds), nil) // typo across the space: "lemonsieur"
+                if artOk { consider(find(g.text, e.core, allow), e.kind) }
+                consider(find(g.text, e.text, allow), nil) // typo across the space: "lemonsieur"
             }
         } else {
-            consider(findCombo(g.text, e.text, allow, folds), nil)
-            if g.article != nil { consider(findCombo(g.core, e.text, allow, folds), nil) } // extra article is ignored
+            consider(find(g.text, e.text, allow), nil)
+            if g.article != nil { consider(find(g.core, e.text, allow), nil) } // extra article is ignored
         }
         return r
     }
@@ -1564,12 +1843,14 @@ extension Grading {
         let exp: ArticleSplit?
     }
 
+    /// Chinese: spaces do not count (pinyin syllables, characters).
     fileprivate static func makeForms(_ text: JSText, tol: Tolerance, lang: Lang?) -> Forms {
-        let rawText = clean(text)
+        func squeeze(_ s: JSText) -> JSText { lang == .zh ? JSText(s.scalars.filter { $0 != " " }) : s }
+        let rawText = squeeze(clean(text))
         let raw = splitArticle(rawText, lang: lang)
         var exp: ArticleSplit?
         if tol.abbreviations {
-            let expText = clean(expandAbbreviations(text))
+            let expText = squeeze(clean(expandAbbreviations(text)))
             if expText != rawText { exp = splitArticle(expText, lang: lang) }
         }
         return Forms(raw: raw, exp: exp)
@@ -1579,6 +1860,8 @@ extension Grading {
         let forms: Forms
         let omitted: Bool
         let lock: Bool
+        /// The pinyin alone of a Chinese answer.
+        let pinyin: Bool
     }
 
     fileprivate struct PreparedAlt {
@@ -1611,13 +1894,22 @@ extension Grading {
                 }
             }
         }
+        // Chinese in characters and pinyin: the characters alone (no note, whatever the brackets
+        // setting) or the pinyin alone (note `.pinyin`).
+        if lang == .zh, let zh = hanLatinParts(text) {
+            sources.append(ParenVariant(text: zh.han, omitted: false, lock: false))
+            let subs = splitSegments(zh.latin).flatMap { expandSlashes($0.trimmed()) }.filter { !clean($0).isEmpty }
+            for p in subs.count > 1 ? [zh.latin] + subs : [zh.latin] {
+                sources.append(ParenVariant(text: p, omitted: false, lock: false, pinyin: true))
+            }
+        }
         for v in sources {
             let forms = makeForms(v.text, tol: tol, lang: lang)
-            let id = VariantKey(text: forms.raw.text, omitted: v.omitted)
+            let id = VariantKey(text: forms.raw.text, omitted: v.omitted, pinyin: v.pinyin)
             if forms.raw.text.isEmpty || seen.contains(id) { continue }
             seen.insert(id)
             if let article = forms.raw.article { addArticle(article.lowercased()) }
-            variants.append(Variant(forms: forms, omitted: v.omitted, lock: v.lock))
+            variants.append(Variant(forms: forms, omitted: v.omitted, lock: v.lock, pinyin: v.pinyin))
         }
         return PreparedAlt(variants: variants, articles: articles)
     }
@@ -1625,6 +1917,7 @@ extension Grading {
     fileprivate struct VariantKey: Hashable {
         let text: JSText
         let omitted: Bool
+        let pinyin: Bool
     }
 
     fileprivate struct MatchBest {
@@ -1636,6 +1929,8 @@ extension Grading {
         /// Matched a variant with bracketed content left out.
         let paren: Bool
         let lock: Bool
+        /// Matched the pinyin alone of a Chinese answer.
+        let pinyin: Bool
     }
 
     fileprivate struct MatchResult {
@@ -1659,7 +1954,9 @@ extension Grading {
         }
         for v in alt.variants {
             if conflict && v.forms.raw.article == nil {
-                if findCombo(part.raw.core, v.forms.raw.core, nonTypo, folds) != nil { r.wrongArticle = true }
+                if findCombo(part.raw.core, v.forms.raw.core, nonTypo, lang: lang, folds) != nil {
+                    r.wrongArticle = true
+                }
                 continue
             }
             let artOk = allow.art && (allow.hintPass || !v.lock)
@@ -1672,10 +1969,11 @@ extension Grading {
                 if pair.wrongArticle { r.wrongArticle = true }
                 if pair.near { r.near = true }
                 guard let b = pair.best else { continue }
-                let rank = b.rank + (usedAbbr ? 1 : 0) + (v.omitted ? 3 : 0)
+                let rank = b.rank + (usedAbbr ? 1 : 0) + (v.omitted ? 3 : 0) + (v.pinyin ? 1 : 0)
                 if r.best == nil || rank < r.best!.rank {
                     r.best = MatchBest(
-                        combo: b.combo, art: b.art, rank: rank, abbr: usedAbbr, paren: v.omitted, lock: v.lock)
+                        combo: b.combo, art: b.art, rank: rank, abbr: usedAbbr, paren: v.omitted, lock: v.lock,
+                        pinyin: v.pinyin)
                 }
             }
         }
@@ -1744,8 +2042,10 @@ extension Grading {
             if let art = chosen.best.art { notes.insert(art) }
             if chosen.best.abbr { notes.insert(.abbreviation) }
             if chosen.best.paren { notes.insert(.parentheses) }
+            if chosen.best.pinyin { notes.insert(.pinyin) }
             if chosen.best.combo.c && lang == .de { notes.insert(.letterCase) }
-            if chosen.best.combo.a { notes.insert(.accents) }
+            if chosen.best.combo.a { notes.insert(lang == .zh ? .tones : .accents) }
+            if chosen.best.combo.v { notes.insert(.variant) }
             if chosen.best.combo.t { notes.insert(.typo) }
         }
         if covered < alts.count {
@@ -1756,14 +2056,14 @@ extension Grading {
         return Evaluation(correct: true, notes: notes)
     }
 
-    fileprivate static func hintFromMatch(_ best: MatchBest, tol: Tolerance) -> GradeHint? {
+    fileprivate static func hintFromMatch(_ best: MatchBest, tol: Tolerance, lang: Lang?) -> GradeHint? {
         let (c, a, t) = (best.combo.c, best.combo.a, best.combo.t)
         if best.art != nil && (!tol.articles || best.lock) { return .missingArticle }
         let offA = a && !tol.ignoreAccents
         let offC = c && !tol.ignoreCase
         let offT = t && !tol.typos
         if !offA && !offC && !offT { return nil }
-        if offA && !t { return offC ? .almost : .accentsOnly }
+        if offA && !t { return offC ? .almost : lang == .zh ? .tonesOnly : .accentsOnly }
         if offC && !t { return .caseOnly }
         if offT { return .typo }
         return .almost
@@ -1794,7 +2094,7 @@ extension Grading {
                 let r = matchPart(parts[i], alt, hintAllow, lang: lang, folds: folds)
                 if r.wrongArticle { found.insert(.wrongArticle) }
                 if r.near { found.insert(.almost) }
-                if let best = r.best, let h = hintFromMatch(best, tol: tol) { found.insert(h) }
+                if let best = r.best, let h = hintFromMatch(best, tol: tol, lang: lang) { found.insert(h) }
             }
         }
         if let h = HINT_ORDER.first(where: found.contains) { return h }

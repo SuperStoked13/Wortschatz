@@ -9,7 +9,7 @@
 // Every tolerance that was needed is reported as a note; for wrong answers the
 // most helpful hint is computed. Pure and DOM-free (runs under jsc).
 
-import { normalizeBasic, stripDiacritics, foldUmlauts } from './text.js';
+import { normalizeBasic, stripDiacritics, foldUmlauts, foldScripts, stripArabicMarks, hasArabic, hasHan, HAN_RANGE } from './text.js';
 
 export const ARTICLES = Object.freeze({
   fr: Object.freeze(['le', 'la', 'les', "l'", 'un', 'une', 'des', 'du', 'de la', "de l'"]),
@@ -17,6 +17,8 @@ export const ARTICLES = Object.freeze({
   en: Object.freeze(['the', 'a', 'an', 'to']),
   es: Object.freeze(['el', 'la', 'los', 'las', 'un', 'una', 'unos', 'unas']),
   it: Object.freeze(['il', 'lo', 'la', 'i', 'gli', 'le', "l'", 'un', 'uno', 'una', "un'"]),
+  ar: Object.freeze(['ال']),
+  zh: Object.freeze([]),
 });
 
 export const REFLEXIVES = Object.freeze({
@@ -25,7 +27,13 @@ export const REFLEXIVES = Object.freeze({
   en: Object.freeze(['oneself']),
   es: Object.freeze([]),
   it: Object.freeze([]),
+  ar: Object.freeze([]),
+  zh: Object.freeze([]),
 });
+
+// Articles written onto the word without a space or an apostrophe (الكتاب = ال + كتاب); they
+// behave like an elided article ("l'homme").
+export const GLUED_ARTICLES = Object.freeze(['ال']);
 
 const WORD_START = '(?<![\\p{L}\\p{N}])';
 const WORD_END = '(?![\\p{L}\\p{N}])';
@@ -61,8 +69,12 @@ export const DEFAULT_TOLERANCE = Object.freeze({
   typos: false,
 });
 
-const NOTE_ORDER = ['article', 'pronoun', 'abbreviation', 'partial', 'parentheses', 'case', 'accents', 'typo', 'order'];
-const HINT_ORDER = ['wrongArticle', 'missingArticle', 'accentsOnly', 'caseOnly', 'typo', 'almost'];
+// 'tones' and 'tonesOnly' are 'accents' and 'accentsOnly' of a Chinese answer (pinyin), 'variant'
+// an Arabic letter variant (always accepted), 'pinyin' a Chinese answer typed in pinyin only.
+const NOTE_ORDER = [
+  'article', 'pronoun', 'abbreviation', 'partial', 'parentheses', 'pinyin', 'case', 'accents', 'tones', 'variant', 'typo', 'order',
+];
+const HINT_ORDER = ['wrongArticle', 'missingArticle', 'accentsOnly', 'tonesOnly', 'caseOnly', 'typo', 'almost'];
 
 const MAX_PARTS = 24; // more alternatives than this → compare as a single string
 const MAX_DIST_LEN = 200; // longer strings skip edit-distance comparisons
@@ -127,7 +139,7 @@ function buildArticleTable() {
     const entries = [];
     const add = (raw, kind) => {
       const token = raw.trim().toLowerCase();
-      if (token) entries.push({ token, kind, elided: token.endsWith("'") });
+      if (token) entries.push({ token, kind, elided: token.endsWith("'") || GLUED_ARTICLES.includes(token) });
     };
     ARTICLES[lang].forEach((a) => add(a, 'article'));
     (REFLEXIVES[lang] || []).forEach((r) => add(r, 'pronoun'));
@@ -173,12 +185,14 @@ function foldLigatures(s) {
 }
 
 // Normalisation that always applies: whitespace, apostrophes, dashes,
-// ligatures, no spaces around apostrophes ("s' appeler").
+// ligatures, no spaces around apostrophes ("s' appeler"), and the script folds
+// (Arabic vowel marks and tatweel, presentation forms, ، ؛ ؟ and full-width
+// punctuation, spaces between Han characters), which never produce a note.
 function prep(value) {
-  return foldLigatures(normalizeBasic(toStr(value))).replace(/ *' */g, "'");
+  return foldLigatures(foldScripts(normalizeBasic(toStr(value)))).replace(/ *' */g, "'");
 }
 
-const PUNCT = /[.,!?;:"«»‹›¿¡…~*„“”‚]/g;
+const PUNCT = /[.,!?;:"«»‹›¿¡…~*„“”‚「」『』《》〈〉]/g;
 const BRACKETS = /[()[\]{}]/g;
 
 const tidy = (s) => s.replace(/\s+/g, ' ').replace(/ *' */g, "'").trim();
@@ -199,11 +213,18 @@ function expandAbbreviations(s) {
 // ---------------------------------------------------------------------------
 // Alternatives: "lieb, nett", "beau/belle", "der/die Angestellte"
 
+// Graded text has ASCII brackets and separators (prep); splitAlternatives reads
+// the stored text as written, with full-width brackets, ، ， 、 and ؛ ；.
+const OPENERS = new Set(['(', '[', '（', '［', '【']);
+const CLOSERS = new Set([')', ']', '）', '］', '】']);
+const COMMAS = new Set([',', '،', '，', '、']);
+const SEMICOLONS = new Set([';', '؛', '；']);
+
 function bracketsBalanced(s) {
   let depth = 0;
   for (const ch of s) {
-    if (ch === '(' || ch === '[') depth++;
-    else if ((ch === ')' || ch === ']') && --depth < 0) return false;
+    if (OPENERS.has(ch)) depth++;
+    else if (CLOSERS.has(ch) && --depth < 0) return false;
   }
   return depth === 0;
 }
@@ -214,8 +235,8 @@ function scanTopLevel(s, visit) {
   let depth = 0;
   for (let i = 0; i < s.length; i++) {
     const ch = s[i];
-    if (track && (ch === '(' || ch === '[')) depth++;
-    else if (track && (ch === ')' || ch === ']')) depth--;
+    if (track && OPENERS.has(ch)) depth++;
+    else if (track && CLOSERS.has(ch)) depth--;
     else if (depth === 0 && visit(ch, i) === false) return;
   }
 }
@@ -229,8 +250,8 @@ function splitSegments(s, commas = true) {
     const prev = s[i - 1] || ' ';
     const next = s[i + 1] || ' ';
     const cut =
-      ch === ';' ||
-      (ch === ',' && (commas ? !(/\d/.test(prev) && /\d/.test(next)) : /[?!…]/.test(prev))) ||
+      SEMICOLONS.has(ch) ||
+      (COMMAS.has(ch) && (commas ? !(/\d/.test(prev) && /\d/.test(next)) : /[?!…؟？！]/.test(prev))) ||
       (ch === '/' && (prev === ' ' || next === ' '));
     if (cut) {
       out.push(s.slice(start, i));
@@ -246,10 +267,12 @@ function splitSegments(s, commas = true) {
 // capital and ends in a real word, not a list ("ja, nein.") or one ending in an
 // abbreviation, marker or article ("jdn. fragen, etw. tun.", "maison, f.", "Herr, der.").
 // German (lang 'de') capitalises nouns, so "Mappe, Tasche." is a list of nouns.
+// Arabic and Chinese have no capitals: there a final dot is enough. `s` is folded (prep).
 function isSentenceLike(s, lang) {
   if (!s.includes(',')) return false;
-  const t = s.replace(/[\s"»«”“„)\]]+$/u, '');
+  const t = s.replace(/[\s"»«”“„)\]」』》〉]+$/u, '');
   if (/(?:[?!…]|\.\.\.)$/.test(t)) return true;
+  if (t.endsWith('.') && (hasArabic(t) || hasHan(t))) return true;
   if (!/^[\s"«„“¿¡([]*\p{Lu}/u.test(t)) return false;
   const m = t.match(/([\p{L}']+)\.$/u);
   if (!m) return false;
@@ -337,8 +360,9 @@ function isAlternationSlash(seg, i) {
   if (isBareArticle(lw) && isBareArticle(rw)) return true; // "le/la", "der/die"
   if (startsPhrase(rw) && rightWords >= 2 && countLetters(lw) >= 2) return true; // "le chat/la chatte"
   // A short object placeholder is a word too ("habiller qn/s'habiller"); "se" is
-  // not, it is also a suffix ("gros/se").
-  const wordLike = (w) => countLetters(w) >= 3 || (isSlot(w) && !REFLEXIVE_SLOTS.has(slotWord(w)));
+  // not, it is also a suffix ("gros/se"). Chinese characters are words of any
+  // length ("谢谢/多谢", "你/您").
+  const wordLike = (w) => countLetters(w) >= 3 || hasHan(w) || (isSlot(w) && !REFLEXIVE_SLOTS.has(slotWord(w)));
   return wordLike(lw) && wordLike(rw);
 }
 
@@ -405,7 +429,7 @@ function splitInternal(s, commas = true, allowed = null) {
   for (const seg of splitSegments(s, commas)) {
     for (const piece of expandSlashes(seg.trim())) {
       const alt = normalizeBasic(piece);
-      if (!clean(alt) || seen.has(alt)) continue;
+      if (!clean(foldScripts(alt)) || seen.has(alt)) continue;
       const annotation = alts.length > 0 && ANNOTATION.test(alt) && !ANNOTATION.test(alts[alts.length - 1]);
       if (annotation && (!allowed || allowed.has(noteKey(alt)))) {
         notes.push(alt);
@@ -418,11 +442,12 @@ function splitInternal(s, commas = true, allowed = null) {
   return { alts, notes };
 }
 
-// `lang` (optional) is the language of the answer; see isSentenceLike.
+// `lang` (optional) is the language of the answer; see isSentenceLike. The
+// alternatives keep their characters as written (vowel marks, full-width brackets).
 export function splitAlternatives(expected, lang) {
   try {
     const s = normalizeBasic(toStr(expected));
-    return splitInternal(s, !isSentenceLike(s, resolveLang(lang))).alts;
+    return splitInternal(s, !isSentenceLike(foldScripts(s), resolveLang(lang))).alts;
   } catch {
     return [];
   }
@@ -438,9 +463,9 @@ function bracketGroups(s) {
   let start = -1;
   for (let i = 0; i < s.length; i++) {
     const ch = s[i];
-    if (ch === '(' || ch === '[') {
+    if (OPENERS.has(ch)) {
       if (depth++ === 0) start = i;
-    } else if ((ch === ')' || ch === ']') && --depth === 0) {
+    } else if (CLOSERS.has(ch) && --depth === 0) {
       groups.push({ start, end: i + 1, content: s.slice(start + 1, i) });
     }
   }
@@ -480,6 +505,60 @@ function parenVariants(alt, optional) {
     text = tidy(text + alt.slice(pos));
     return { text, omitted: p.some((c) => c.omitted), lock };
   });
+}
+
+// ---------------------------------------------------------------------------
+// Chinese: tone numbers (ni3 hao3) and answers in characters and pinyin
+
+// Tone marks 1–4 (macron, acute, caron, grave); 5 and 0 are the neutral tone.
+const TONE_MARKS = ['', '\u0304', '\u0301', '\u030C', '\u0300'];
+// A syllable: Latin letters (u: and v stand for ü) directly followed by a digit 0–5.
+const TONE_SYLLABLE = /((?:[A-Za-zÜü]|[Uu]:)+)([0-5])/g;
+
+// The vowel that carries the tone mark: a or e, o in "ou", otherwise the last vowel.
+function toneVowel(syllable) {
+  const low = syllable.toLowerCase();
+  for (const v of ['a', 'e']) if (low.includes(v)) return low.indexOf(v);
+  if (low.includes('ou')) return low.indexOf('ou');
+  let at = -1;
+  for (let i = 0; i < low.length; i++) if ('aeiouü'.includes(low[i])) at = i;
+  return at;
+}
+
+// "ni3 hao3" → "nǐ hǎo", "lv4" → "lǜ", "ma5" → "ma"; syllables without a vowel stay as typed.
+function toneMarks(s) {
+  if (!/[0-5]/.test(s)) return s;
+  return s.replace(TONE_SYLLABLE, (whole, letters, digit) => {
+    const syllable = letters.replace(/u:/g, 'ü').replace(/U:/g, 'Ü').replace(/v/g, 'ü').replace(/V/g, 'Ü');
+    const at = toneVowel(syllable);
+    if (at < 0) return whole;
+    const mark = TONE_MARKS[Number(digit)] || '';
+    return (syllable.slice(0, at + 1) + mark + syllable.slice(at + 1)).normalize('NFC');
+  });
+}
+
+const LATIN_LETTER = /[A-Za-z\u00C0-\u024F\u1E00-\u1EFF]/;
+const BRACKET = /[()[\]（）［］【】]/;
+const TRAILING_GROUP = /^([^()[\]（）［］【】]+?) ?[(（[［【]([^()[\]（）［］【】]+)[)）\]］】]$/;
+const isHanPart = (s) => hasHan(s) && !LATIN_LETTER.test(s);
+const isLatinPart = (s) => LATIN_LETTER.test(s) && !hasHan(s);
+
+// An answer written in characters and pinyin: «你好 (nǐ hǎo)», «你好（nǐ hǎo）», «你好 nǐ hǎo»
+// or «nǐ hǎo 你好» → { han: '你好', latin: 'nǐ hǎo' }; null for anything else.
+function hanLatinParts(text) {
+  const pair = (a, b) => {
+    if (isHanPart(a) && isLatinPart(b)) return { han: a.trim(), latin: b.trim() };
+    if (isLatinPart(a) && isHanPart(b)) return { han: b.trim(), latin: a.trim() };
+    return null;
+  };
+  const m = text.match(TRAILING_GROUP);
+  if (m) return pair(m[1], m[2]);
+  if (BRACKET.test(text)) return null;
+  for (let i = text.indexOf(' '); i > 0; i = text.indexOf(' ', i + 1)) {
+    const found = pair(text.slice(0, i), text.slice(i + 1));
+    if (found) return found;
+  }
+  return null;
 }
 
 // ---------------------------------------------------------------------------
@@ -542,16 +621,35 @@ const COMBOS = [
   { c: false, a: true, t: true },
   { c: true, a: true, t: true },
 ];
+// Arabic text adds the letter variants (v, always allowed): each combo is tried right
+// after its twin without them, so a hamza difference is a variant, not an accent.
+const VARIANT_COMBOS = COMBOS.flatMap((combo) => [combo, { ...combo, v: true }]);
 const NON_TYPO = { c: true, a: true, t: false };
 const ANY_COMBO = { c: true, a: true, t: true };
 
-function foldForms(s, c, a) {
-  const base = c ? s.toLowerCase() : s;
-  return a ? [stripDiacritics(base), foldUmlauts(base)] : [base];
+// Arabic letter variants: hamza forms and alef wasla → ا, ؤ → و, ئ → ي, ى → ي, ة → ه
+// (and a madda or hamza left on another letter).
+function foldVariants(s) {
+  return s
+    .replace(/[أإآٱ]/g, 'ا')
+    .replace(/ؤ/g, 'و')
+    .replace(/[ئى]/g, 'ي')
+    .replace(/ة/g, 'ه')
+    .replace(/[\u0653-\u0655]/g, '');
 }
 
-function typoBudget(s) {
-  const n = countLetters(s);
+function foldForms(s, combo) {
+  let base = combo.c ? s.toLowerCase() : s;
+  if (combo.v) base = foldVariants(base);
+  return combo.a ? [stripDiacritics(base), foldUmlauts(base)] : [base];
+}
+
+const HAN_ALL = new RegExp(`[${HAN_RANGE}]`, 'gu');
+const hanOf = (s) => (s.match(HAN_ALL) || []).join('');
+
+// Chinese characters earn no typo budget: a wrong character is never a typo.
+function typoBudget(s, lang) {
+  const n = countLetters(s) - (lang === 'zh' ? Array.from(hanOf(s)).length : 0);
   return n >= 10 ? 2 : n >= 4 ? 1 : 0;
 }
 
@@ -585,24 +683,26 @@ function editDistance(a, b, max) {
   return prev[m];
 }
 
-function comboMatches(g, e, combo) {
-  const gs = foldForms(g, combo.c, combo.a);
-  const es = foldForms(e, combo.c, combo.a);
+function comboMatches(g, e, combo, lang) {
+  const gs = foldForms(g, combo);
+  const es = foldForms(e, combo);
   for (let i = 0; i < es.length; i++) {
     if (gs[i] === es[i]) return true;
     if (combo.t) {
-      const max = typoBudget(es[i]);
-      if (max > 0 && editDistance(gs[i], es[i], max) <= max) return true;
+      const max = typoBudget(es[i], lang);
+      // Chinese: the typo may only be in the pinyin, the characters must be the same.
+      const sameHan = lang !== 'zh' || hanOf(gs[i]) === hanOf(es[i]);
+      if (max > 0 && sameHan && editDistance(gs[i], es[i], max) <= max) return true;
     }
   }
   return false;
 }
 
 // First (least tolerant) permitted comparator under which g matches e.
-function findCombo(g, e, allow) {
-  for (const combo of COMBOS) {
+function findCombo(g, e, allow, lang) {
+  for (const combo of hasArabic(g) || hasArabic(e) ? VARIANT_COMBOS : COMBOS) {
     if ((combo.c && !allow.c) || (combo.a && !allow.a) || (combo.t && !allow.t)) continue;
-    if (comboMatches(g, e, combo)) return combo;
+    if (comboMatches(g, e, combo, lang)) return combo;
   }
   return null;
 }
@@ -616,31 +716,33 @@ function evalPair(g, e, allow, artOk, lang) {
   let near = false;
   const consider = (combo, art) => {
     if (!combo) return;
-    const rank = (combo.c ? 1 : 0) + (combo.a ? 2 : 0) + (combo.t ? 8 : 0) + (art ? 4 : 0);
+    const rank = (combo.c ? 1 : 0) + (combo.a ? 2 : 0) + (combo.v ? 2 : 0) + (combo.t ? 8 : 0) + (art ? 4 : 0);
     if (!best || rank < best.rank) best = { combo, art, rank };
   };
   if (e.article) {
     if (g.article) {
-      if (sameArticle(g.article, e.article, lang)) consider(findCombo(g.core, e.core, allow), null);
-      else if (findCombo(g.core, e.core, NON_TYPO)) wrongArticle = true; // "la monsieur", "den Herr"
-      else if (allow.hintPass && findCombo(g.core, e.core, ANY_COMBO)) near = true;
+      if (sameArticle(g.article, e.article, lang)) consider(findCombo(g.core, e.core, allow, lang), null);
+      else if (findCombo(g.core, e.core, NON_TYPO, lang)) wrongArticle = true; // "la monsieur", "den Herr"
+      else if (allow.hintPass && findCombo(g.core, e.core, ANY_COMBO, lang)) near = true;
     } else {
-      if (artOk) consider(findCombo(g.text, e.core, allow), e.kind);
-      consider(findCombo(g.text, e.text, allow), null); // typo across the space: "lemonsieur"
+      if (artOk) consider(findCombo(g.text, e.core, allow, lang), e.kind);
+      consider(findCombo(g.text, e.text, allow, lang), null); // typo across the space: "lemonsieur"
     }
   } else {
-    consider(findCombo(g.text, e.text, allow), null);
-    if (g.article) consider(findCombo(g.core, e.text, allow), null); // extra article is ignored
+    consider(findCombo(g.text, e.text, allow, lang), null);
+    if (g.article) consider(findCombo(g.core, e.text, allow, lang), null); // extra article is ignored
   }
   return { best, wrongArticle, near };
 }
 
+// Chinese: spaces do not count (pinyin syllables, characters).
 function makeForms(text, tol, lang) {
-  const rawText = clean(text);
+  const squeeze = (s) => (lang === 'zh' ? s.replace(/ /g, '') : s);
+  const rawText = squeeze(clean(text));
   const raw = splitArticle(rawText, lang);
   let exp = null;
   if (tol.abbreviations) {
-    const expText = clean(expandAbbreviations(text));
+    const expText = squeeze(clean(expandAbbreviations(text)));
     if (expText !== rawText) exp = splitArticle(expText, lang);
   }
   return { raw, exp };
@@ -673,13 +775,22 @@ function prepareAlt(text, tol, lang) {
       }
     }
   }
+  // Chinese in characters and pinyin: the characters alone (no note, whatever the
+  // brackets setting) or the pinyin alone (note 'pinyin').
+  const zh = lang === 'zh' ? hanLatinParts(text) : null;
+  if (zh) {
+    sources.push({ text: zh.han, omitted: false, lock: false });
+    const subs = splitSegments(zh.latin).flatMap((x) => expandSlashes(x.trim())).filter((x) => clean(x));
+    for (const p of subs.length > 1 ? [zh.latin, ...subs] : [zh.latin]) sources.push({ text: p, omitted: false, lock: false, pinyin: true });
+  }
   for (const v of sources) {
     const forms = makeForms(v.text, tol, lang);
-    const id = `${forms.raw.text}\u0001${v.omitted}`;
+    const pinyin = Boolean(v.pinyin);
+    const id = `${forms.raw.text}\u0001${v.omitted}\u0001${pinyin}`;
     if (!forms.raw.text || seen.has(id)) continue;
     seen.add(id);
     if (forms.raw.article) articles.add(forms.raw.article.toLowerCase());
-    variants.push({ ...forms, omitted: v.omitted, lock: v.lock });
+    variants.push({ ...forms, omitted: v.omitted, lock: v.lock, pinyin });
   }
   return { variants, articles: [...articles] };
 }
@@ -695,7 +806,7 @@ function matchPart(part, alt, allow, lang) {
   const conflict = Boolean(given) && alt.articles.length > 0 && !alt.articles.some((a) => sameArticle(given, a, lang));
   for (const v of alt.variants) {
     if (conflict && !v.raw.article) {
-      if (findCombo(part.raw.core, v.raw.core, NON_TYPO)) wrongArticle = true;
+      if (findCombo(part.raw.core, v.raw.core, NON_TYPO, lang)) wrongArticle = true;
       continue;
     }
     const artOk = allow.art && (allow.hintPass || !v.lock);
@@ -706,8 +817,8 @@ function matchPart(part, alt, allow, lang) {
       if (r.wrongArticle) wrongArticle = true;
       if (r.near) near = true;
       if (!r.best) continue;
-      const rank = r.best.rank + (usedAbbr ? 1 : 0) + (v.omitted ? 3 : 0);
-      if (!best || rank < best.rank) best = { ...r.best, rank, abbr: usedAbbr, paren: v.omitted, lock: v.lock };
+      const rank = r.best.rank + (usedAbbr ? 1 : 0) + (v.omitted ? 3 : 0) + (v.pinyin ? 1 : 0);
+      if (!best || rank < best.rank) best = { ...r.best, rank, abbr: usedAbbr, paren: v.omitted, lock: v.lock, pinyin: v.pinyin };
     }
   }
   return { best, wrongArticle, near };
@@ -761,8 +872,10 @@ function evaluate(parts, alts, tol, lang) {
     if (chosen.art) notes.add(chosen.art);
     if (chosen.abbr) notes.add('abbreviation');
     if (chosen.paren) notes.add('parentheses');
+    if (chosen.pinyin) notes.add('pinyin');
     if (chosen.combo.c && lang === 'de') notes.add('case');
-    if (chosen.combo.a) notes.add('accents');
+    if (chosen.combo.a) notes.add(lang === 'zh' ? 'tones' : 'accents');
+    if (chosen.combo.v) notes.add('variant');
     if (chosen.combo.t) notes.add('typo');
   });
   if (covered < alts.length) notes.add('partial');
@@ -770,14 +883,14 @@ function evaluate(parts, alts, tol, lang) {
   return { correct: true, notes };
 }
 
-function hintFromMatch(best, tol) {
+function hintFromMatch(best, tol, lang) {
   const { c, a, t } = best.combo;
   if (best.art && (!tol.articles || best.lock)) return 'missingArticle';
   const offA = a && !tol.ignoreAccents;
   const offC = c && !tol.ignoreCase;
   const offT = t && !tol.typos;
   if (!offA && !offC && !offT) return null;
-  if (offA && !t) return offC ? 'almost' : 'accentsOnly';
+  if (offA && !t) return offC ? 'almost' : lang === 'zh' ? 'tonesOnly' : 'accentsOnly';
   if (offC && !t) return 'caseOnly';
   if (offT) return 'typo';
   return 'almost';
@@ -804,7 +917,7 @@ function computeHint(failure, alts, altTexts, tol, lang, givenText, expectedText
       const r = matchPart(parts[i], alt, hintAllow, lang);
       if (r.wrongArticle) found.add('wrongArticle');
       if (r.near) found.add('almost');
-      const h = r.best ? hintFromMatch(r.best, tol) : null;
+      const h = r.best ? hintFromMatch(r.best, tol, lang) : null;
       if (h) found.add(h);
     }
   }
@@ -838,8 +951,9 @@ function gradeInner(given, expected, tolerance, lang, expectedDisplay) {
   const result = (correct, exact, notes, hint) => ({ correct, exact, notes, hint, expectedDisplay });
   const tol = resolveTolerance(tolerance);
   const L = resolveLang(lang);
-  const gPrep = prep(given);
-  const ePrep = prep(expected);
+  // Chinese: tone numbers are tone marks (ni3 hao3 = nǐ hǎo) on both sides.
+  const gPrep = L === 'zh' ? toneMarks(prep(given)) : prep(given);
+  const ePrep = L === 'zh' ? toneMarks(prep(expected)) : prep(expected);
   if (!gPrep) return result(false, false, [], null);
 
   // A sentence is one answer for both sides: its commas are not separators.
@@ -889,9 +1003,13 @@ export function grade(given, expected, tolerance, lang) {
 // ---------------------------------------------------------------------------
 // Character diff for highlighting ('del' = typed but wrong, 'add' = missing)
 
+// A letter with its combining marks (an Arabic vowel mark never stands alone).
+const CLUSTER = /\P{M}\p{M}*|\p{M}+/gu;
+const clusters = (s) => toStr(s).normalize('NFC').trim().match(CLUSTER) || [];
+
 export function diffChars(given, expected) {
-  const a = Array.from(toStr(given).normalize('NFC').trim());
-  const b = Array.from(toStr(expected).normalize('NFC').trim());
+  const a = clusters(given);
+  const b = clusters(expected);
   const out = [];
   const push = (type, chars) => {
     if (!chars.length) return;
@@ -940,13 +1058,28 @@ export function diffChars(given, expected) {
   return out;
 }
 
+const diffCost = (parts) => parts.reduce((n, p) => n + (p.type === 'same' ? 0 : p.text.length), 0);
+
 // diffChars for the answer feedback: both sides get the normalisation that
 // grading treats as equal (apostrophes, spaces, ß ≡ ss, œ ≡ oe), so only real
-// mistakes are highlighted. A ligature is kept when the learner typed one.
-export function diffAnswer(given, expected) {
+// mistakes are highlighted. A ligature is kept when the learner typed one;
+// Arabic vowel marks only show when the learner typed some. `lang` (optional,
+// the answer language): Chinese reads tone numbers as marks and diffs against
+// the form typed (characters and pinyin, characters or pinyin).
+export function diffAnswer(given, expected, lang) {
   let g = normalizeBasic(toStr(given)).replace(/ *' */g, "'");
   let e = normalizeBasic(toStr(expected)).replace(/ *' */g, "'");
   if (!LIGATURES.test(g)) e = foldLigatures(e);
   else if (!LIGATURES.test(e)) g = foldLigatures(g);
-  return diffChars(g, e);
+  if (hasArabic(e) && stripArabicMarks(g) === g) e = stripArabicMarks(e);
+  if (resolveLang(lang) !== 'zh') return diffChars(g, e);
+  g = toneMarks(g);
+  e = toneMarks(e);
+  const parts = hanLatinParts(e);
+  let best = diffChars(g, e);
+  for (const form of parts ? [parts.han, parts.latin] : []) {
+    const d = diffChars(g, form);
+    if (diffCost(d) < diffCost(best)) best = d;
+  }
+  return best;
 }

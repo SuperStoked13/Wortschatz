@@ -258,4 +258,43 @@ test('gradeWithSynonyms: never throws on odd input', () => {
   expect(gradeWithSynonyms(null, card, CARDS, undefined, undefined, undefined).result.correct).toBe(false);
 });
 
+test('findSynonymCards: Arabic vowel marks and full-width punctuation do not matter', () => {
+  const cards = [
+    { id: 'a1', term: 'كِتَابٌ', definition: 'Buch' },
+    { id: 'a2', term: 'كتاب', definition: 'Band' },
+    { id: 'a3', term: 'ﻛﺘﺎﺏ، دفتر', definition: 'Schreibzeug' },
+    { id: 'a4', term: 'قلم', definition: 'Stift' },
+    { id: 'z1', term: '你好！', definition: 'Hallo' },
+    { id: 'z2', term: '你 好', definition: 'Guten Tag' },
+    { id: 'z3', term: '谢谢，多谢', definition: 'Danke' },
+    { id: 'z4', term: '多谢', definition: 'Vielen Dank' },
+    { id: 'z5', term: '「再见」', definition: 'Tschüss' },
+    { id: 'z6', term: '再见', definition: 'Auf Wiedersehen' },
+  ];
+  const ids = (id) => findSynonymCards(cards, cards.find((c) => c.id === id), 'definition').map((c) => c.id);
+  expect(ids('a1')).toEqual(['a2', 'a3']);
+  expect(ids('a4')).toEqual([]);
+  expect(ids('z1')).toEqual(['z2']);
+  expect(ids('z3')).toEqual(['z4']);
+  expect(ids('z5')).toEqual(['z6']);
+  const r = gradeWithSynonyms('Band', cards[0], cards, 'definition', DEFAULT_TOLERANCE, 'de');
+  expect(r.result.correct).toBe(true);
+  expect(r.result.notes).toEqual(['synonym']);
+  expect(r.matchedCard.id).toBe('a2');
+});
+
+test('gradeWithSynonyms: Arabic and Chinese notes of a synonym card are kept', () => {
+  const cards = [
+    { id: 's1', term: 'Schule', definition: 'المدرسة' },
+    { id: 's2', term: 'Schule', definition: 'كُلِّيَّة' },
+    { id: 'h1', term: 'Hallo', definition: '你好 (nǐ hǎo)' },
+    { id: 'h2', term: 'Hallo', definition: '喂 (wèi)' },
+  ];
+  const variant = gradeWithSynonyms('كليه', cards[0], cards, 'definition', DEFAULT_TOLERANCE, 'ar');
+  expect(variant.result.notes).toEqual(['synonym', 'variant']);
+  const pinyin = gradeWithSynonyms('wei4', cards[2], cards, 'definition', DEFAULT_TOLERANCE, 'zh');
+  expect(pinyin.result.notes).toEqual(['synonym', 'pinyin']);
+  expect(pinyin.matchedCard.id).toBe('h2');
+});
+
 await run('synonyms.test.js');

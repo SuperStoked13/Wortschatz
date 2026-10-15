@@ -8,6 +8,8 @@ struct LearnFinishView: View {
     let stats: LearnEngine.FinalStats
     let subset: StudySubset
     let cards: [Card]
+    let termLang: Lang
+    let defLang: Lang
     /// The longest run of correct answers while the screen was open (`AnswerStreak.best`).
     var bestStreak = 0
     /// The repetition questions of the session, if it had them.
@@ -84,7 +86,7 @@ struct LearnFinishView: View {
                     .foregroundStyle(Theme.accentText)
                     .padding(.top, Spacing.xs)
             } else {
-                LearnTermList(title: "Am häufigsten falsch", rows: hardestRows)
+                LearnTermList(title: "Am häufigsten falsch", rows: hardestRows, termLang: termLang, defLang: defLang)
             }
         }
         .celebration(origin: UnitPoint(x: 0.5, y: 0.1))

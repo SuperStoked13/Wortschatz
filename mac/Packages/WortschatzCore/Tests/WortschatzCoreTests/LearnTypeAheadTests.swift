@@ -1,5 +1,5 @@
 import Testing
-import WortschatzCore
+@testable import WortschatzCore
 
 /// Typing on a multiple-choice question: the letters highlight the one option they start (with
 /// enough letters after the article), Return chooses it.
@@ -10,6 +10,9 @@ struct LearnTypeAheadTests {
     static func pick(_ typed: String, _ choices: [String], lang: Lang? = .fr) -> Int? {
         LearnFlow.typeAhead(typed, choices: choices, lang: lang).selected
     }
+
+    /// One character folded like the type-ahead compares it.
+    static func fold(_ ch: String) -> String { TypeAheadText.fold(Character(ch)) }
 
     // MARK: Matching
 
@@ -97,6 +100,114 @@ struct LearnTypeAheadTests {
         #expect(LearnFlow.typeAhead("  ", choices: choices, lang: .fr) == LearnFlow.TypeAhead())
         // Several spaces count as one.
         #expect(Self.pick("la   vo", choices) == 0)
+    }
+
+    // MARK: Arabic and Chinese (mirrored by the tests in Website/tests/typeahead.test.js; ranges are
+    // `Character` offsets here, UTF-16 offsets there)
+
+    @Test("Arabic: vowel marks, tatweel and presentation forms do not matter")
+    func arabicMarks() {
+        #expect(Self.pick("كتا", ["كِتَابٌ", "قلم", "بيت"], lang: .ar) == 0)
+        #expect(Self.pick("كِتَا", ["كتاب", "قلم", "بيت"], lang: .ar) == 0)
+        #expect(Self.pick("كتـا", ["كتاب", "قلم", "بيت"], lang: .ar) == 0)
+        #expect(Self.pick("كتا", ["كتـــاب", "قلم", "بيت"], lang: .ar) == 0)
+        #expect(Self.pick("مد", ["ﻣﺪﺭﺳﺔ", "قلم", "بيت"], lang: .ar) == 0)
+        // The typed part is underlined over the original characters, marks included.
+        #expect(LearnFlow.typeAhead("كتا", choices: ["كِتَابٌ"], lang: .ar).ranges[0] == 0..<3)
+    }
+
+    @Test("Arabic: hamza forms, ة/ه and ى/ي do not matter")
+    func arabicVariants() {
+        #expect(Self.pick("اب", ["أب", "أم", "بيت"], lang: .ar) == 0)
+        #expect(Self.pick("اس", ["إسلام", "قلم"], lang: .ar) == 0)
+        #expect(Self.pick("اسم", ["ٱسم", "قلم"], lang: .ar) == 0)
+        #expect(Self.pick("مسو", ["مسؤول", "قلم"], lang: .ar) == 0)
+        #expect(Self.pick("ريي", ["رئيس", "قلم"], lang: .ar) == 0)
+        #expect(Self.pick("مدرسه", ["مدرسة", "مدرس", "قلم"], lang: .ar) == 0)
+        #expect(Self.pick("مستشفي", ["مستشفى", "قلم"], lang: .ar) == 0)
+    }
+
+    @Test("Arabic: ال is a glued article")
+    func arabicArticle() {
+        let choices = ["الكتاب", "المدرسة", "قلم", "بيت"]
+        #expect(ExtendedSynonyms.articlePrefixes(.ar) == ["ال"])
+        #expect(ExtendedSynonyms.articlePrefixes(nil).contains("ال"))
+        #expect(ExtendedSynonyms.articlePrefixes(nil).contains("la "))
+        // Without the article.
+        #expect(Self.pick("كت", choices, lang: .ar) == 0)
+        #expect(LearnFlow.typeAhead("كت", choices: choices, lang: .ar).ranges[0] == 2..<4)
+        #expect(Self.pick("مد", choices, lang: .ar) == 1)
+        // The article alone picks nothing; two letters after it do.
+        #expect(Self.pick("ال", choices, lang: .ar) == nil)
+        #expect(LearnFlow.typeAhead("ال", choices: choices, lang: .ar).matching == [0, 1])
+        #expect(Self.pick("الك", choices, lang: .ar) == nil)
+        #expect(Self.pick("الكت", choices, lang: .ar) == 0)
+        // Any language (nil) knows it too.
+        #expect(Self.pick("كت", choices, lang: nil) == 0)
+    }
+
+    @Test("Arabic: ، separates alternatives")
+    func arabicComma() {
+        #expect(Self.pick("دف", ["كتاب، دفتر", "قلم", "بيت"], lang: .ar) == 0)
+        #expect(LearnFlow.typeAhead("دف", choices: ["كتاب، دفتر"], lang: .ar).ranges[0] == 6..<8)
+    }
+
+    @Test("Chinese: pinyin after the characters starts an option, spaces do not matter")
+    func chinesePinyin() {
+        let choices = ["你好 (nǐ hǎo)", "谢谢 (xiè xie)", "再见（zài jiàn）", "您好 nín hǎo"]
+        #expect(Self.pick("xie", choices, lang: .zh) == 1)
+        #expect(Self.pick("zai", choices, lang: .zh) == 2)
+        #expect(Self.pick("nin", choices, lang: .zh) == 3)
+        // "ni" starts nǐ hǎo and nín hǎo.
+        #expect(Self.pick("ni", choices, lang: .zh) == nil)
+        #expect(LearnFlow.typeAhead("ni", choices: choices, lang: .zh).matching == [0, 3])
+        #expect(Self.pick("nih", choices, lang: .zh) == 0)
+        #expect(Self.pick("ni hao", choices, lang: .zh) == 0)
+        #expect(Self.pick("nihao", choices, lang: .zh) == 0)
+        #expect(Self.pick("zaijian", choices, lang: .zh) == 2)
+        #expect(LearnFlow.typeAhead("nih", choices: choices, lang: .zh).ranges[0] == 4..<8)
+        // The characters still work.
+        #expect(Self.pick("你好", choices, lang: .zh) == 0)
+        #expect(Self.pick("你 好", choices, lang: .zh) == 0)
+    }
+
+    @Test("Chinese: spaces between characters never matter, other spaces only for Chinese")
+    func chineseSpaces() {
+        #expect(Self.pick("你好", ["你 好", "谢谢"], lang: .fr) == 0)
+        #expect(Self.pick("xiexie", ["谢谢 (xiè xie)", "你好 (nǐ hǎo)"], lang: .fr) == nil)
+        #expect(Self.pick("xie xie", ["谢谢 (xiè xie)", "你好 (nǐ hǎo)"], lang: .fr) == 0)
+    }
+
+    @Test("Latin options do not start after a bracket")
+    func latinBrackets() {
+        #expect(Self.pick("fr", ["le pain (frais)", "le vin"], lang: .fr) == nil)
+        #expect(Self.pick("fr", ["le pain (frais)", "le vin"], lang: .zh) == nil)
+    }
+
+    @Test("Folding is NFD without marks, like typeahead.js")
+    func folding() {
+        #expect(Self.fold("É") == "e")
+        #expect(Self.fold("ß") == "ss")
+        #expect(Self.fold("ǜ") == "u")
+        #expect(Self.fold("أ") == "ا")
+        #expect(Self.fold("ٱ") == "ا")
+        #expect(Self.fold("ة") == "ه")
+        #expect(Self.fold("ى") == "ي")
+        #expect(Self.fold("كِ") == "ك")
+        #expect(Self.fold("ـ") == "")
+        #expect(Self.fold("（") == "(")
+        #expect(Self.fold("’") == "'")
+    }
+
+    @Test("Arabic-Indic digits are digits")
+    func arabicIndicDigits() {
+        #expect(LearnFlow.digitValue("3") == 3)
+        #expect(LearnFlow.digitValue("٠") == 0)
+        #expect(LearnFlow.digitValue("١") == 1)
+        #expect(LearnFlow.digitValue("٩") == 9)
+        #expect(LearnFlow.digitValue("۰") == 0)
+        #expect(LearnFlow.digitValue("۴") == 4)
+        for x in ["a", "", "12", "١٢", " "] { #expect(LearnFlow.digitValue(x) == nil) }
     }
 
     // MARK: Reducer

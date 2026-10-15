@@ -17,7 +17,8 @@ import {
   emptyState,
   hasOpenOverlay,
 } from '../ui/components.js';
-import { langName, langPair, plural } from '../lib/labels.js';
+import { langName, langPair, plural, textAttrs } from '../lib/labels.js';
+import { isComposingKey } from '../lib/shortcuts.js';
 import { dateKey, relativeTime } from '../lib/time.js';
 import { db } from '../store/db.js';
 import { setToText, downloadText } from '../store/backup.js';
@@ -280,6 +281,7 @@ export function render(outlet) {
     autocomplete: 'off',
     autocapitalize: 'off',
     spellcheck: 'false',
+    dir: 'auto',
     enterkeyhint: 'search',
     onInput: () => {
       state.query = searchInput.value;
@@ -460,7 +462,7 @@ export function render(outlet) {
           icon(mode === 'learn' ? 'sparkles' : 'keyboard', { size: 14 }),
           mode === 'learn' ? 'Lernen' : 'Schreiben',
         ),
-        h('p', { class: 'dash-resume__title' }, h('a', { href: setHref, class: 'dash-resume__link' }, set.title)),
+        h('p', { class: 'dash-resume__title', dir: 'auto' }, h('a', { href: setHref, class: 'dash-resume__link' }, set.title)),
         h('div', { class: 'dash-resume__meta' }, metaNodes),
         h('div', { class: 'dash-resume__bar' }, bar),
       ),
@@ -561,9 +563,10 @@ export function render(outlet) {
           title: `${langName(set.termLang)} → ${langName(set.defLang)}`,
         }),
       ),
+      // User text: an Arabic title runs (and is cut) right to left.
       h(
         'h3',
-        { class: 'dash-card__title' },
+        { class: 'dash-card__title', dir: 'auto' },
         h('a', { class: 'dash-card__link', href: setHref, id: titleId, dataset: { role: 'link' } }, highlight(set.title, query)),
       ),
       h('p', { class: 'dash-card__meta' }, plural(progress.total, 'Begriff', 'Begriffe')),
@@ -585,12 +588,14 @@ export function render(outlet) {
         'p',
         { class: 'dash-card__match' },
         icon('search', { size: 14 }),
-        h('span', { class: 'dash-card__match-text' }, highlight(set.description, query)),
+        h('span', { class: 'dash-card__match-text', dir: 'auto' }, highlight(set.description, query)),
       );
     }
     const card = match.cards[0];
     if (!card) return null;
     const more = match.cards.length - 1;
+    // Term and definition each carry their language and direction (an Arabic term is isolated,
+    // so the dash stays between them); the line itself stays left to right like the card.
     return h(
       'p',
       { class: 'dash-card__match' },
@@ -598,9 +603,9 @@ export function render(outlet) {
       h(
         'span',
         { class: 'dash-card__match-text' },
-        highlight(card.term, query),
+        h('span', textAttrs(set.termLang), highlight(card.term, query)),
         h('span', { class: 'dash-card__match-sep', 'aria-hidden': 'true' }, ' – '),
-        highlight(card.definition, query),
+        h('span', textAttrs(set.defLang), highlight(card.definition, query)),
       ),
       more > 0 ? h('span', { class: 'dash-card__match-more', title: `${more} weitere Treffer` }, `+${more}`) : null,
     );
@@ -817,6 +822,8 @@ export function render(outlet) {
   }
 
   function onSearchKeydown(e) {
+    // Enter and Esc of an input method (Pinyin) confirm or cancel its composition.
+    if (isComposingKey(e)) return;
     if (e.key === 'Escape') {
       if (searchInput.value) {
         e.preventDefault();

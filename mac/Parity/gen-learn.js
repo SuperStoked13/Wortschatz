@@ -742,6 +742,25 @@ function choicesCase(cards, card, ask, seed, n = null) {
   choicesCase([{ id: 1, term: 1, definition: 'eins' }, { id: 2, term: true, definition: 'wahr' }, { id: 3, term: 'trois', definition: 'drei' }], { id: 3, term: 'trois', definition: 'drei' }, 'term', 3);
   for (let seed = 1; seed <= 40; seed++) choicesCase(USER, USER[(seed * 7) % USER.length], seed % 3 ? 'term' : 'definition', seed);
   for (let seed = 1; seed <= 30; seed++) choicesCase(WORD_LIST, WORD_LIST[seed % WORD_LIST.length], seed % 2 ? 'term' : 'definition', seed);
+  // Arabic and Chinese spellings that grading treats as equal (tests/learn.test.js): vowel marks,
+  // full-width punctuation, spaces between characters, shared alternatives (، ，).
+  const scripts = [
+    { id: 'kitab', term: 'كِتَابٌ', definition: 'Buch' },
+    { id: 'kitab2', term: 'كتاب', definition: 'Band' },
+    { id: 'daftar', term: 'دفتر', definition: 'Heft' },
+    { id: 'both', term: 'قلم، دَفْتَر', definition: 'Stift' },
+    { id: 'bait', term: 'بيت', definition: 'Haus' },
+    { id: 'madrasa', term: 'مدرسة', definition: 'Schule' },
+    { id: 'nihao', term: '你好！', definition: 'Hallo' },
+    { id: 'nihao2', term: '你 好!', definition: 'Guten Tag' },
+    { id: 'xiexie', term: '谢谢，多谢', definition: 'Danke' },
+    { id: 'duoxie', term: '多谢', definition: 'Vielen Dank' },
+    { id: 'tatweel', term: 'كتـــاب', definition: 'Buch (lang)' },
+    { id: 'forms', term: 'ﻛﺘﺎﺏ', definition: 'Buch (Formen)' },
+  ];
+  for (let seed = 1; seed <= 25; seed++) {
+    for (const card of scripts) choicesCase(scripts, card, seed % 3 ? 'term' : 'definition', seed);
+  }
 }
 
 for (const p of [

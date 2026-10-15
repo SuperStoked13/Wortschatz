@@ -4,9 +4,9 @@ import Observation
 import WortschatzCore
 
 /// Read-aloud (🔊, ⌘R) with `AVSpeechSynthesizer`, a port of src/lib/speech.js: the best installed
-/// voice per language (fr-FR, de-CH falling back to de-DE, en-GB, es-ES, it-IT), vocabulary
-/// notation made speakable ("beau/belle" → "beau, belle"), a slightly slower rate, and every new
-/// utterance cancels the previous one.
+/// voice per language (fr-FR, de-CH falling back to de-DE, en-GB, es-ES, it-IT, ar, zh-CN but never
+/// a Cantonese voice), vocabulary notation made speakable ("beau/belle" → "beau, belle", Chinese
+/// without its pinyin), a slightly slower rate, and every new utterance cancels the previous one.
 ///
 /// The app has one instance, `AppModel.speech`, shared by every screen:
 /// ```swift
@@ -91,7 +91,7 @@ final class SpeechService {
     /// Speaks `text` in the language of `lang`, cancelling anything still speaking. Blank text is
     /// ignored.
     func speak(_ text: String, lang: Lang) {
-        let spoken = Self.speakable(text)
+        let spoken = Self.speakable(text, lang: lang)
         guard !spoken.isEmpty else { return }
         let utterance = AVSpeechUtterance(string: spoken)
         if let voice = voice(for: lang) {
@@ -150,14 +150,36 @@ final class SpeechService {
         return tag
     }
 
-    /// Vocabulary notation read naturally: brackets dropped, "/" and ";" become pauses
-    /// ("beau/belle" → "beau, belle"), whitespace collapsed.
-    static func speakable(_ text: String) -> String {
-        text.replacing(/[()\[\]{}]/, with: " ")
-            .replacing(/\s*\/\s*/, with: ", ")
-            .replacing(/\s*;\s*/, with: ", ")
+    /// Vocabulary notation read naturally (speech.js `speakable`): brackets dropped, "/" and ";"
+    /// become pauses ("beau/belle" → "beau, belle"), whitespace collapsed. Chinese with characters
+    /// reads only the characters: the pinyin beside them (in brackets or not) is left out,
+    /// «你好 (nǐ hǎo)» → «你好».
+    static func speakable(_ text: String, lang: Lang? = nil) -> String {
+        var s = text
+        let chinese = lang == .zh && TextNormalizer.hasHan(s)
+        if chinese {
+            // A bracketed part (half or full width) without characters, and a run of Latin
+            // letters with its tone number.
+            s = s.replacing(/[(（\[［【][^()（）\[\]［］【】]*[)）\]］】]/) { match in
+                TextNormalizer.hasHan(String(match.output)) ? String(match.output) : " "
+            }
+            s = s.replacing(/\p{Script=Latin}[\p{Script=Latin}\p{M}'’]*[0-5]?/, with: " ")
+        }
+        s = s.replacing(/[()\[\]{}（）［］【】]/, with: " ")
+            .replacing(/\s*[\/／]\s*/, with: ", ")
+            .replacing(/\s*[;；]\s*/, with: ", ")
             .replacing(/\s+/, with: " ")
             .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard chinese else { return s }
+        // Separators the pinyin left behind («nǐ hǎo / ní hǎo 你好»).
+        return s.replacing(/\s*,(\s*,)*\s*/, with: ", ")
+            .replacing(/^[,\s]+|[,\s]+$/, with: "")
+    }
+
+    /// Cantonese voices (Hong Kong, Macau, yue) share the primary tag `zh` but cannot read
+    /// Mandarin.
+    static func isCantonese(_ tag: String) -> Bool {
+        normalized(tag).firstMatch(of: /^(yue|zh-yue|zh-(hant-)?(hk|mo))(-|$)/) != nil
     }
 
     /// The best voice for a BCP 47 tag, nil when no installed voice speaks the language.
@@ -178,12 +200,13 @@ final class SpeechService {
     /// Port of `scoreVoice`: the exact language beats the same language from another region
     /// (Swiss German is rare, so Germany German gets a bonus for de-CH); premium and enhanced voices
     /// beat compact ones, compact ones super-compact ones; novelty and Eloquence voices come last;
-    /// personal voices are never used.
+    /// personal voices are never used, nor Cantonese ones for Chinese.
     /// Negative: the voice does not speak the language.
     static func score(_ voice: AVSpeechSynthesisVoice, wanted: String) -> Int {
         let wantedTag = normalized(wanted)
         let tag = normalized(voice.language)
         let primary = wantedTag.split(separator: "-").first.map(String.init) ?? wantedTag
+        if primary == "zh" && isCantonese(tag) && !isCantonese(wantedTag) { return -1 }
         var score: Int
         if tag == wantedTag {
             score = 100

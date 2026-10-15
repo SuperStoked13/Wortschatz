@@ -31,6 +31,8 @@ final class SynonymAssistant {
     /// Answers confirmed by translating them back, by `questionKey`.
     private var confirmed: [String: [String]] = [:]
     private var running: [String: Task<[String], Never>] = [:]
+    /// Whether the model speaks a language whose support depends on the model (`modelSpeaks`).
+    private var speaks: [Lang: Bool] = [:]
     private var isLoaded = false
     private var saveTask: Task<Void, Never>?
     private var warmSession: LanguageModelSession?
@@ -48,6 +50,31 @@ final class SynonymAssistant {
     var isAvailable: Bool { SystemLanguageModel.default.isAvailable }
 
     var isActive: Bool { isEnabled && isAvailable }
+
+    /// Whether the model is asked about `query`: `ExtendedSynonyms.supports` it and the model
+    /// speaks both languages. Chinese depends on the model (`supportsLocale`); Arabic is not
+    /// supported by the model (measured 2026-10-15) and has no model name, so it stays off.
+    func supports(_ query: SynonymQuery) -> Bool {
+        Self.supports(query) { modelSpeaks($0) }
+    }
+
+    /// `supports(_:)` with the model's languages given.
+    static func supports(_ query: SynonymQuery, modelSpeaks: (Lang) -> Bool) -> Bool {
+        ExtendedSynonyms.supports(query) && modelSpeaks(query.promptLang) && modelSpeaks(query.answerLang)
+    }
+
+    /// The locales the model is asked about: languages of `ExtendedSynonyms.modelLanguageNames`
+    /// that not every model version speaks.
+    static let checkedLocales: [Lang: String] = [.zh: "zh-Hans-CN"]
+
+    /// Whether the on-device model speaks `lang` (asked once per language).
+    private func modelSpeaks(_ lang: Lang) -> Bool {
+        guard let identifier = Self.checkedLocales[lang] else { return true }
+        if let known = speaks[lang] { return known }
+        let known = SystemLanguageModel.default.supportsLocale(Locale(identifier: identifier))
+        speaks[lang] = known
+        return known
+    }
 
     /// Why the model cannot run, for the settings (nil when it can).
     var unavailableReason: String? {
@@ -70,7 +97,7 @@ final class SynonymAssistant {
     /// The words outside the set that count for this question: the prompt's translations found
     /// so far and the answers confirmed by translating them back.
     func extraAnswers(for query: SynonymQuery) -> [String] {
-        guard isActive, ExtendedSynonyms.supports(query) else { return [] }
+        guard isActive, supports(query) else { return [] }
         loadIfNeeded()
         return (lists[Self.listKey(query.prompt, from: query.promptLang, to: query.answerLang)] ?? [])
             + (confirmed[Self.questionKey(query)] ?? [])
@@ -78,7 +105,7 @@ final class SynonymAssistant {
 
     /// A written question is on screen: its prompt's translations are fetched in the background.
     func prefetch(_ query: SynonymQuery) {
-        guard isActive, ExtendedSynonyms.supports(query) else { return }
+        guard isActive, supports(query) else { return }
         loadIfNeeded()
         prewarm()
         _ = translations(of: query.prompt, from: query.promptLang, to: query.answerLang)
@@ -89,7 +116,7 @@ final class SynonymAssistant {
     /// after `timeout` (the lookup still finishes and helps next time).
     @discardableResult
     func check(_ given: String, for query: SynonymQuery, tolerance: Tolerance) async -> Bool {
-        guard isActive, ExtendedSynonyms.supports(query) else { return false }
+        guard isActive, supports(query) else { return false }
         loadIfNeeded()
         let forward = translations(of: query.prompt, from: query.promptLang, to: query.answerLang)
         let back = translations(of: given, from: query.answerLang, to: query.promptLang)

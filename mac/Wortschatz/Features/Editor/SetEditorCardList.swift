@@ -171,6 +171,7 @@ struct SetEditorRowView: View {
             )
             .textFieldStyle(.plain)
             .font(.system(size: 14))
+            .cardFieldDirection(isTerm ? termLang : defLang)
             .lineLimit(1...6)
             .focused(focus, equals: id)
             .onSubmit {
@@ -263,8 +264,10 @@ struct SetEditorRowView: View {
         return Theme.hairline
     }
 
+    /// ⇥ and ⌫ belong to an input method while it composes (marked text, not in the card yet):
+    /// they must neither add nor remove a card then.
     private func handle(_ press: SwiftUI.KeyPress, isTerm: Bool) -> SwiftUI.KeyPress.Result {
-        guard press.modifiers.isEmpty else { return .ignored }
+        guard press.modifiers.isEmpty, !LearnKeyRouter.isComposingText else { return .ignored }
         let animation = Motion.animation(Motion.snappy, reduceMotion: reduceMotion)
         if press.key == .tab, !isTerm {
             return withAnimation(animation) { editor.tabFromDefinition(of: row) } ? .handled : .ignored

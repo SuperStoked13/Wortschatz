@@ -240,12 +240,12 @@ struct SetTermsSection: View {
     private func table(_ rows: [SetTermRow]) -> some View {
         Table(rows, selection: $selection, sortOrder: $sortOrder) {
             TableColumn("Begriff", value: \.term, comparator: .localizedStandard) { row in
-                CellText(text: row.term)
+                CellText(text: row.term, lang: summary.set.termLang)
             }
             .width(min: 120, ideal: 170)
 
             TableColumn("Definition", value: \.definition, comparator: .localizedStandard) { row in
-                CellText(text: row.definition)
+                CellText(text: row.definition, lang: summary.set.defLang)
             }
             .width(min: 120, ideal: 170)
 
@@ -346,9 +346,11 @@ struct SetTermsSection: View {
     }
 }
 
-/// A term or definition in the table ("–" when empty).
+/// A term or definition in the table ("–" when empty), tagged with its language (Chinese glyphs,
+/// VoiceOver's voice); Arabic starts at the column's right edge.
 private struct CellText: View {
     let text: String
+    let lang: Lang
 
     var body: some View {
         if text.isEmpty {
@@ -356,8 +358,9 @@ private struct CellText: View {
                 .foregroundStyle(.tertiary)
                 .accessibilityLabel("leer")
         } else {
-            Text(text)
+            Text(LearnText.spoken(text, lang: lang))
                 .lineLimit(2)
+                .cardTextLine(lang)
         }
     }
 }

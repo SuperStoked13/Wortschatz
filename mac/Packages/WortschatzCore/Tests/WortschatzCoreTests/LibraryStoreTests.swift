@@ -223,6 +223,36 @@ struct LibraryStoreTests {
         #expect(Kit.codeOf { try env.store.updateSet("missing", SetPatch(title: "x")) } == "NOT_FOUND")
     }
 
+    @Test("Arabic and Chinese sets keep their languages (and their text as written)")
+    func arabicAndChineseSetsKeepTheirLanguages() throws {
+        let env = StoreEnv()
+        let store = env.store!
+        let ar = try store.createSet(
+            title: "Arabisch", termLang: .ar, defLang: .de, cards: [CardDraft(term: "كِتَابٌ", definition: "Buch")])
+        #expect(ar.termLang == .ar)
+        #expect(JSCompat.identical(ar.cards[0].term, "كِتَابٌ"))
+        let zh = try store.createSet(
+            title: "Chinesisch", termLang: .zh, defLang: .ar, cards: [CardDraft(term: "你好 (nǐ hǎo)", definition: "مرحبا")])
+        #expect([zh.termLang, zh.defLang] == [.zh, .ar])
+        let set = try store.createSet(title: "A", cards: Kit.sample)
+        _ = try store.updateSet(set.id, SetPatch(json: ["termLang": "zh", "defLang": "ar"]))
+        #expect(store.getSet(set.id).map { [$0.termLang, $0.defLang] } == [.zh, .ar])
+        // Stored sets are read back with their languages; unknown codes still fall back to fr/de.
+        try store.save()
+        var doc = try Kit.savedDocument(env.backend).objectValue ?? [:]
+        var sets = doc["sets"]?.arrayValue ?? []
+        var odd = sets[0].objectValue ?? [:]
+        odd["id"] = "odd"
+        odd["termLang"] = "zh-CN"
+        odd["defLang"] = "arabic"
+        sets.append(.object(odd))
+        doc["sets"] = .array(sets)
+        let again = StoreEnv(document: .object(doc)).store!
+        #expect(again.getSet(zh.id)?.termLang == .zh)
+        #expect(again.getSet(ar.id)?.termLang == .ar)
+        #expect(again.getSet("odd").map { [$0.termLang, $0.defLang] } == [.fr, .de])
+    }
+
     @Test func updateSetPreservesCardIdsAssignsNewIdsAndKeepsStars() throws {
         let env = StoreEnv()
         let set = try env.store.createSet(title: "A", cards: Kit.sample)

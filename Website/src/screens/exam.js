@@ -73,7 +73,8 @@ export function render(outlet, ctx) {
 
   // -------------------------------------------------------------- skeleton
   const live = h('div', { class: 'sr-only', 'aria-live': 'polite', 'aria-atomic': 'true' });
-  const topTitle = h('span', { class: 'ex-top__set' });
+  // The set's title is user text: its direction follows it (an Arabic title is cut at its end).
+  const topTitle = h('span', { class: 'ex-top__set', dir: 'auto' });
   const back = h(
     'a',
     { class: 'ex-top__back', href: `#${setPath}`, 'data-tooltip': 'Zurück zum Lernset' },

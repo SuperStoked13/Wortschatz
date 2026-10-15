@@ -746,6 +746,7 @@ struct FlashcardFace<Tools: View>: View {
                 .lineLimit(7)
                 .minimumScaleFactor(0.55)
                 .frame(maxWidth: .infinity)
+                .cardTextDirection(side.lang)
                 .padding(.horizontal, Spacing.l)
                 .accessibilityLabel(Text(LearnText.labeled(side.label, side.text, lang: side.lang)))
                 .accessibilityAddTraits(.isHeader)

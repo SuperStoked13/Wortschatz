@@ -156,6 +156,11 @@
   line-height: 1.4;
 }
 
+/* Arabic: room for the vowel marks above and below the letters (as in write.css). */
+.ln-mc.wr-card[data-phase] .wr-q__prompt:lang(ar) {
+  line-height: 1.6;
+}
+
 .ln-mc__caption {
   display: flex;
   align-items: center;
@@ -227,7 +232,8 @@
   font-size: 1.0625rem;
   font-weight: var(--fw-medium);
   line-height: 1.35;
-  text-align: left;
+  /* The option's own direction: wrapped Arabic lines align right. */
+  text-align: start;
   cursor: pointer;
   transition:
     border-color var(--dur-2) var(--ease),
@@ -261,6 +267,10 @@
   min-width: 0;
   overflow-wrap: anywhere;
   hyphens: auto;
+}
+
+.ln-tile__text:lang(ar) {
+  line-height: 1.6;
 }
 
 .ln-mc[data-phase="question"] .ln-tile:hover {

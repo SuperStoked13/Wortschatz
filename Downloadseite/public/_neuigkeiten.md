@@ -27,6 +27,8 @@ erscheint nicht auf der Seite.
 
 ## Nächste Version
 
+## 1.1 – 2026-10-15
+
 - Neu: Arabisch und Mandarin als Lernsprachen. Bei Mandarin zählen Schriftzeichen oder Pinyin, Töne gehen auch als Zahlen (ni3 hao3). Bei Arabisch spielen Vokalzeichen keine Rolle.
 
 ## 1.0 – 2026-10-14

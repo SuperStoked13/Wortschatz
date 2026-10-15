@@ -6,7 +6,9 @@ import Foundation
 // words), at least `TYPE_AHEAD_MIN_LETTERS` letters after it are needed, and exactly one option
 // may match. Case, accents and the kind of apostrophe do not matter; an option can also be
 // started without its article ("voi" → la voiture) or at one of its alternatives ("laide" in
-// "laid, laide").
+// "laid, laide"). Arabic: vowel marks, tatweel, hamza forms, ة/ه and ى/ي do not matter and «ال»
+// is a glued article («كت» → الكتاب). Chinese: spaces do not matter and the pinyin of
+// «你好 (nǐ hǎo)» or «你好 nǐ hǎo» starts it too («ni»). Hand-mirrored by src/core/typeahead.js.
 
 extension LearnFlow {
     /// The most characters kept while typing on a multiple-choice question.
@@ -48,7 +50,9 @@ extension LearnFlow {
     /// Which of `choices` the letters `typed` start, and the one they pick. `lang` is the
     /// language of the options (its articles); nil allows the articles of every language.
     public static func typeAhead(_ typed: String, choices: [String], lang: Lang?) -> TypeAhead {
-        let input = TypeAheadText(typed)
+        // Chinese: spaces do not count, in the letters typed and in the options.
+        let noSpaces = lang == .zh
+        let input = TypeAheadText(typed, noSpaces: noSpaces)
         guard input.chars.contains(where: { $0 != " " }) else { return TypeAhead() }
         let prefixes = TypeAheadText.articlePrefixes(lang)
 
@@ -61,7 +65,7 @@ extension LearnFlow {
         var strong: [(index: Int, range: Range<Int>, complete: Bool)] = []
         var weak: [(index: Int, range: Range<Int>, complete: Bool)] = []
         for (index, choice) in choices.enumerated() {
-            let option = TypeAheadText(choice)
+            let option = TypeAheadText(choice, noSpaces: noSpaces)
             let starts = option.starts(prefixes: prefixes)
             // The whole input from the start of the option, an alternative or a word after an article.
             if let start = starts.first(where: { option.chars[$0...].starts(with: input.chars) }) {
@@ -94,47 +98,85 @@ extension LearnFlow {
             ranges: Dictionary(uniqueKeysWithValues: matches.map { ($0.index, $0.range) }), isActive: true,
             hasEnoughLetters: enough)
     }
+
+    /// The digit 0–9 a key types, ASCII or Arabic-Indic (٠–٩, ۰–۹: an Arabic keyboard chooses like
+    /// 1–4 and 0); nil for anything else (typeahead.js `digitValue`).
+    public static func digitValue(_ text: String) -> Int? {
+        let scalars = Array(text.unicodeScalars)
+        guard scalars.count == 1 else { return nil }
+        let v = scalars[0].value
+        switch v {
+        case 0x30...0x39: return Int(v - 0x30)
+        case 0x660...0x669: return Int(v - 0x660)
+        case 0x6F0...0x6F9: return Int(v - 0x6F0)
+        default: return nil
+        }
+    }
 }
 
 /// A text folded for type-ahead comparison: lower case, no accents, one kind of apostrophe, single
-/// spaces, no leading space; `origin` maps every folded character to its `Character` offset in
-/// the original text.
+/// spaces, no leading space, a trailing space kept ("la " means the article is done); no spaces
+/// between two Han characters, none at all with `noSpaces` (Chinese). `origin` maps every folded
+/// character to its `Character` offset in the original text.
 struct TypeAheadText {
     var chars: [Character] = []
     var origin: [Int] = []
 
-    init(_ text: String) {
-        var pendingSpace = false
-        var lastOffset = 0
+    init(_ text: String, noSpaces: Bool = false) {
+        // The offset of the whitespace before the next character, once something came before it.
+        var pendingSpace: Int?
         for (offset, ch) in text.enumerated() {
-            lastOffset = offset
             if ch.isWhitespace {
-                if !chars.isEmpty { pendingSpace = true }
+                if !chars.isEmpty && !noSpaces { pendingSpace = offset }
                 continue
             }
-            if pendingSpace {
-                chars.append(" ")
-                origin.append(offset - 1)
-                pendingSpace = false
-            }
-            let folded: String =
-                switch ch {
-                case "’", "‘", "`", "´", "ʼ", "′": "'"
-                default:
-                    String(ch).folding(
-                        options: [.caseInsensitive, .diacriticInsensitive], locale: Locale(identifier: "en_US_POSIX"))
+            let folded = Self.fold(ch)
+            // Nothing to compare (tatweel, a lone mark): a space before it waits for the next
+            // character.
+            if folded.isEmpty { continue }
+            if let space = pendingSpace {
+                if !(chars.last.map(Self.isHan) == true && TextNormalizer.hasHan(folded)) {
+                    chars.append(" ")
+                    origin.append(space)
                 }
-            for f in folded {
-                chars.append(f)
+                pendingSpace = nil
+            }
+            for f in folded.unicodeScalars {
+                chars.append(Character(f))
                 origin.append(offset)
             }
         }
-        // A trailing space counts ("la " means the article is done).
-        if pendingSpace {
+        if let space = pendingSpace {
             chars.append(" ")
-            origin.append(lastOffset)
+            origin.append(space)
         }
     }
+
+    /// One character folded for comparison (typeahead.js `foldChar`): lower case, no accents
+    /// (NFD, marks dropped), one kind of apostrophe, ß → ss. Arabic: the script folds (vowel marks
+    /// and tatweel go, presentation forms, ، ؛ and full-width punctuation become plain), hamza
+    /// goes with the accents (أ → ا), ٱ → ا, ة → ه, ى → ي.
+    static func fold(_ ch: Character) -> String {
+        switch ch {
+        case "’", "‘", "`", "´", "ʼ", "′": return "'"
+        default: break
+        }
+        let lower = TextNormalizer.foldScripts(String(ch)).lowercased()
+        var out = String.UnicodeScalarView()
+        for u in lower.decomposedStringWithCanonicalMapping.unicodeScalars where !TextNormalizer.isMark(u) {
+            switch u.value {
+            case 0xDF: out.append(contentsOf: "ss".unicodeScalars) // ß
+            case 0x671: out.append("\u{627}") // ٱ → ا
+            case 0x629: out.append("\u{647}") // ة → ه
+            case 0x649: out.append("\u{64A}") // ى → ي
+            default: out.append(u)
+            }
+        }
+        return String(out)
+    }
+
+    /// A Han character (Chinese).
+    static func isHan(_ ch: Character) -> Bool { ch.unicodeScalars.contains(where: TextNormalizer.isHanScalar) }
 
     /// The original `Character` offsets of `length` folded characters from `start`.
     func range(_ start: Int, _ length: Int) -> Range<Int> {
@@ -152,10 +194,18 @@ struct TypeAheadText {
     }
 
     /// Where typing may start: the option itself and each alternative ("laid, laide"), and the
-    /// word after their leading article or pronoun ("la voiture" → "voiture").
+    /// word after their leading article or pronoun ("la voiture" → "voiture"). An option with
+    /// Chinese characters also starts after a bracket and where pinyin follows the characters
+    /// ("你好 (nǐ hǎo)", "你好 nǐ hǎo" → "ni").
     func starts(prefixes: [[Character]]) -> [Int] {
         var alternatives = [0]
-        for (i, ch) in chars.enumerated() where [",", ";", "/"].contains(ch) {
+        let chinese = chars.contains(where: Self.isHan)
+        var lastHan = false // the last letter before i is a Han character
+        for (i, ch) in chars.enumerated() {
+            let pinyin = chinese && lastHan && ch.isASCII && ch.isLowercase
+            if ch != " " { lastHan = Self.isHan(ch) }
+            if pinyin && alternatives.last != i { alternatives.append(i) }
+            guard [",", ";", "/"].contains(ch) || (chinese && (ch == "(" || ch == "[")) else { continue }
             var j = i + 1
             while j < chars.count, chars[j] == " " { j += 1 }
             if j < chars.count { alternatives.append(j) }

@@ -11,7 +11,8 @@ extension VocabParser {
     struct Candidate: Sendable {
         enum Kind: Sendable { case cells, first, regex, csv, gap }
         enum Tag: Int, Sendable, CaseIterable {
-            case tab, dash, arrow, spacedEquals, equals, spacedColon, colon, semicolon, pipe, gap, comma, tightComma, custom
+            case tab, dash, arrow, spacedEquals, equals, spacedColon, colon, fullColon, semicolon, pipe, gap, comma, tightComma,
+                 custom
         }
 
         let tag: Tag
@@ -33,6 +34,8 @@ extension VocabParser {
         Candidate(tag: .equals, id: "=", kind: .first),
         Candidate(tag: .spacedColon, id: " : ", kind: .first),
         Candidate(tag: .colon, id: ": ", kind: .first),
+        // Full-width colon ("你好：Hallo"): reported like ": ", the text keeps "：".
+        Candidate(tag: .fullColon, id: ": ", kind: .regex, joiner: "："),
         Candidate(tag: .semicolon, id: ";", kind: .csv),
         Candidate(tag: .pipe, id: "|", kind: .csv),
         Candidate(tag: .gap, id: "  ", kind: .gap),
@@ -165,7 +168,12 @@ extension VocabParser {
             }
             return SplitResult(parts: cells, joiner: joiner)
         case .regex:
-            let parts = (cand.tag == .tightComma ? splitTightComma(text) : splitArrows(text)).map(unquote)
+            let parts: [PText]
+            switch cand.tag {
+            case .tightComma: parts = splitTightComma(text).map(unquote)
+            case .fullColon: parts = splitFullColon(text).map(unquote)
+            default: parts = splitArrows(text).map(unquote)
+            }
             return SplitResult(parts: parts, joiner: cand.joiner ?? cand.id)
         case .first:
             let delim = cand.spaced.map { text.includes($0) ? $0 : cand.id } ?? cand.id

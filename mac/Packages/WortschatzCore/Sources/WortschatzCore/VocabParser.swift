@@ -253,6 +253,12 @@ extension VocabParser {
         guard let hint = ctx.o.termHint else { return langs }
         let target = ctx.o.target
         if hint == target || l == hint || r == hint { return langs }
+        // Pinyin without tone marks looks French or Italian; picked as Chinese it is Chinese.
+        func pinyin(_ texts: [PText]) -> Bool {
+            hint == zh && !texts.isEmpty && Double(texts.filter(isPinyinCell).count) >= 0.8 * Double(texts.count)
+        }
+        if l != nil && l != target && pinyin(leftTexts) { return (hint, max(lConf, 0.55), r, rConf) }
+        if l == target && r != nil && pinyin(rightTexts) { return (l, lConf, hint, max(rConf, 0.55)) }
         func close(_ texts: [PText]) -> Bool {
             let shares = ctx.languageShares(texts)
             guard let pos = shares.firstIndex(where: { $0.lang == hint }) else { return false }

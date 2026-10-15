@@ -10,8 +10,8 @@ const MODULES = [
   // Windows app (2026-10-14): Karteikarten, Prüfung, Wiederholungsfragen, Serien, Töne, Tippen.
   ['../src/core/exam.js', { ACCEPTED_FORMS: 'object', ANSWER_WITH: 'object', COUNT_CHOICES: 'object', DEFAULT_EXAM_SETTINGS: 'object', LEAVE_CONFIRM: 'object', MINUTE_CHOICES: 'object', NOT_MASTERY_NOTE: 'string', ONE_MINUTE_MS: 'number', ONE_MINUTE_TEXT: 'string', SMALL_MISTAKES: 'object', SMALL_MISTAKES_ALLOWED: 'object', SMALL_MISTAKES_TEXT: 'string', STARRED_CAPTION: 'string', TIMED_OUT_LINE: 'string', TIMED_OUT_TOAST: 'string', TOLERANCES: 'object', answerDiff: 'function', answerFor: 'function', answerPlaceholder: 'function', answeredCount: 'function', answeredText: 'function', answeredTooltip: 'function', cardIdsToPractise: 'function', celebrates: 'function', clockState: 'function', clockText: 'function', closestDiff: 'function', countCaption: 'function', countChoiceLabel: 'function', countChoicesFor: 'function', countSelection: 'function', evaluateExam: 'function', examDeadline: 'function', examGrade: 'function', examScope: 'function', expectedLabel: 'function', gradeText: 'function', gradeTone: 'function', hasText: 'function', introText: 'function', isEmptyForExam: 'function', itemPointsLabel: 'function', itemPointsText: 'function', learnCardsPath: 'function', learnMistakesTooltip: 'function', makeQuestions: 'function', markAnswer: 'function', markBadge: 'function', markCount: 'function', markLabel: 'function', minorCaption: 'function', minorPoints: 'function', minuteChoiceLabel: 'function', minutesText: 'function', nearestChoice: 'function', noteTone: 'function', passes: 'function', plannedCount: 'function', pointsText: 'function', promptLabel: 'function', questionCard: 'function', questionCount: 'function', readExamSettings: 'function', resultAnnouncement: 'function', resultSubtitle: 'function', retakeMistakesTooltip: 'function', sameExamSettings: 'function', scoreLine: 'function', setupSummary: 'function', showsExpected: 'function', spokenTime: 'function', starredCount: 'function', starredLabel: 'function', startAnnouncement: 'function', submitConfirm: 'function', suggestedMinutes: 'function', timeCaption: 'function', toleranceText: 'function', toleranceTitle: 'function', updateExamSettings: 'function', verdict: 'function', warnsBeforeEnd: 'function' }],
   ['../src/core/flashcards.js', { FRONTS: 'object', KNOW: 'string', STILL_LEARNING: 'string', VERDICTS: 'object', canUndo: 'function', cardsLabel: 'function', currentCardId: 'function', deckPhase: 'function', deckStats: 'function', deckTotal: 'function', eligibleIds: 'function', finishedText: 'function', finishedTitle: 'function', flipCard: 'function', hasProgress: 'function', hasText: 'function', isConsistent: 'function', isResumable: 'function', keyAction: 'function', knownCount: 'function', knownInRound: 'function', knownShare: 'function', lastSort: 'function', learningCount: 'function', newDeck: 'function', nextRoundAction: 'function', orderedIds: 'function', parseDeck: 'function', restartDeck: 'function', restartMessage: 'function', roundDoneText: 'function', roundDoneTitle: 'function', runningDeck: 'function', runningDetail: 'function', sameDeck: 'function', setShuffled: 'function', showsTermSide: 'function', shuffledIds: 'function', sortCard: 'function', startNextRound: 'function', startingDeck: 'function', syncDeck: 'function', undoSort: 'function', upcomingIds: 'function', verdictTitle: 'function' }],
-  ['../src/core/typeahead.js', { TYPE_AHEAD_MAX: 'number', TYPE_AHEAD_MIN_LETTERS: 'number', TYPING_IDLE: 'object', articlePrefixes: 'function', correctionHint: 'function', moveHighlight: 'function', optionState: 'function', returnLabel: 'function', typeAhead: 'function', typingHint: 'function', typingKey: 'function' }],
-  ['../src/lib/shortcuts.js', { commandKey: 'function', isTypingTarget: 'function' }],
+  ['../src/core/typeahead.js', { TYPE_AHEAD_MAX: 'number', TYPE_AHEAD_MIN_LETTERS: 'number', TYPING_IDLE: 'object', articlePrefixes: 'function', correctionHint: 'function', digitValue: 'function', moveHighlight: 'function', optionState: 'function', returnLabel: 'function', typeAhead: 'function', typingHint: 'function', typingKey: 'function' }],
+  ['../src/lib/shortcuts.js', { commandKey: 'function', commandLetter: 'function', isComposingKey: 'function', isTypingTarget: 'function' }],
   ['../src/screens/answer-streak.js', { STREAK_MILESTONE_STEP: 'number', STREAK_START: 'object', STREAK_VISIBLE_FROM: 'number', bestStreakText: 'function', isStreakMilestone: 'function', overrideStreak: 'function', recordStreak: 'function', streakLabel: 'function', streakTitle: 'function', streakVisible: 'function' }],
   ['../src/screens/exam-results.js', { resultsView: 'function' }],
   ['../src/screens/exam-setup.js', { compactLabel: 'function', emptyView: 'function', examDock: 'function', examPill: 'function', setupView: 'function' }],
@@ -31,11 +31,11 @@ const MODULES = [
   ['../src/lib/prefs.js', { PREF: 'object', getPref: 'function', setPref: 'function', onPrefChange: 'function' }],
   ['../src/lib/sounds.js', { SOUNDS: 'object', SAMPLE_RATE: 'number', renderSound: 'function', playSound: 'function', soundEffectsEnabled: 'function', setSoundEffectsEnabled: 'function', studyStepSound: 'function', playStudyStep: 'function' }],
   ['../src/router.js', { startRouter: 'function', navigate: 'function', currentRoute: 'function', setLeaveGuard: 'function', setTitle: 'function', parsePath: 'function', href: 'function' }],
-  ['../src/lib/dom.js', { h: 'function', clear: 'function', $: 'function', $$: 'function', on: 'function', focusFirst: 'function', replayClass: 'function', FOCUSABLE: 'string', isVisible: 'function', focusableWithin: 'function', prefersReducedMotion: 'function', $: 'function', $$: 'function' }],
+  ['../src/lib/dom.js', { h: 'function', clear: 'function', $: 'function', $$: 'function', on: 'function', focusFirst: 'function', replayClass: 'function', FOCUSABLE: 'string', isVisible: 'function', focusableWithin: 'function', prefersReducedMotion: 'function', $: 'function', $$: 'function', setTextAttrs: 'function' }],
   ['../src/lib/id.js', { uid: 'function' }],
   ['../src/lib/time.js', { dateKey: 'function', relativeTime: 'function', formatDuration: 'function', formatDate: 'function', calendarDaysBetween: 'function' }],
-  ['../src/lib/labels.js', { LANGS: 'object', LANG_ORDER: 'object', STATUS: 'object', NOTE_LABELS: 'object', HINT_LABELS: 'object', plural: 'function', langName: 'function', langShort: 'function', langPair: 'function' }],
-  ['../src/lib/speech.js', { canSpeak: 'function', speak: 'function', stopSpeaking: 'function', automaticVoiceLabel: 'function', onVoicesChanged: 'function', preferredVoiceId: 'function', primeVoices: 'function', rankVoices: 'function', setMissingVoiceHandler: 'function', setPreferredVoice: 'function', voiceLabel: 'function', voiceOptions: 'function', voiceSample: 'function', voicesLoaded: 'function' }],
+  ['../src/lib/labels.js', { LANGS: 'object', LANG_ORDER: 'object', STATUS: 'object', NOTE_LABELS: 'object', HINT_LABELS: 'object', plural: 'function', langName: 'function', langShort: 'function', langPair: 'function', bcp47: 'function', textAttrs: 'function', fieldAttrs: 'function' }],
+  ['../src/lib/speech.js', { canSpeak: 'function', speak: 'function', stopSpeaking: 'function', automaticVoiceLabel: 'function', onVoicesChanged: 'function', preferredVoiceId: 'function', primeVoices: 'function', rankVoices: 'function', setMissingVoiceHandler: 'function', setPreferredVoice: 'function', speakable: 'function', voiceLabel: 'function', voiceOptions: 'function', voiceSample: 'function', voicesLoaded: 'function' }],
   ['../src/lib/keyboard.js', { SPECIAL_CHARS: 'object', charsFor: 'function', insertAtCaret: 'function' }],
   ['../src/lib/theme.js', { applyTheme: 'function', initTheme: 'function', resolveTheme: 'function', getThemeSetting: 'function' }],
   ['../src/ui/icons.js', { icon: 'function', hasIcon: 'function', ICON_NAMES: 'object' }],
@@ -82,7 +82,7 @@ const MODULES = [
       STUDY_OPTION_MODES: 'object', REVIEW_OPTION: 'object', learnReviewEnabled: 'function', setLearnReviewEnabled: 'function' },
   ],
   // Shared core (pre-existing)
-  ['../src/core/text.js', { normalizeBasic: 'function', stripDiacritics: 'function', foldUmlauts: 'function', isLetter: 'function' }],
+  ['../src/core/text.js', { normalizeBasic: 'function', stripDiacritics: 'function', foldUmlauts: 'function', isLetter: 'function', foldScripts: 'function', stripArabicMarks: 'function', hasArabic: 'function', hasHan: 'function', ARABIC_RANGE: 'string', HAN_RANGE: 'string' }],
   // Screens (contract: render(outlet, ctx))
   ['../src/screens/dashboard.js', { render: 'function' }],
   ['../src/screens/editor.js', { render: 'function' }],
@@ -104,14 +104,13 @@ const MODULES = [
       formatLabel: 'function',
       hasMarker: 'function',
       isApplePlatform: 'function',
-      langTag: 'function',
       termKey: 'function',
       titleFromFileName: 'function',
     },
   ],
   ['../src/screens/learn-answer.js', { createAnswering: 'function', ADVANCE_MS: 'number', MISS_TITLE: 'string' }],
   ['../src/screens/learn-dialogs.js', { createLearnDialogs: 'function' }],
-  ['../src/screens/learn-keys.js', { bindLearnKeys: 'function' }],
+  ['../src/screens/learn-keys.js', { bindLearnKeys: 'function', choiceDigit: 'function' }],
   ['../src/screens/learn-mc.js', { createMcCard: 'function' }],
   [
     '../src/screens/learn-model.js',
@@ -155,7 +154,7 @@ const MODULES = [
   ['../src/screens/write-card.js', { createCard: 'function' }],
   ['../src/screens/write-clock.js', { createStudyClock: 'function' }],
   ['../src/screens/write-dialogs.js', { ask: 'function', openCardEditor: 'function', openOptionsDialog: 'function' }],
-  ['../src/screens/write-keys.js', { bindWriteKeys: 'function', ENTER_SETTLE_MS: 'number', isTypedKey: 'function', routeStudyCommand: 'function', settleEnter: 'function', settleOnLeave: 'function', shortcutAria: 'function', shortcutText: 'function', studyCommand: 'function' }],
+  ['../src/screens/write-keys.js', { bindWriteKeys: 'function', ENTER_SETTLE_MS: 'number', isTypedKey: 'function', routeStudyCommand: 'function', settleEnter: 'function', settleOnLeave: 'function', shortcutAria: 'function', shortcutText: 'function', startsComposition: 'function', studyCommand: 'function' }],
   [
     '../src/screens/write-model.js',
     {
@@ -220,6 +219,7 @@ const MODULES = [
       diffAnswer: 'function',
       ARTICLES: 'object',
       REFLEXIVES: 'object',
+      GLUED_ARTICLES: 'object',
       ABBREVIATIONS: 'object',
       DEFAULT_TOLERANCE: 'object',
     },
@@ -268,7 +268,7 @@ const MODULES = [
   ],
   // Import adapters (W6)
   ['../src/import/layout.js', { itemsToLines: 'function', estimateSlope: 'function', deskewItems: 'function' }],
-  ['../src/import/pdf.js', { extractPdfText: 'function', loadPdfJs: 'function' }],
+  ['../src/import/pdf.js', { extractPdfText: 'function', loadPdfJs: 'function', toLayoutItems: 'function' }],
   [
     '../src/import/ocr.js',
     { recognizeImage: 'function', ocrLangsFor: 'function', createRecognizer: 'function', ocrDataToText: 'function', imageScaleFor: 'function', fixGermanUmlauts: 'function' },
@@ -308,7 +308,7 @@ test('icons: every icon named in the spec exists', async () => {
 
 test('labels: languages, statuses and plural', async () => {
   const { LANGS, STATUS, NOTE_LABELS, HINT_LABELS, plural, langPair } = await import('../src/lib/labels.js');
-  expect(Object.keys(LANGS)).toEqual(['fr', 'en', 'es', 'it', 'de', 'other']);
+  expect(Object.keys(LANGS)).toEqual(['fr', 'en', 'es', 'it', 'ar', 'zh', 'de', 'other']);
   expect(LANGS.fr).toEqual({ name: 'Französisch', short: 'FR', bcp47: 'fr-FR' });
   expect(LANGS.de.bcp47).toBe('de-CH');
   expect(STATUS).toEqual({ new: 'Neu', learning: 'Am Lernen', mastered: 'Gemeistert' });
@@ -330,6 +330,50 @@ test('keyboard: special characters per language', async () => {
   expect(SPECIAL_CHARS.de).toEqual(['ä', 'ö', 'ü', 'Ä', 'Ö', 'Ü']);
   expect(SPECIAL_CHARS.en).toEqual([]);
   expect(charsFor('xx')).toEqual([]);
+  expect(charsFor('ar')).toEqual([]);
+  expect(charsFor('zh')).toEqual(['ü']);
+});
+
+test('labels: Arabic and Chinese', async () => {
+  const { LANGS, LANG_ORDER, NOTE_LABELS, HINT_LABELS, langName, langShort, langPair } = await import('../src/lib/labels.js');
+  expect(LANG_ORDER).toEqual(['fr', 'en', 'es', 'it', 'ar', 'zh', 'de', 'other']);
+  expect(Object.keys(LANGS)).toEqual(LANG_ORDER);
+  expect(LANGS.ar).toEqual({ name: 'Arabisch', short: 'AR', bcp47: 'ar', rtl: true });
+  expect(LANGS.zh).toEqual({ name: 'Chinesisch', short: 'ZH', bcp47: 'zh-CN' });
+  // Only Arabic is right to left; the others keep exactly name, short and bcp47.
+  for (const code of LANG_ORDER.filter((c) => c !== 'ar')) expect(Object.keys(LANGS[code])).toEqual(['name', 'short', 'bcp47']);
+  expect(langName('zh')).toBe('Chinesisch');
+  expect(langShort('ar')).toBe('AR');
+  expect(langPair('ar', 'de')).toBe('AR → DE');
+  expect(NOTE_LABELS.variant).toBe('Schreibvariante');
+  expect(NOTE_LABELS.pinyin).toBe('Nur Pinyin');
+  expect(NOTE_LABELS.tones).toBe('Töne');
+  expect(HINT_LABELS.tonesOnly).toBe('Nur die Töne fehlen');
+  // Every note and hint grading can report has a label (unknown keys are dropped silently).
+  const notes = ['article', 'pronoun', 'abbreviation', 'partial', 'parentheses', 'pinyin', 'case', 'accents', 'tones', 'variant', 'typo', 'order', 'synonym'];
+  for (const n of notes) expect(typeof NOTE_LABELS[n]).toBe('string');
+  for (const h of ['wrongArticle', 'missingArticle', 'accentsOnly', 'tonesOnly', 'caseOnly', 'typo', 'almost']) expect(typeof HINT_LABELS[h]).toBe('string');
+  expect(JSON.stringify([LANGS, NOTE_LABELS, HINT_LABELS]).includes('ß')).toBe(false);
+});
+
+test('labels: textAttrs and fieldAttrs give card text its language and direction', async () => {
+  const { textAttrs, fieldAttrs, bcp47 } = await import('../src/lib/labels.js');
+  expect(textAttrs('ar')).toEqual({ lang: 'ar', dir: 'rtl' });
+  expect(textAttrs('zh')).toEqual({ lang: 'zh-CN', dir: null });
+  expect(textAttrs('fr')).toEqual({ lang: 'fr-FR', dir: null });
+  expect(textAttrs('de')).toEqual({ lang: 'de-CH', dir: null });
+  expect(textAttrs('other')).toEqual({ lang: null, dir: 'auto' });
+  expect(textAttrs('xx')).toEqual({ lang: null, dir: 'auto' });
+  expect(textAttrs(undefined)).toEqual({ lang: null, dir: 'auto' });
+  expect(textAttrs('toString')).toEqual({ lang: null, dir: 'auto' });
+  expect(fieldAttrs('ar')).toEqual({ lang: 'ar', dir: 'auto' });
+  expect(fieldAttrs('zh')).toEqual({ lang: 'zh-CN', dir: 'auto' });
+  expect(fieldAttrs('fr')).toEqual({ lang: 'fr-FR', dir: 'auto' });
+  expect(fieldAttrs('other')).toEqual({ lang: null, dir: 'auto' });
+  expect(fieldAttrs(null)).toEqual({ lang: null, dir: 'auto' });
+  expect(bcp47('it')).toBe('it-IT');
+  expect(bcp47('other')).toBe(null);
+  expect(bcp47('constructor')).toBe(null);
 });
 
 test('router: parsePath matches every route', async () => {

@@ -7,11 +7,20 @@
 // onKey(event, { own, kind, … }). Nothing happens while a dialog is open.
 
 import { hasOpenModal } from '../ui/components.js';
-import { routeStudyCommand, isTypedKey } from './write-keys.js';
+import { isComposingKey } from '../lib/shortcuts.js';
+import { digitValue } from '../core/typeahead.js';
+import { routeStudyCommand, isTypedKey, startsComposition } from './write-keys.js';
 
 const CONTROLS = 'button, a[href], input, textarea, select, [contenteditable="true"]';
 const TEXT_ENTRY = 'input, textarea, select, [contenteditable="true"]';
 const ARROWS = { ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right' };
+
+// The digit a key chooses an option with on a multiple choice question: 0–9 or the Arabic-Indic
+// ٠–٩ / ۰–۹ of an Arabic keyboard, without Alt or Ctrl; null for every other key.
+export function choiceDigit(e) {
+  if (!e || e.altKey || e.ctrlKey) return null;
+  return digitValue(e.key);
+}
 
 /**
  * ownInput() -> the written answer <input> (Enter there is ours, not the browser's)
@@ -19,19 +28,23 @@ const ARROWS = { ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight
  * onEnter()  -> primary action of the current step
  * onLockedEnter() -> Enter inside the lock (a correct answer may then move on when it ends)
  * ownsEnter(control) -> true when Enter belongs to the screen even on the focused `control`
- * onKey(event, { own, kind: 'char' | 'delete' | 'arrow', word, direction }) -> keys outside
- *   other text fields; `own` is true when the written answer field has focus
+ * onKey(event, { own, kind: 'char' | 'delete' | 'arrow' | 'compose', word, direction }) -> keys
+ *   outside other text fields; `own` is true when the written answer field has focus; 'compose'
+ *   is the first key of an input method's composition in that field (never to be prevented)
  * onCommand(command, event) -> a study shortcut (write-keys.js studyCommand)
  * Returns an unbind function.
  */
 export function bindLearnKeys({ ownInput, isLocked, onEnter, onLockedEnter, ownsEnter, onKey, onCommand }) {
   function onKeydown(e) {
     if (e.defaultPrevented || hasOpenModal()) return;
-    if (e.isComposing || e.keyCode === 229) return;
-    if (routeStudyCommand(e, onCommand)) return;
     const target = e.target;
     const input = ownInput();
     const own = !!input && target === input;
+    if (isComposingKey(e)) {
+      if (own && startsComposition(e)) onKey(e, { own, kind: 'compose' });
+      return;
+    }
+    if (routeStudyCommand(e, onCommand)) return;
     const closest = (selector) => (!own && target && target.closest ? target.closest(selector) : null);
 
     if (e.key === 'Enter') {

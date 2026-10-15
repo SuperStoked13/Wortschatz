@@ -179,8 +179,10 @@ struct WriteTermList: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(LearnText.spoken(row.term, lang: row.termLang))
                     .font(.body.weight(.semibold))
+                    .cardTextLine(row.termLang)
                 Text(LearnText.spoken(row.definition, lang: row.defLang))
                     .foregroundStyle(.secondary)
+                    .cardTextLine(row.defLang)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             if marker == .misses, let label = row.missesLabel {

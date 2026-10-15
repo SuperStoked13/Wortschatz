@@ -1,0 +1,11 @@
+中文	Pinyin	Deutsch
+你好	nǐ hǎo	hallo
+谢谢	xièxie	danke
+再见	zàijiàn	auf Wiedersehen
+老师	lǎoshī	der Lehrer, die Lehrerin
+学生	xuésheng	der Schüler, die Schülerin
+朋友	péngyou	der Freund, die Freundin
+书	shū	das Buch
+水	shuǐ	das Wasser
+中国	Zhōngguó	China
+我是学生。	Wǒ shì xuésheng.	Ich bin Schüler.

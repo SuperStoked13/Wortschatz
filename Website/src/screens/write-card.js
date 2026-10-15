@@ -5,8 +5,8 @@
 // Vorlesen, Bearbeiten, Markieren) is built once too; the screens add the
 // answer-streak flame there.
 
-import { h, replayClass } from '../lib/dom.js';
-import { LANGS } from '../lib/labels.js';
+import { h, replayClass, setTextAttrs } from '../lib/dom.js';
+import { bcp47, textAttrs, fieldAttrs } from '../lib/labels.js';
 import { charsFor, insertAtCaret } from '../lib/keyboard.js';
 import { canSpeak } from '../lib/speech.js';
 import { diffAnswer, splitAlternatives } from '../core/grading.js';
@@ -26,7 +26,6 @@ const CHAR_KEYS_PER_ROW = 8;
 const NARROW_QUERY = '(max-width: 479px)';
 const COPY_PLACEHOLDER = { long: 'Richtige Antwort abtippen', short: 'Antwort abtippen' };
 
-const bcp47 = (lang) => (LANGS[lang] && LANGS[lang].bcp47) || null;
 const speakable = (lang) => canSpeak() && !!bcp47(lang);
 
 // MediaQueryList change events (addListener: Safari before 14).
@@ -53,8 +52,9 @@ function keepFocus(el) {
 
 // Diff against whichever accepted variant is closest to what was typed, so a
 // small slip in "le monsieur" is not drowned by the missing ", messieurs".
-// diffAnswer folds what grading treats as equal (ss/ß, apostrophes, spaces, œ).
-// `lang` (BCP 47 or app code) lets splitAlternatives read German noun lists.
+// diffAnswer folds what grading treats as equal (ss/ß, apostrophes, spaces, œ,
+// Arabic vowel marks; Chinese tone numbers and the characters or pinyin part).
+// `lang` (app code) lets splitAlternatives read German noun lists.
 function closestDiff(given, expected, lang) {
   const candidates = new Set([expected]);
   try {
@@ -65,7 +65,7 @@ function closestDiff(given, expected, lang) {
   let best = null;
   let bestCost = Infinity;
   for (const target of candidates) {
-    const parts = diffAnswer(given, target);
+    const parts = diffAnswer(given, target, lang);
     const cost = parts.reduce((n, p) => n + (p.type === 'same' ? 0 : p.text.length), 0);
     if (cost < bestCost) {
       best = parts;
@@ -75,17 +75,19 @@ function closestDiff(given, expected, lang) {
   return best || [];
 }
 
+// What was typed (`lang`: app code) takes its direction from the text, as in the field.
 function diffView(given, expected, lang) {
   const parts = closestDiff(given, expected, lang);
   // A character diff only helps for near misses; for a different word it is noise.
   const same = parts.reduce((n, p) => n + (p.type === 'same' ? p.text.replace(/\s/g, '').length : 0), 0);
   const typed = given.replace(/\s/g, '').length;
+  const attrs = fieldAttrs(lang);
   if (typed === 0 || same / typed < 0.5) {
-    return h('p', { class: 'wr-diff wr-diff--plain', lang }, given);
+    return h('p', { class: 'wr-diff wr-diff--plain', ...attrs }, given);
   }
   return h(
     'p',
-    { class: 'wr-diff', lang },
+    { class: 'wr-diff', ...attrs },
     h('span', { class: 'sr-only' }, given),
     h(
       'span',
@@ -223,7 +225,7 @@ export function createCard(handlers, { dontKnow: dontKnowLabel = 'Weiss ich nich
   function fillPrompt() {
     langLabel.textContent = q.promptLabel;
     promptText.textContent = q.prompt;
-    promptText.lang = bcp47(q.promptLang) || '';
+    setTextAttrs(promptText, textAttrs(q.promptLang));
     promptText.classList.toggle('is-long', q.prompt.length > 60);
     promptText.classList.toggle('is-very-long', q.prompt.length > 140);
     speakPrompt.hidden = !speakable(q.promptLang);
@@ -241,7 +243,7 @@ export function createCard(handlers, { dontKnow: dontKnowLabel = 'Weiss ich nich
     answerLabel.className = 'wr-answer__label';
     input.value = '';
     applyPlaceholder();
-    input.lang = bcp47(q.answerLang) || '';
+    setTextAttrs(input, fieldAttrs(q.answerLang));
     input.removeAttribute('aria-invalid');
     input.setAttribute('aria-label', `${label}: ${placeholder.long}`);
     renderChars(q.answerLang);
@@ -312,7 +314,7 @@ export function createCard(handlers, { dontKnow: dontKnowLabel = 'Weiss ich nich
             { class: 'wr-answer__exact' },
             h('span', { class: 'wr-answer__exact-label' }, exactLabel),
             ' ',
-            h('strong', { lang: bcp47(q.answerLang) }, result.expectedDisplay),
+            h('strong', textAttrs(q.answerLang), result.expectedDisplay),
           )
         : null,
       notes.length ? h('div', { class: 'wr-chips' }, notes.map(({ label, tone }) => chip({ label, tone, size: 'sm' }))) : null,
@@ -348,7 +350,6 @@ export function createCard(handlers, { dontKnow: dontKnowLabel = 'Weiss ich nich
   function showIncorrect({ given = '', dontKnow = false, hintLabel = null, copy = false, canOverride = false, editedCorrect = false }) {
     setPhase('incorrect');
     stopTimer();
-    const answerLang = bcp47(q.answerLang);
 
     const head = h(
       'div',
@@ -365,7 +366,7 @@ export function createCard(handlers, { dontKnow: dontKnowLabel = 'Weiss ich nich
           'div',
           { class: 'wr-fb__row wr-fb__row--given' },
           h('span', { class: 'wr-fb__label' }, 'Deine Antwort'),
-          diffView(given, q.expected, answerLang),
+          diffView(given, q.expected, q.answerLang),
         ),
       );
     }
@@ -377,7 +378,7 @@ export function createCard(handlers, { dontKnow: dontKnowLabel = 'Weiss ich nich
         'div',
         { class: 'wr-fb__row wr-fb__row--answer' },
         h('span', { class: 'wr-fb__label' }, 'Richtige Antwort'),
-        h('div', { class: 'wr-fb__answer' }, h('p', { class: 'wr-fb__expected', lang: answerLang }, q.expected), speakAnswer),
+        h('div', { class: 'wr-fb__answer' }, h('p', { class: 'wr-fb__expected', ...textAttrs(q.answerLang) }, q.expected), speakAnswer),
       ),
     );
 

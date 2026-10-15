@@ -23,12 +23,15 @@ public enum Labels {
         .en: LangInfo(name: "Englisch", short: "EN", bcp47: "en-GB"),
         .es: LangInfo(name: "Spanisch", short: "ES", bcp47: "es-ES"),
         .it: LangInfo(name: "Italienisch", short: "IT", bcp47: "it-IT"),
+        // Written right to left (`Lang.isRTL`).
+        .ar: LangInfo(name: "Arabisch", short: "AR", bcp47: "ar"),
+        .zh: LangInfo(name: "Chinesisch", short: "ZH", bcp47: "zh-CN"),
         .de: LangInfo(name: "Deutsch", short: "DE", bcp47: "de-CH"),
         .other: LangInfo(name: "Andere", short: "—", bcp47: ""),
     ]
 
     /// Display order for language pickers.
-    public static let LANG_ORDER: [Lang] = [.fr, .en, .es, .it, .de, .other]
+    public static let LANG_ORDER: [Lang] = [.fr, .en, .es, .it, .ar, .zh, .de, .other]
 
     public static let STATUS: [CardStatus: String] = [
         .new: "Neu",
@@ -42,8 +45,11 @@ public enum Labels {
         .abbreviation: "Abkürzung",
         .partial: "Teilantwort",
         .parentheses: "Klammerinhalt weggelassen",
+        .pinyin: "Nur Pinyin",
         .letterCase: "Gross-/Kleinschreibung",
         .accents: "Akzente",
+        .tones: "Töne",
+        .variant: "Schreibvariante",
         .typo: "Tippfehler",
         .order: "Reihenfolge",
         // The answer of another card with the same prompt (Synonyms).
@@ -56,6 +62,7 @@ public enum Labels {
         .wrongArticle: "Falscher Artikel",
         .missingArticle: "Artikel fehlt",
         .accentsOnly: "Nur die Akzente stimmen nicht",
+        .tonesOnly: "Nur die Töne fehlen",
         .caseOnly: "Nur Gross-/Kleinschreibung falsch",
         .typo: "Fast – ein kleiner Tippfehler",
         .almost: "Knapp daneben",

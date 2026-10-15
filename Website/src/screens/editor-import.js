@@ -5,10 +5,10 @@
 import { h, prefersReducedMotion } from '../lib/dom.js';
 import { button, segmented, selectField, chip, progressBar, callout, spinner, toast } from '../ui/components.js';
 import { icon } from '../ui/icons.js';
-import { langName, plural } from '../lib/labels.js';
+import { langName, plural, textAttrs } from '../lib/labels.js';
 import { parseVocab } from '../core/parser.js';
 import { readImportFile, ACCEPT } from '../import/files.js';
-import { SEPARATORS, SKIP_REASONS, flagTooltip, hasMarker, formatLabel, langTag, isApplePlatform, fill } from './editor-util.js';
+import { SEPARATORS, SKIP_REASONS, flagTooltip, hasMarker, formatLabel, isApplePlatform, fill } from './editor-util.js';
 import { bindPageDrop } from './editor-drop.js';
 
 const PLACEHOLDER =
@@ -80,6 +80,8 @@ export function createImportPanel({ open = true, getLangs, onDetected, onApply, 
     spellcheck: 'false',
     autocomplete: 'off',
     autocapitalize: 'off',
+    // Each pasted line takes the direction of its text (Arabic lines run right to left).
+    dir: 'auto',
     'aria-label': 'Vokabelliste zum Importieren',
     'aria-describedby': hintId,
     onInput: () => {
@@ -441,7 +443,7 @@ export function createImportPanel({ open = true, getLangs, onDetected, onApply, 
               'li',
               { class: 'ed-skipped__item' },
               h('span', { class: 'ed-skipped__line' }, `Zeile ${s.line}`),
-              h('span', { class: 'ed-skipped__text' }, s.text || '–'),
+              h('span', { class: 'ed-skipped__text', dir: 'auto' }, s.text || '–'),
               h('span', { class: 'ed-skipped__reason' }, SKIP_REASONS[s.reason] || 'Übersprungen'),
             ),
           ),
@@ -474,16 +476,17 @@ export function createImportPanel({ open = true, getLangs, onDetected, onApply, 
       return;
     }
     const shown = expanded ? cards : cards.slice(0, PREVIEW_ROWS);
-    const termLang = langTag(result.termLang) || null;
-    const defLang = langTag(result.defLang) || null;
+    // A missing side shows German text, without the side's language and direction.
+    const termAttrs = textAttrs(result.termLang);
+    const defAttrs = textAttrs(result.defLang);
     const rows = shown.map((card, i) => {
       const tip = hasMarker(card.flags) ? flagTooltip(card.flags) : null;
       return h(
         'li',
         { class: ['ed-prev', tip && 'is-flagged'] },
         h('span', { class: 'ed-prev__num' }, String(i + 1)),
-        h('span', { class: ['ed-prev__term', !card.term && 'is-missing'], lang: card.term ? termLang : null }, card.term || 'Begriff fehlt'),
-        h('span', { class: ['ed-prev__def', !card.definition && 'is-missing'], lang: card.definition ? defLang : null }, card.definition || 'Definition fehlt'),
+        h('span', { class: ['ed-prev__term', !card.term && 'is-missing'], ...(card.term ? termAttrs : {}) }, card.term || 'Begriff fehlt'),
+        h('span', { class: ['ed-prev__def', !card.definition && 'is-missing'], ...(card.definition ? defAttrs : {}) }, card.definition || 'Definition fehlt'),
         h(
           'span',
           { class: 'ed-prev__flag' },

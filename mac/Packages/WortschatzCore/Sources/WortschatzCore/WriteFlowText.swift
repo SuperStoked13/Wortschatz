@@ -45,7 +45,8 @@ extension WriteFlow {
 
     /// The diff against whichever accepted variant is closest to what was typed
     /// (write-card.js `closestDiff`), so a small slip in "le monsieur" is not drowned by the
-    /// missing ", messieurs".
+    /// missing ", messieurs". Chinese diffs against the characters or the pinyin when only one of
+    /// them was typed (`Grading.diffAnswer` with `lang`).
     public static func closestDiff(given: String, expected: String, lang: Lang?) -> [DiffSegment] {
         var candidates = [expected]
         for alt in Grading.splitAlternatives(expected, lang: lang)
@@ -55,8 +56,8 @@ extension WriteFlow {
         var best: [DiffSegment]?
         var bestCost = Int.max
         for target in candidates {
-            let parts = Grading.diffAnswer(given, target)
-            let cost = parts.reduce(0) { $0 + ($1.type == .same ? 0 : $1.text.utf16.count) }
+            let parts = Grading.diffAnswer(given, target, lang: lang)
+            let cost = Grading.diffCost(parts)
             if cost < bestCost {
                 best = parts
                 bestCost = cost

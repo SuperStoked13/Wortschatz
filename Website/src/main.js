@@ -120,9 +120,9 @@ function guardDrops() {
 }
 
 // Ctrl+N (⌘N): a new set from anywhere, unless the user is typing or a dialog is open.
-function bindNewSetKey({ commandKey, isTypingTarget, hasOpenModal, navigate, currentRoute }) {
+function bindNewSetKey({ commandKey, isComposingKey, isTypingTarget, hasOpenModal, navigate, currentRoute }) {
   document.addEventListener('keydown', (e) => {
-    if (e.defaultPrevented || e.isComposing || !commandKey(e, 'n')) return;
+    if (e.defaultPrevented || isComposingKey(e) || !commandKey(e, 'n')) return;
     if (isTypingTarget(e.target) || hasOpenModal()) return;
     e.preventDefault();
     if (e.repeat) return;
@@ -173,6 +173,7 @@ async function boot() {
     speech.primeVoices();
     bindNewSetKey({
       commandKey: shortcuts.commandKey,
+      isComposingKey: shortcuts.isComposingKey,
       isTypingTarget: shortcuts.isTypingTarget,
       hasOpenModal,
       navigate: router.navigate,

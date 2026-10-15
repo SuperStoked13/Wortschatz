@@ -106,6 +106,30 @@ struct PDFTextExtractorTests {
         #expect(notes.text == Self.textRows.map { "\($0.0)\t\($0.1)" }.joined(separator: "\n"))
     }
 
+    @Test("Arabic text layers: logical-order lines are not taken for rotated text; words are read right to left")
+    func arabicTextLayer() async throws {
+        let rows: [(String, String)] = [("الكتاب", "das Buch"), ("المدينة القديمة", "die alte Stadt"), ("مع السلامة", "auf Wiedersehen")]
+        for table in [rows, rows.map { ($0.1, $0.0) }] {
+            let output = try await Self.extractor(Self.unusedRecognizer()).extractText(from: TestDocuments.tablePDF(table))
+            #expect(output.text == TestDocuments.tableLines(table).joined(separator: "\n"))
+        }
+    }
+
+    @Test("Chinese text layers keep characters together and pinyin spaced")
+    func chineseTextLayer() async throws {
+        let rows: [(String, String)] = [("你好", "hallo"), ("我是学生。", "Ich bin Schüler."), ("你好 (nǐ hǎo)", "hallo")]
+        let output = try await Self.extractor(Self.unusedRecognizer()).extractText(from: TestDocuments.tablePDF(rows))
+        #expect(output.text == TestDocuments.tableLines(rows).joined(separator: "\n"))
+    }
+
+    @Test("Right-to-left characters are found by their code points")
+    func rightToLeftLines() {
+        let text = "das Buch الكتاب\nשלום\nle chat" as NSString
+        #expect(PDFPageText.containsRightToLeft(text, 0..<15))
+        #expect(PDFPageText.containsRightToLeft(text, 16..<20))
+        #expect(!PDFPageText.containsRightToLeft(text, 21..<28))
+    }
+
     @Test("Typographic ligatures become plain letters")
     func ligatures() {
         #expect(PDFPageText.expandingLigatures("ﬁn ﬂeur eﬀet") == "fin fleur effet")

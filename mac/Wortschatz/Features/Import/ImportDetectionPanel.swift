@@ -269,11 +269,11 @@ struct ImportPreviewTable: View {
             .width(min: 30, ideal: 34, max: 44)
 
             TableColumn(Text(verbatim: "Begriff · \(Labels.langName(result.termLang))")) { row in
-                ImportPreviewCell(text: row.term, missing: "Begriff fehlt")
+                ImportPreviewCell(text: row.term, lang: result.termLang, missing: "Begriff fehlt")
             }
 
             TableColumn(Text(verbatim: "Definition · \(Labels.langName(result.defLang))")) { row in
-                ImportPreviewCell(text: row.definition, missing: "Definition fehlt")
+                ImportPreviewCell(text: row.definition, lang: result.defLang, missing: "Definition fehlt")
             }
 
             TableColumn(Text(verbatim: "")) { row in
@@ -296,9 +296,11 @@ struct ImportPreviewTable: View {
     }
 }
 
-/// A preview cell; an empty side shows what is missing.
+/// A preview cell in its side's language (Arabic starts at the column's right edge); an empty
+/// side shows what is missing.
 private struct ImportPreviewCell: View {
     let text: String
+    let lang: Lang
     let missing: String
 
     var body: some View {
@@ -307,9 +309,10 @@ private struct ImportPreviewCell: View {
                 .italic()
                 .foregroundStyle(Theme.warning.text)
         } else {
-            Text(text)
+            Text(LearnText.spoken(text, lang: lang))
                 .lineLimit(1)
                 .truncationMode(.tail)
+                .cardTextLine(lang)
                 .help(text)
         }
     }

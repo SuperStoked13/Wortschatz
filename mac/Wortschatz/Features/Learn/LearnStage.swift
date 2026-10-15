@@ -60,13 +60,15 @@ struct LearnStage: View {
         case .checkpoint:
             if let checkpoint = state.checkpoint {
                 LearnCheckpointView(
-                    checkpoint: checkpoint, from: state.roundStartCounts, segments: state.segments, cards: state.cards)
+                    checkpoint: checkpoint, from: state.roundStartCounts, segments: state.segments, cards: state.cards,
+                    termLang: state.termLang, defLang: state.defLang)
                     .transition(.opacity)
             }
         case .finished:
             if let stats = state.finalStats {
                 LearnFinishView(
                     stats: stats, subset: state.session?.subset ?? state.subset, cards: state.cards,
+                    termLang: state.termLang, defLang: state.defLang,
                     bestStreak: controller.streak.best, review: state.session.flatMap(LearnEngine.reviewStats))
                     .transition(.opacity)
             }
@@ -115,6 +117,7 @@ struct LearnQuestionView: View {
                 ZStack {
                     ChoiceGrid(
                         choices: question.choices.map(\.text),
+                        lang: question.answerLang,
                         state: { ChoiceTileState(LearnFlow.optionState(state, at: $0)) },
                         emphasis: { typeAhead.ranges[$0] },
                         onChoose: { controller.send(.choose($0)) })
@@ -129,7 +132,7 @@ struct LearnQuestionView: View {
                 if typeAhead.isActive {
                     LearnTypeAheadHint(
                         typed: state.typed, typeAhead: typeAhead, choices: question.choices.map(\.text),
-                        rejections: state.rejections
+                        lang: question.answerLang, rejections: state.rejections
                     )
                     // Fades on its own: an outer animation would also move the tiles' answer states.
                     .transition(.opacity.animation(.easeOut(duration: 0.15)))
@@ -173,6 +176,7 @@ private struct LearnTypeAheadHint: View {
     let typed: String
     let typeAhead: LearnFlow.TypeAhead
     let choices: [String]
+    let lang: Lang
     let rejections: Int
 
     var body: some View {
@@ -180,14 +184,14 @@ private struct LearnTypeAheadHint: View {
             Image(systemName: "keyboard")
                 .foregroundStyle(.secondary)
                 .accessibilityHidden(true)
-            Text(typed)
+            Text(LearnText.spoken(typed, lang: lang))
                 .fontWeight(.semibold)
                 .foregroundStyle(typeAhead.matching.isEmpty ? Theme.failure.text : .primary)
                 .lineLimit(1)
                 .truncationMode(.head)
             if let selected = typeAhead.selected, choices.indices.contains(selected) {
                 Keycap(.returnKey, size: .small)
-                Text("wählt «\(choices[selected])»")
+                Text(AttributedString("wählt «") + LearnText.spoken(choices[selected], lang: lang) + AttributedString("»"))
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
             } else {

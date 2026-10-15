@@ -81,6 +81,25 @@ scenario([card('1', 'grand', 'gross, hoch'), card('2', 'haut', 'Hoch!'), card('3
 scenario([card('a', 'beau', 'schön'), card('b', 'jolie', 'schön'), card('c', 'joli, jolie', 'schön, hübsch')], 'term', 'fr');
 scenario([card('a', 'la figure', 'das Gesicht'), card('b', 'la figure', 'die Figur')], 'definition', 'de');
 scenario([card('x', 'moche', 'hässlich'), card('x', 'moche', 'hässlich'), card('y', '  ', 'hässlich'), card('z', 'laid', 'hässlich')], 'term', 'fr');
+{
+  // Arabic vowel marks, presentation forms, full-width punctuation and CJK quotes in prompts.
+  const scripts = [
+    card('a1', 'كِتَابٌ', 'Buch'), card('a2', 'كتاب', 'Band'), card('a3', 'ﻛﺘﺎﺏ، دفتر', 'Schreibzeug'), card('a4', 'قلم', 'Stift'),
+    card('z1', '你好！', 'Hallo'), card('z2', '你 好', 'Guten Tag'), card('z3', '谢谢，多谢', 'Danke'), card('z4', '多谢', 'Vielen Dank'),
+    card('z5', '「再见」', 'Tschüss'), card('z6', '再见', 'Auf Wiedersehen'),
+  ];
+  scenario(scripts, 'definition', 'de');
+  scenario(scripts, 'term', 'ar');
+  scenario(scripts, 'term', 'zh');
+  // Letter variants and pinyin answers of synonym cards.
+  const notes = [
+    card('s1', 'Schule', 'المدرسة'), card('s2', 'Schule', 'كُلِّيَّة'), card('s3', 'Schule', 'مدرسه'),
+    card('h1', 'Hallo', '你好 (nǐ hǎo)'), card('h2', 'Hallo', '喂 (wèi)'), card('h3', 'Hallo', 'nǐ hǎo 您好'),
+  ];
+  scenario(notes, 'definition', 'ar');
+  scenario(notes, 'definition', 'zh');
+  scenario(notes, 'term', 'de');
+}
 
 // ---------------------------------------------------------------------------
 // Fixture lists, as parsed and with added synonym cards

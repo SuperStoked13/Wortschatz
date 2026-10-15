@@ -1,6 +1,7 @@
 import Foundation
 
-/// Clean-up of recognised text (port of the pure part of src/import/ocr.js).
+/// Clean-up of recognised text (port of the pure part of src/import/ocr.js): misread umlauts and
+/// the spaces between recognised Chinese words.
 public enum OCRPostprocess {
     /// Restores umlauts that text recognition read as circumflexes in German text (`fixGermanUmlauts`).
     ///
@@ -41,7 +42,52 @@ public enum OCRPostprocess {
         }
     }
 
+    /// Chinese (and Japanese) text without the spaces between recognised words (`joinCjk`):
+    /// recognition engines split Chinese text into many words, but Chinese has no spaces. Runs of
+    /// plain spaces between two CJK characters (Han, kana, CJK and full-width punctuation) go.
+    public static func joinCJK(_ line: String) -> String {
+        // line.replace(/([CJK]) +(?=[CJK])/gu, '$1')
+        let u = Array(line.unicodeScalars)
+        guard u.contains(where: isCJK) else { return line }
+        var out = String.UnicodeScalarView()
+        var i = 0
+        while i < u.count {
+            if u[i] == " ", i > 0, isCJK(u[i - 1]) {
+                var j = i
+                while j < u.count && u[j] == " " { j += 1 }
+                if j < u.count && isCJK(u[j]) {
+                    i = j
+                    continue
+                }
+            }
+            out.append(u[i])
+            i += 1
+        }
+        return String(out)
+    }
+
+    /// The plain-text result of a recognition without usable word boxes (the fallback of
+    /// `ocrDataToText`): `text.trim().split('\n')`, CJK words joined, misread umlauts restored.
+    public static func plainTextLines(_ text: String) -> [String] {
+        let trimmed = JSCompat.trim(text)
+        let lines = trimmed.unicodeScalars.split(separator: "\n", omittingEmptySubsequences: false)
+            .map { String(String.UnicodeScalarView($0)) }
+        return fixGermanUmlauts(lines.map(joinCJK))
+    }
+
     // MARK: - Helpers
+
+    /// `[\u3001-\u303F\u3040-\u30FF\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF\uFF01-\uFF60\u{20000}-\u{2FA1F}]`:
+    /// CJK punctuation, kana, Han characters and full-width forms.
+    private static func isCJK(_ u: Unicode.Scalar) -> Bool {
+        switch u.value {
+        case 0x3001...0x303F, 0x3040...0x30FF, 0x3400...0x4DBF, 0x4E00...0x9FFF, 0xF900...0xFAFF, 0xFF01...0xFF60,
+             0x20000...0x2FA1F:
+            return true
+        default:
+            return false
+        }
+    }
 
     private static func isGerman(_ cell: String, inGermanColumn: Bool) -> Bool {
         let detection = LangDetect.detectLanguage(plain(cell))

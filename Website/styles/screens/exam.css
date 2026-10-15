@@ -694,6 +694,11 @@
   overflow-wrap: anywhere;
 }
 
+/* Arabic: room for the vowel marks above and below the letters (the prompt's own span). */
+.ex-q__prompt :lang(ar) {
+  line-height: 1.6;
+}
+
 .ex-q__input {
   width: 100%;
   height: 46px;
@@ -1143,6 +1148,16 @@
   text-decoration-line: underline;
   text-decoration-color: var(--success);
   text-underline-offset: 4px;
+}
+
+/* Arabic: no padding inside a word (it would break the joined letters apart), and room for the
+   vowel marks. */
+.ex-diff:lang(ar) {
+  padding: 0;
+}
+
+.ex-answer:lang(ar) {
+  line-height: 1.6;
 }
 
 .ex-expected {

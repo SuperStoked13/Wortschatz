@@ -83,6 +83,8 @@
 
 .set-head__desc {
   max-width: 68ch;
+  /* dir="auto": an Arabic description sits on the right, under its title. */
+  margin-inline-end: auto;
   color: var(--text-2);
   font-size: var(--fs-md);
   line-height: 1.55;
@@ -632,6 +634,12 @@
 .set-term__term.is-empty,
 .set-term__def.is-empty {
   color: var(--text-disabled);
+}
+
+/* Arabic: room for the vowel marks above and below the letters. */
+.set-term__term:lang(ar),
+.set-term__def:lang(ar) {
+  line-height: 1.6;
 }
 
 .set-status {

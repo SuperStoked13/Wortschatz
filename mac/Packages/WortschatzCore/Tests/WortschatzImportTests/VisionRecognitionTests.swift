@@ -124,6 +124,27 @@ struct VisionRecognitionTests {
         }
     }
 
+    static let arabicRows: [(String, String)] = [
+        ("كتاب", "das Buch"), ("قلم", "der Stift"), ("بيت", "das Haus"), ("مدرسة", "die Schule"), ("شكرا", "danke"),
+    ]
+    static let chineseRows: [(String, String)] = [
+        ("你好", "hallo"), ("谢谢", "danke"), ("学生", "der Student"), ("中国", "China"), ("朋友", "der Freund"),
+    ]
+
+    /// Arabic (ar-SA) and Simplified Chinese (zh-Hans), alone and with German (the set's languages).
+    /// Vision accepts both combinations; were one rejected, the term language alone would be used.
+    @Test("Arabic and Chinese tables are read alone and together with German", arguments: [
+        (["ar-SA"], "ar"), (RecognitionLanguages.forSet(termLang: .ar), "ar"),
+        (["zh-Hans"], "zh"), (RecognitionLanguages.forSet(termLang: .zh), "zh"),
+    ])
+    func scripts(languages: [String], script: String) async throws {
+        // The macOS 14 engine has no Arabic and misses this Chinese column without band passes.
+        guard #available(macOS 15.0, *) else { return }
+        let rows = script == "ar" ? Self.arabicRows : Self.chineseRows
+        let text = try await OCRService().recognize(TestDocuments.tableImage(rows), languages: languages)
+        #expect(text.components(separatedBy: "\n") == TestDocuments.tableLines(rows), "\(languages)")
+    }
+
     @Test("A blank image has no text")
     func blank() async throws {
         let png = TestDocuments.encode(TestDocuments.blankImage(), as: .png)

@@ -1,8 +1,7 @@
 // Helpers shared by the editor modules (labels, keys, small DOM utility).
 // No DOM access at import time.
 
-import { normalizeBasic } from '../core/text.js';
-import { LANGS } from '../lib/labels.js';
+import { normalizeBasic, foldScripts } from '../core/text.js';
 
 // "Trennung" choices of the import panel and their parseVocab options.
 export const SEPARATORS = [
@@ -54,9 +53,10 @@ export function flagTooltip(flags) {
   return `${parts.join(' · ')} – bitte prüfen`;
 }
 
-// Case- and whitespace-insensitive key used to find duplicate terms.
+// Case- and whitespace-insensitive key used to find duplicate terms. Like grading it ignores
+// Arabic vowel marks and tatweel, full-width punctuation (؟ 。 ！) and spaces between Han.
 export function termKey(term) {
-  return normalizeBasic(term).toLowerCase().replace(/[.!?]+$/, '');
+  return foldScripts(normalizeBasic(term)).toLowerCase().replace(/[.!?]+$/, '');
 }
 
 // Short German description of the detected layout.
@@ -93,11 +93,6 @@ export function titleFromFileName(name) {
   if (!base || base.length < 2) return '';
   if (/^(image|img|screenshot|bildschirmfoto|scan|dsc|pxl|photo|foto|untitled|unbenannt)([\s\d._-]|$)/i.test(base)) return '';
   return base.slice(0, 80);
-}
-
-// BCP 47 tag for a lang attribute ('' for 'other').
-export function langTag(code) {
-  return (LANGS[code] && LANGS[code].bcp47) || '';
 }
 
 export function isApplePlatform() {

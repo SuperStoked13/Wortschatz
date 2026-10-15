@@ -65,6 +65,17 @@ const HOUR = 3600000;
 const BASE = Date.UTC(2026, 9, 11, 8, 0, 0);
 const clone = (v) => (v === undefined ? undefined : JSON.parse(JSON.stringify(v)));
 
+// The Mac keeps Karteikarten decks beside the library ("library.flashcards.json", AppModel+Flashcards),
+// not in LibraryStore: the web's `flashcards:<setId>` keys are left out of the events, and the
+// `flashcards` part of a set snapshot (always null here: no scenario sorts cards) is dropped.
+const macKeys = (keys) => keys.filter((k) => !k.startsWith('flashcards:'));
+function withoutDeck(snapshot) {
+  if (!snapshot || typeof snapshot !== 'object' || !('flashcards' in snapshot)) return snapshot;
+  if (snapshot.flashcards !== null) throw new Error('a snapshot with a flashcards deck');
+  const { flashcards, ...rest } = snapshot;
+  return rest;
+}
+
 // ---------------------------------------------------------------------------
 // Scenario runner
 
@@ -172,10 +183,11 @@ class Runner {
       if (!e || typeof e.code !== 'string') throw e;
       error = { code: e.code, message: e.message };
     }
+    if (full.op === 'snapshotSet' && result) result = withoutDeck(result);
     if (full.op === 'snapshotSet' && result) this.pool.push(clone(result));
     const known = this.known();
     const step = {
-      events: this.events.map((e) => ({ type: e.type, keys: e.keys === null ? null : [...e.keys].sort() })),
+      events: this.events.map((e) => ({ type: e.type, keys: e.keys === null ? null : macKeys([...e.keys]).sort() })),
       changed: this.delta(this.parts(known)),
     };
     if (result !== undefined) step.result = clone(result);
@@ -260,7 +272,7 @@ const SAMPLE = [
 ];
 const NOISE = ['', ' ', '  ', '\t', '\n', '\r\n', ' ', ' ', '﻿', '　'];
 const ODD_VALUES = [42, 0, true, false, null, undefined, 3.5, -0.25, 1e21, [1, 'a'], {}, ['x', null], [[1, 2], 3]];
-const LANG_VALUES = ['fr', 'en', 'es', 'it', 'de', 'other', 'xx', '', null, 7, 'FR'];
+const LANG_VALUES = ['fr', 'en', 'es', 'it', 'ar', 'zh', 'de', 'other', 'xx', '', null, 7, 'FR', 'zh-CN'];
 const THEME_VALUES = ['system', 'light', 'dark', 'neon', '', null, 1];
 
 function fuzzSide(r, s) {

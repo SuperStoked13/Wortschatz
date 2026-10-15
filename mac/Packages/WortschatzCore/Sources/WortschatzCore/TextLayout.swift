@@ -10,16 +10,21 @@ public struct TextItem: Codable, Sendable, Equatable, Hashable {
     public var y: Double
     public var w: Double
     public var h: Double
+    /// The text direction of a PDF text run (pdf.js `dir`): "rtl" for a right-to-left run, whose
+    /// text is in logical order and starts at the right edge. Any other value (or nil) is left to
+    /// right. Encoded only when present.
+    public var dir: String?
 
-    public init(str: String, x: Double, y: Double, w: Double = 0, h: Double = 0) {
+    public init(str: String, x: Double, y: Double, w: Double = 0, h: Double = 0, dir: String? = nil) {
         self.str = str
         self.x = x
         self.y = y
         self.w = w
         self.h = h
+        self.dir = dir
     }
 
-    enum CodingKeys: String, CodingKey { case str, x, y, w, h }
+    enum CodingKeys: String, CodingKey { case str, x, y, w, h, dir }
 
     /// Lenient like `readItems`: numbers or numeric strings (JS `parseFloat`) are accepted; `w`/`h`
     /// default to 0 when missing or invalid. Missing `str`/`x`/`y` decode as ""/0 (use
@@ -32,17 +37,23 @@ public struct TextItem: Codable, Sendable, Equatable, Hashable {
         y = TextLayout.toNumber(o["y"]) ?? 0
         w = TextLayout.toNumber(o["w"]) ?? 0
         h = TextLayout.toNumber(o["h"]) ?? 0
+        dir = o["dir"]?.stringValue
     }
 
     /// An item as JS `readItems` reads it: nil when the entry is not an object, has no `str`
     /// (null or missing) or no finite `x`/`y` (numbers or numeric strings). `str` becomes
     /// `String(str)`; invalid `w`/`h` become 0. Whitespace-only strings are kept here and dropped
-    /// by `itemsToLines`.
+    /// by `itemsToLines`. `dir` is kept when it is a string (only "rtl" matters, `it.dir === 'rtl'`).
     public init?(json: JSONValue) {
         guard let o = json.objectValue, let raw = o["str"], let str = TextLayout.jsString(raw),
               let x = TextLayout.toNumber(o["x"]), let y = TextLayout.toNumber(o["y"]) else { return nil }
-        self.init(str: str, x: x, y: y, w: TextLayout.toNumber(o["w"]) ?? 0, h: TextLayout.toNumber(o["h"]) ?? 0)
+        self.init(
+            str: str, x: x, y: y, w: TextLayout.toNumber(o["w"]) ?? 0, h: TextLayout.toNumber(o["h"]) ?? 0,
+            dir: o["dir"]?.stringValue)
     }
+
+    /// A right-to-left run (`it.dir === 'rtl'`).
+    public var isRightToLeft: Bool { dir == "rtl" }
 }
 
 /// Options of `itemsToLines` (JS `opts`).
@@ -107,6 +118,11 @@ public struct BaselineSegment: Codable, Sendable, Equatable, Hashable {
 /// - 4-column table: left pairs first, then right pairs;
 /// - stacked pairs per column: each page column top to bottom (term line, definition line, gap, …);
 /// - unaligned text columns: each page column top to bottom.
+///
+/// Right-to-left text (Arabic, Hebrew): a cell whose letters are mostly RTL is read from right to
+/// left and belongs to the column of its right edge. Items with `dir` "rtl" (PDF runs) hold their
+/// text in logical order, starting at the right edge. Han characters (Chinese) are joined without
+/// spaces.
 ///
 /// Strings are handled in UTF-16 code units where the JS code measures them (`str.length`,
 /// regex indices), and the floating-point arithmetic follows the JS expression order exactly.
@@ -199,6 +215,8 @@ extension TextLayout {
         let str: String
         let units: [UInt16]
         let x, y, w, h: Double
+        /// A right-to-left run: its pieces are placed from the right edge.
+        let rtl: Bool
     }
 
     private struct Piece {
@@ -211,6 +229,8 @@ extension TextLayout {
     private struct Cell {
         let text: String
         let x0, x1: Double
+        /// Mostly right-to-left letters: read from right to left, anchored at the right edge.
+        let rtl: Bool
     }
 
     private struct Row {
@@ -243,7 +263,7 @@ extension TextLayout {
             guard it.x.isFinite, it.y.isFinite else { continue }
             let w = it.w.isFinite && it.w > 0 ? it.w : 0
             let h = it.h.isFinite && it.h > 0 ? it.h : 0
-            raw.append(RawItem(str: str, units: Array(str.utf16), x: it.x, y: it.y, w: w, h: h))
+            raw.append(RawItem(str: str, units: Array(str.utf16), x: it.x, y: it.y, w: w, h: h, rtl: it.isRightToLeft))
         }
         return raw
     }
@@ -273,7 +293,8 @@ extension TextLayout {
 
     /// Fills missing sizes, then splits every item into visible pieces: leading and trailing
     /// whitespace is trimmed (remembered as word boundaries) and runs of tabs / 3+ spaces inside
-    /// one item become separate pieces (monospace columns).
+    /// one item become separate pieces (monospace columns). A right-to-left item starts at its
+    /// right edge.
     private static func toPieces(_ raw: [RawItem], _ metrics: Metrics) -> [Piece] {
         var pieces: [Piece] = []
         for it in raw {
@@ -284,7 +305,7 @@ extension TextLayout {
             for range in pieceRanges(it.units) {
                 pieces.append(Piece(
                     str: String(decoding: it.units[range], as: UTF16.self),
-                    x: it.x + Double(range.lowerBound) * cw,
+                    x: it.rtl ? it.x + Double(it.units.count - range.upperBound) * cw : it.x + Double(range.lowerBound) * cw,
                     y: it.y,
                     w: Double(range.count) * cw,
                     h: h,
@@ -363,27 +384,39 @@ extension TextLayout {
         let cw = metrics.charW * clamp(row.h / metrics.height, 0.6, 3)
         let tabGap = gapFactor * cw
         let spaceGap = spaceFactor * cw
-        var cells: [(text: String, x0: Double, x1: Double)] = []
-        var cell: (text: String, x0: Double, x1: Double, trail: Bool)?
+        var cells: [(items: [Piece], x0: Double, x1: Double)] = []
         for it in row.items {
-            if var c = cell {
-                let gap = it.x - c.x1
-                if gap <= tabGap {
-                    let sep = c.trail || it.lead || gap > spaceGap ? " " : ""
-                    c.text += sep + it.str
-                    c.x1 = jsMax(c.x1, it.x + it.w)
-                    c.trail = it.trail
-                    cell = c
-                    continue
-                }
-                cells.append((c.text, c.x0, c.x1))
+            if let last = cells.indices.last, it.x - cells[last].x1 <= tabGap {
+                cells[last].items.append(it)
+                cells[last].x1 = jsMax(cells[last].x1, it.x + it.w)
+                continue
             }
-            cell = (it.str, it.x, it.x + it.w, it.trail)
+            cells.append(([it], it.x, it.x + it.w))
         }
-        if let c = cell { cells.append((c.text, c.x0, c.x1)) }
         return cells
-            .map { Cell(text: JSCompat.trim(collapseWhitespace($0.text)), x0: $0.x0, x1: $0.x1) }
+            .map { c in
+                let rtl = isRtlText(c.items.map(\.str).joined())
+                let text = JSCompat.trim(collapseWhitespace(cellText(c.items, rtl: rtl, spaceGap: spaceGap)))
+                return Cell(text: text, x0: c.x0, x1: c.x1, rtl: rtl)
+            }
             .filter { !$0.text.isEmpty }
+    }
+
+    /// The pieces of one cell in reading order (right to left for RTL text). A gap wider than a
+    /// space or a word boundary inside an item becomes a space, except between two Han characters.
+    private static func cellText(_ items: [Piece], rtl: Bool, spaceGap: Double) -> String {
+        let order = rtl ? Array(items.reversed()) : items
+        var text = order[0].str
+        var edge = rtl ? order[0].x : order[0].x + order[0].w // where the text read so far ends
+        var trail = order[0].trail
+        for it in order.dropFirst() {
+            let gap = rtl ? edge - (it.x + it.w) : it.x - edge
+            let space = (trail || it.lead || gap > spaceGap) && !(endsWithHan(text) && startsWithHan(it.str))
+            text += (space ? " " : "") + it.str
+            edge = rtl ? jsMin(edge, it.x) : jsMax(edge, it.x + it.w)
+            trail = it.trail
+        }
+        return text
     }
 
     /// Typical baseline-to-baseline distance of consecutive lines. The lower quartile is used so
@@ -431,7 +464,9 @@ extension TextLayout {
             guard b0Value.isFinite, b1Value.isFinite, b0Value >= 0 else { continue }
             let b0 = Int(min(b0Value, nbValue))
             let b1 = Int(min(b1Value, nbValue))
-            if b0 < nb { starts[b0] += 1 }
+            // Right-to-left text starts at the right edge (right-aligned columns have ragged left edges).
+            let start = c.rtl ? b1 : b0
+            if start < nb { starts[start] += 1 }
             var b = b0
             while b <= b1 && b < nb {
                 cover[b] += 1
@@ -472,6 +507,11 @@ extension TextLayout {
         return i
     }
 
+    /// A cell belongs to the column of the edge its text starts at.
+    private static func anchorX(_ cell: Cell) -> Double {
+        cell.rtl ? cell.x1 : cell.x0
+    }
+
     /// Drops columns that only a handful of cells start in (stray page numbers, one indented
     /// line, …) by merging them into a neighbour.
     private static func pruneBounds(_ bounds: [Double], _ cells: [Cell]) -> [Double]? {
@@ -479,7 +519,7 @@ extension TextLayout {
         while true {
             if bs.isEmpty { return nil }
             var counts = [Int](repeating: 0, count: bs.count + 1)
-            for c in cells { counts[columnIndex(bs, c.x0)] += 1 }
+            for c in cells { counts[columnIndex(bs, anchorX(c))] += 1 }
             let maximum = counts.max() ?? 0
             let minStarts = max(2, Int((Double(maximum) * 0.2).rounded(.up)))
             var weakest = -1
@@ -496,8 +536,13 @@ extension TextLayout {
         let k = bounds.count + 1
         for i in rows.indices {
             var parts = [[String]](repeating: [], count: k)
-            for c in rows[i].cells { parts[columnIndex(bounds, c.x0)].append(c.text) }
-            rows[i].cols = parts.map { $0.joined(separator: " ") }
+            for c in rows[i].cells { parts[columnIndex(bounds, anchorX(c))].append(c.text) }
+            // Several cells in one column are read like the pieces of a cell.
+            rows[i].cols = parts.map { p in
+                guard let first = p.first else { return "" }
+                if isRtlText(p.joined()) { return p.dropLast().reversed().reduce(p[p.count - 1], joinWords) }
+                return p.dropFirst().reduce(first, joinWords)
+            }
         }
         return k
     }
@@ -641,7 +686,7 @@ extension TextLayout {
 
     private static func joinWrapped(_ a: String, _ b: String) -> String {
         if a.isEmpty { return b }
-        return a.utf16.last == hyphen ? a + b : "\(a) \(b)"
+        return a.utf16.last == hyphen ? a + b : joinWords(a, b)
     }
 
     /// `WRAP_END = /[,;:\-–(/]$/`
@@ -828,6 +873,44 @@ extension TextLayout {
 extension TextLayout {
     private static let space: UInt16 = 0x20
     private static let hyphen: UInt16 = 0x2D
+
+    // MARK: Scripts
+
+    /// `RTL_CHAR = /[\u0590-\u08FF\uFB1D-\uFDFF\uFE70-\uFEFE]/u`: right-to-left scripts (Hebrew,
+    /// Arabic, Syriac, Thaana, NKo, …) and their presentation forms.
+    private static func isRtlScalar(_ u: Unicode.Scalar) -> Bool {
+        switch u.value {
+        case 0x590...0x8FF, 0xFB1D...0xFDFF, 0xFE70...0xFEFE: return true
+        default: return false
+        }
+    }
+
+    /// More than half of the letters are right-to-left (Arabic, Hebrew, …): such text is read
+    /// from right to left (`isRtlText`).
+    public static func isRtlText(_ s: String) -> Bool {
+        var letters = 0
+        var rtl = 0
+        for u in s.unicodeScalars where TextNormalizer.isLetterScalar(u) {
+            letters += 1
+            if isRtlScalar(u) { rtl += 1 }
+        }
+        return rtl * 2 > letters
+    }
+
+    /// `HAN_END.test(s)`: the last character is a Han character.
+    private static func endsWithHan(_ s: String) -> Bool {
+        s.unicodeScalars.last.map(TextNormalizer.isHanScalar) ?? false
+    }
+
+    /// `HAN_START.test(s)`: the first character is a Han character.
+    private static func startsWithHan(_ s: String) -> Bool {
+        s.unicodeScalars.first.map(TextNormalizer.isHanScalar) ?? false
+    }
+
+    /// Joins two words with a space, except between two Han characters.
+    private static func joinWords(_ a: String, _ b: String) -> String {
+        endsWithHan(a) && startsWithHan(b) ? a + b : "\(a) \(b)"
+    }
 
     /// JS `\s` for one UTF-16 code unit (surrogates are never whitespace).
     private static func isWhitespace(_ u: UInt16) -> Bool {

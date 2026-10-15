@@ -1,13 +1,17 @@
 // Parity fixture for the pure OCR clean-up of src/import/ocr.js → Fixtures/ocr.json.
-// fns: fixGermanUmlauts [lines]
+// fns: fixGermanUmlauts [lines], ocrPlainText [text] (= ocrDataToText({ text, words: [] }), the
+// plain-text fallback: lines with the spaces between CJK characters removed (joinCjk), then
+// fixGermanUmlauts)
 //
 // Inputs: every input of tests/layout.test.js, every tests/fixtures text (as is, with every German
 // umlaut misread as a circumflex, misread only in the definition column, re-split into tab cells,
 // single lines and alternating stacks), hand-picked edge cases (holes in columns, blank and
 // whitespace cells, decomposed circumflexes, upper case, many columns, null / number entries) and
 // seeded tables mixing French words that really carry a circumflex ("le rôle", "tôt", "le château")
-// with German words whose umlauts were misread ("schôn", "die Tûr").
-import { fixGermanUmlauts } from '../../Website/src/import/ocr.js';
+// with German words whose umlauts were misread ("schôn", "die Tûr"). ocrPlainText: every fixture
+// text, Chinese / Japanese text as OCR splits it (spaces between characters, CJK and full-width
+// punctuation, pinyin, runs of spaces, tabs, NBSP) and seeded mixtures with misread umlauts.
+import { fixGermanUmlauts, ocrDataToText } from '../../Website/src/import/ocr.js';
 import { Cases, mulberry32, randInt, pick, chance, fixtureTexts } from './lib.js';
 
 const cases = new Cases('ocr');
@@ -199,6 +203,46 @@ for (let n = 0; n < 1400; n++) {
     }
   }
   fix(lines);
+}
+
+// ---------------------------------------------------------------------------
+// 6. Plain-text fallback with Chinese words joined (joinCjk)
+//
+// Astral Han characters (Extension B) never follow another CJK character here: JavaScriptCore's
+// regex engine misses a match that starts on an astral character right after a BMP character the
+// same class matched ('）𠀀 学' keeps its space there; the spec, V8 and the Swift port remove it).
+
+const seenPlain = new Set();
+function plainText(text) {
+  if (seenPlain.has(text)) return;
+  seenPlain.add(text);
+  cases.add('ocrPlainText', [text], ocrDataToText({ text, words: [] }));
+}
+
+for (const { text } of fixtureTexts()) {
+  plainText(text);
+  plainText(misread(text));
+  plainText([...text].join(' '));
+}
+const CJK_EDGE = [
+  '你 好 ， 朋 友\n谢 谢 xiè xie\n', '你  好', '你\t好', '你\u00A0好', ' 你 ', '你 ', ' 好', 'こん にち は', 'カタ カナ',
+  '你好 。', '你 、 我', '「 书 」', '《 书 》', 'ＣＤ ＲＯＭ', '１ ２ ３', '你 ｡ 好', '你 ･ 好', '〇 一', '々 人', '你 n 好',
+  'nǐ 你', '你 nǐ', '你 1 好', '你 ? 好', '谢 谢\r\n再 见', '\n\n你 好\n\n', 'die Tûr 你 好', '你 好\tdie Tûr\nla porte\t谢 谢',
+  '𠀀 𠀁', '𠀀 x', '你 𠀀', 'ㄅ ㄆ', '한 국', '你 ㇰ 好', '', '   ', 'le chat  noir', 'كتاب قلم', '你\u3000好', '你 \u3000 好',
+];
+for (const t of CJK_EDGE) plainText(t);
+{
+  const rng = mulberry32(0xc1c);
+  const TOKENS = ['你', '好', '谢', '谢', '朋友', '学生', '，', '。', '！', '、', '「', '」', '（', '）', '：', 'の', 'カ', 'nǐ', 'hǎo',
+    'xiè', 'le', 'chat', 'die', 'Tûr', 'schôn', 'grûn', '12', 'ＣＤ', '１', '·', '-', '|', 'كتاب'];
+  const SEPS = [' ', ' ', ' ', '  ', '', '\t', '\n', '\u00A0', '   '];
+  for (let i = 0; i < 900; i++) {
+    let s = '';
+    const n = randInt(rng, 1, 18);
+    for (let k = 0; k < n; k++) s += (k ? pick(rng, SEPS) : '') + pick(rng, TOKENS);
+    if (chance(rng, 0.1)) s = ` ${s}\n`;
+    plainText(s);
+  }
 }
 
 cases.emit();

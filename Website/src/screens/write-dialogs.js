@@ -1,7 +1,7 @@
 // Write mode dialogs: a yes/no question, the card editor and the options sheet.
 
 import { h } from '../lib/dom.js';
-import { LANGS, langName } from '../lib/labels.js';
+import { langName, fieldAttrs } from '../lib/labels.js';
 import { openModal, textField } from '../ui/components.js';
 import { studyOptionsForm } from '../ui/study-options.js';
 
@@ -37,7 +37,7 @@ export function ask({ title, message, confirmLabel, cancelLabel = 'Abbrechen' })
   });
 }
 
-const fieldAttrs = (lang) => ({ lang: (LANGS[lang] && LANGS[lang].bcp47) || null, autocomplete: 'off', spellcheck: 'false' });
+const cardFieldAttrs = (lang) => ({ ...fieldAttrs(lang), autocomplete: 'off', spellcheck: 'false' });
 
 /**
  * Edits a card's term and definition.
@@ -50,13 +50,13 @@ export function openCardEditor({ termLang, defLang, card, focusSide = 'term', on
     label: termLang === 'other' ? 'Begriff' : `Begriff · ${langName(termLang)}`,
     value: card.term,
     autofocus: focusSide === 'term',
-    attrs: fieldAttrs(termLang),
+    attrs: cardFieldAttrs(termLang),
   });
   const defField = textField({
     label: defLang === 'other' ? 'Definition' : `Definition · ${langName(defLang)}`,
     value: card.definition,
     autofocus: focusSide !== 'term',
-    attrs: fieldAttrs(defLang),
+    attrs: cardFieldAttrs(defLang),
   });
   let modal = null;
 

@@ -1631,4 +1631,24 @@ test('readJsonFile parses objects and rejects junk', async () => {
   expect(message).toContain('nicht gelesen');
 });
 
+test('Arabic and Chinese sets keep their languages', () => {
+  const { db, storage } = setup();
+  const ar = db.createSet({ title: 'Arabisch', termLang: 'ar', defLang: 'de', cards: [{ term: 'كِتَابٌ', definition: 'Buch' }] });
+  expect(ar.termLang).toBe('ar');
+  expect(ar.cards[0].term).toBe('كِتَابٌ');
+  const zh = db.createSet({ title: 'Chinesisch', termLang: 'zh', defLang: 'ar', cards: [{ term: '你好 (nǐ hǎo)', definition: 'مرحبا' }] });
+  expect([zh.termLang, zh.defLang]).toEqual(['zh', 'ar']);
+  const set = db.createSet({ title: 'A', termLang: 'fr', cards: SAMPLE });
+  db.updateSet(set.id, { termLang: 'zh', defLang: 'ar' });
+  const updated = db.getSet(set.id);
+  expect([updated.termLang, updated.defLang]).toEqual(['zh', 'ar']);
+  // Stored sets are read back with their languages (and unknown codes still fall back).
+  const raw = JSON.parse(storage.getItem(P + 'sets'));
+  raw.push({ ...raw[0], id: 'odd', termLang: 'zh-CN', defLang: 'arabic' });
+  const again = setup({ [P + 'sets']: JSON.stringify(raw) }).db;
+  expect(again.getSet(zh.id).termLang).toBe('zh');
+  expect(again.getSet(ar.id).termLang).toBe('ar');
+  expect([again.getSet('odd').termLang, again.getSet('odd').defLang]).toEqual(['fr', 'de']);
+});
+
 await run('db.test.js');

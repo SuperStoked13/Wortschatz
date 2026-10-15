@@ -6,6 +6,7 @@
 // presses right after a transition are swallowed, so a single press never triggers two steps.
 
 import { hasOpenModal, hasOpenOverlay } from '../ui/components.js';
+import { commandLetter, isComposingKey } from '../lib/shortcuts.js';
 
 const CONTROLS = 'button, a[href], input, textarea, select, [contenteditable="true"]';
 
@@ -17,7 +18,8 @@ export const ENTER_SETTLE_MS = 280;
  * The study command of a keydown, or null:
  * 'dontKnow' (Alt+Enter), 'override' (Ctrl/⌘+Enter), 'exit' (Esc), 'options' (Ctrl/⌘+K),
  * 'speak' (Ctrl/⌘+R), 'star' (Ctrl/⌘+D), 'edit' (Ctrl/⌘+E), 'restart' (Ctrl/⌘+Shift+R).
- * Ctrl+Alt is never a command: it is AltGr on Swiss and German keyboards.
+ * Ctrl+Alt is never a command: it is AltGr on Swiss and German keyboards. On a non-Latin layout
+ * (Arabic) the letter comes from the key's position.
  */
 export function studyCommand(e) {
   if (!e || typeof e.key !== 'string') return null;
@@ -31,7 +33,7 @@ export function studyCommand(e) {
   }
   if (e.key === 'Escape' || e.key === 'Esc') return !mod && !alt && !shift ? 'exit' : null;
   if (!mod || alt) return null;
-  const key = e.key.toLowerCase();
+  const key = commandLetter(e);
   if (shift) return key === 'r' ? 'restart' : null;
   return { k: 'options', r: 'speak', d: 'star', e: 'edit' }[key] || null;
 }
@@ -60,15 +62,30 @@ export function shortcutAria(command, apple = false) {
   return s ? s.aria[apple ? 0 : 1] : '';
 }
 
+// A key that types several letters at once, e.g. «لا» (lam-alef) on the Arabic keyboard. Named
+// keys («Enter», «Process», «Dead») are ASCII words and never match.
+const LETTER_KEY = /^\p{L}[\p{L}\p{M}]*$/u;
+
 /**
- * A key that types a character: one code point, no Ctrl/⌘ — except Ctrl+Alt, which is AltGr
- * on Windows (@ # € …); Alt alone types characters on a Mac (⌥ + key).
+ * A key that types a character: one code point (or a non-Latin letter key with more), no
+ * Ctrl/⌘ — except Ctrl+Alt, which is AltGr on Windows (@ # € …); Alt alone types characters
+ * on a Mac (⌥ + key).
  */
 export function isTypedKey(e) {
-  if (!e || typeof e.key !== 'string' || [...e.key].length !== 1) return false;
+  if (!e || typeof e.key !== 'string') return false;
+  if ([...e.key].length !== 1 && !(/[^\x00-\x7f]/.test(e.key) && LETTER_KEY.test(e.key))) return false;
   if (e.metaKey) return false;
   const altGraph = typeof e.getModifierState === 'function' && e.getModifierState('AltGraph');
   return !e.ctrlKey || !!e.altKey || !!altGraph;
+}
+
+/**
+ * The keydown that hands a key to an input method while nothing is composed yet (keyCode 229,
+ * e.g. the first Pinyin letter): «any key continues» takes it like a typed character, but leaves
+ * it to the input method. Never a held key.
+ */
+export function startsComposition(e) {
+  return !!e && !e.isComposing && e.keyCode === 229 && !e.repeat;
 }
 
 /**
@@ -85,7 +102,8 @@ export function settleEnter(ms = ENTER_SETTLE_MS) {
       window.removeEventListener('keydown', swallow, true);
       return;
     }
-    if (e.key === 'Enter') {
+    // An input method's Enter confirms its composition (Pinyin) and stays with it.
+    if (e.key === 'Enter' && !isComposingKey(e)) {
       e.preventDefault();
       e.stopPropagation();
     }
@@ -136,10 +154,15 @@ export function routeStudyCommand(e, onCommand) {
 export function bindWriteKeys({ ownInput, isLocked, onEnter, onLockedEnter, canContinueOnKey, onContinueKey, onCommand }) {
   function onKeydown(e) {
     if (e.defaultPrevented || hasOpenModal()) return;
-    if (e.isComposing || e.keyCode === 229) return;
-    if (routeStudyCommand(e, onCommand)) return;
     const target = e.target;
     const own = target === ownInput();
+    if (isComposingKey(e)) {
+      // The first key of an input method's composition (Pinyin) in the locked answer field also
+      // continues; it is not prevented, so the composition starts in the next question's field.
+      if (startsComposition(e) && own && canContinueOnKey()) onContinueKey();
+      return;
+    }
+    if (routeStudyCommand(e, onCommand)) return;
     const control = !own && target && target.closest ? target.closest(CONTROLS) : null;
 
     if (e.key === 'Enter') {

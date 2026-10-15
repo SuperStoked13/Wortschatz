@@ -188,8 +188,9 @@ public struct ExamResult: Codable, Sendable, Equatable, Hashable {
 
 /// The exam's logic (see the file header).
 public enum Exam {
-    /// Notes of an answer that count as a small mistake.
-    public static let smallMistakes: [GradeNote] = [.article, .pronoun, .letterCase, .accents, .typo]
+    /// Notes of an answer that count as a small mistake (`.tones`: the accents of pinyin). An
+    /// Arabic letter variant (`.variant`) and an answer in pinyin only (`.pinyin`) are no mistake.
+    public static let smallMistakes: [GradeNote] = [.article, .pronoun, .letterCase, .accents, .tones, .typo]
 
     /// Forms that are no mistake (any capitals are fine outside German, where a noun's small first
     /// letter is noted as a small mistake).

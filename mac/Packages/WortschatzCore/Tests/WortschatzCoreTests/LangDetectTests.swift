@@ -6,7 +6,7 @@ import WortschatzCore
 
 @Suite("LangDetect (langdetect.test.js)")
 struct LangDetectTests {
-    private static let zeros: [Lang: Double] = [.fr: 0, .de: 0, .en: 0, .es: 0, .it: 0]
+    private static let zeros: [Lang: Double] = [.fr: 0, .de: 0, .en: 0, .es: 0, .it: 0, .ar: 0, .zh: 0]
 
     /// `text.split('\n')` (CR stays in the line, like JS).
     private static func lines(_ text: String) -> [String] {
@@ -20,9 +20,9 @@ struct LangDetectTests {
 
     private static func lang(_ text: String?) -> DetectedLanguage { LangDetect.detectLanguage(text).lang }
 
-    @Test("SUPPORTED lists the five languages")
+    @Test("SUPPORTED lists the five Latin languages, then Arabic and Chinese")
     func supported() {
-        #expect(LangDetect.SUPPORTED == [.fr, .de, .en, .es, .it])
+        #expect(LangDetect.SUPPORTED == [.fr, .de, .en, .es, .it, .ar, .zh])
     }
 
     @Test("scoreLanguages returns non-negative scores for every language",
@@ -41,6 +41,9 @@ struct LangDetectTests {
         }
         #expect(LangDetect.scoreLanguages("") == Self.zeros)
         #expect(LangDetect.scoreLanguages("12 / 40") == Self.zeros)
+        // Arabic punctuation and digits, the tatweel and vowel marks alone are no letters.
+        #expect(LangDetect.scoreLanguages("١٢ ، ؟ ـ") == Self.zeros)
+        #expect(LangDetect.scoreLanguages("，。！") == Self.zeros)
     }
 
     @Test("articles push their language up")

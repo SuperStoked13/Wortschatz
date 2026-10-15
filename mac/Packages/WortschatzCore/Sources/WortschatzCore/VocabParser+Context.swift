@@ -2,10 +2,16 @@ import Foundation
 
 // Options, the per-parse context (score cache, hint-aware prior, skipped lines, warnings) and the
 // language helpers of parser.js. Languages are indices into `LangDetect.SUPPORTED`
-// (fr, de, en, es, it); nil stands for JS `null` and for "unknown".
+// (fr, de, en, es, it, ar, zh); nil stands for JS `null` and for "unknown".
 
 extension VocabParser {
-    static let fr = 0, de = 1, en = 2, es = 3, it = 4
+    static let fr = 0, de = 1, en = 2, es = 3, it = 4, ar = 5, zh = 6
+    /// Number of languages (`SUPPORTED.length`).
+    static let languageCount = LangDetect.languageCount
+
+    /// Whether language `l` may take part in the votes for texts with these scores: Arabic and
+    /// Chinese (`SCRIPT_LANGS`) only for texts with evidence of their script.
+    static func votes(_ l: Int, _ s: [Double]) -> Bool { l < LangDetect.latinCount || s[l] > 0 }
 
     // Alignment costs are negative log probabilities (nats).
     static let clipP = 0.04
@@ -85,7 +91,7 @@ extension VocabParser {
 
         init(_ o: Options) {
             self.o = o
-            var p = [0.2, 0.25, 0.1, 0.05, 0]
+            var p = [0.2, 0.25, 0.1, 0.05, 0, 0, 0]
             if let t = o.termHint { p[t] += 0.4 }
             if let d = o.defHint { p[d] += 0.3 }
             prior = p
@@ -112,25 +118,28 @@ extension VocabParser {
         }
 
         /// Soft language votes over many texts (with the hint-aware prior), sorted by share
-        /// (descending, ties in `SUPPORTED` order).
+        /// (descending, ties in `SUPPORTED` order). Arabic and Chinese vote only for texts with
+        /// evidence of their script.
         func languageShares(_ texts: [PText]) -> [(lang: Int, share: Double)] {
-            var votes = [Double](repeating: 0, count: 5)
+            let count = VocabParser.languageCount
+            var votes = [Double](repeating: 0, count: count)
             var n = 0
-            var e = [Double](repeating: 0, count: 5)
+            var e = [Double](repeating: 0, count: count)
             for t in texts {
                 let s = score(t)
                 guard LangDetect.hasEvidence(s) else { continue }
+                let langs = (0..<count).filter { VocabParser.votes($0, s) }
                 var maximum = -Double.infinity
-                for l in 0..<5 { maximum = max(maximum, s[l] + prior[l]) }
+                for l in langs { maximum = max(maximum, s[l] + prior[l]) }
                 var sum = 0.0
-                for l in 0..<5 {
+                for l in langs {
                     e[l] = exp(s[l] + prior[l] - maximum)
                     sum += e[l]
                 }
-                for l in 0..<5 { votes[l] += e[l] / sum }
+                for l in langs { votes[l] += e[l] / sum }
                 n += 1
             }
-            let shares = (0..<5).map { (lang: $0, share: n > 0 ? votes[$0] / Double(n) : 0) }
+            let shares = (0..<count).map { (lang: $0, share: n > 0 ? votes[$0] / Double(n) : 0) }
             return VocabParser.stableSorted(shares) { $0.share > $1.share }
         }
 
@@ -143,16 +152,17 @@ extension VocabParser {
         /// `detectColumn(lines)` of langdetect.js on the cached scores (the same computation as
         /// `LangDetect.detectColumn`). `lang` is nil for "unknown".
         func detectColumn(_ lines: [PText]) -> (lang: Int?, confidence: Double) {
-            var votes = [Double](repeating: 0, count: 5)
-            var evidence = [Double](repeating: 0, count: 5)
+            let langs = VocabParser.languageCount
+            var votes = [Double](repeating: 0, count: langs)
+            var evidence = [Double](repeating: 0, count: langs)
             var n = 0
             for line in lines {
                 let scores = score(line)
                 guard LangDetect.hasEvidence(scores) else { continue }
                 let p = LangDetect.softmax(scores)
                 var best = 0.0
-                for l in 0..<5 { best = max(best, scores[l]) }
-                for l in 0..<5 {
+                for l in 0..<langs { best = max(best, scores[l]) }
+                for l in 0..<langs {
                     votes[l] += p[l]
                     evidence[l] += max(-8, scores[l] - best)
                 }

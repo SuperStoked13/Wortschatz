@@ -8,7 +8,7 @@
 // answer so the feedback shows what was meant. Pure and DOM-free (runs under jsc).
 
 import { grade, splitAlternatives } from './grading.js';
-import { normalizeBasic } from './text.js';
+import { normalizeBasic, foldScripts } from './text.js';
 
 function toStr(value) {
   if (value == null) return '';
@@ -31,15 +31,16 @@ export function answerSide(card, ask) {
   return field(card, ask === 'term' ? 'term' : 'definition');
 }
 
-// Comparison key: case, ß/ss, ligatures, hyphens and punctuation do not matter.
+// Comparison key: case, ß/ss, ligatures, hyphens and punctuation do not matter, nor
+// Arabic vowel marks or full-width punctuation (foldScripts).
 function keyOf(text) {
-  return normalizeBasic(text)
+  return foldScripts(normalizeBasic(text))
     .toLowerCase()
     .replace(/ß/g, 'ss')
     .replace(/œ/g, 'oe')
     .replace(/æ/g, 'ae')
     .replace(/-/g, ' ')
-    .replace(/[.,!?;:"«»‹›¿¡…~*„“”‚()[\]{}]/g, '')
+    .replace(/[.,!?;:"«»‹›¿¡…~*„“”‚()[\]{}「」『』《》〈〉]/g, '')
     .replace(/\s+/g, ' ')
     .trim();
 }

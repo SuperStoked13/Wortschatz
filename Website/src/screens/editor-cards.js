@@ -5,19 +5,24 @@
 // duplicate detection is debounced and numbering is refreshed only when rows
 // are added or removed. This keeps lists with several hundred cards fluid.
 
-import { h, prefersReducedMotion } from '../lib/dom.js';
+import { h, prefersReducedMotion, setTextAttrs } from '../lib/dom.js';
 import { iconButton, starButton, toast } from '../ui/components.js';
 import { icon } from '../ui/icons.js';
-import { langName } from '../lib/labels.js';
-import { flagTooltip, hasMarker, termKey, langTag } from './editor-util.js';
+import { langName, fieldAttrs } from '../lib/labels.js';
+import { flagTooltip, hasMarker, termKey } from './editor-util.js';
 
 const DUP_DELAY = 180;
 const MIN_ROWS = 2;
+// Languages the spell checker would only underline (no dictionary, or Han characters).
+const NO_SPELLCHECK = new Set(['ar', 'zh']);
 
-function setLang(el, code) {
-  const tag = langTag(code);
-  if (tag) el.setAttribute('lang', tag);
-  else el.removeAttribute('lang');
+// The field's language goes on its auto-grow wrap too, so the hidden copy that sizes it
+// (editor.css .ed-grow::after) uses the same font; the direction follows what is typed.
+function setLang(field, code) {
+  const attrs = fieldAttrs(code);
+  setTextAttrs(field.wrap, { lang: attrs.lang });
+  setTextAttrs(field.ta, attrs);
+  field.ta.spellcheck = !NO_SPELLCHECK.has(code);
 }
 
 function focusEnd(ta) {
@@ -136,8 +141,8 @@ export function createCardList({ cards = [], termLang = 'fr', defLang = 'de', on
   }
 
   function applyLangs(row) {
-    setLang(row.term.ta, langs.term);
-    setLang(row.def.ta, langs.def);
+    setLang(row.term, langs.term);
+    setLang(row.def, langs.def);
     row.term.label.textContent = langName(langs.term);
     row.def.label.textContent = langName(langs.def);
   }

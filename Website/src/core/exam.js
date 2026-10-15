@@ -86,8 +86,10 @@ export const minorCaption = (tolerance) => toleranceCopy(tolerance).caption;
 export const SMALL_MISTAKES_TEXT =
   'Kleine Fehler sind ein Tippfehler, fehlende Akzente, die Grossschreibung deutscher Nomen und ein fehlender Artikel oder ein fehlendes Pronomen. Ein falscher Artikel ist ein Fehler.';
 
-// Notes of an answer that count as a small mistake ('case': a German noun's small first letter).
-export const SMALL_MISTAKES = Object.freeze(['article', 'pronoun', 'case', 'accents', 'typo']);
+// Notes of an answer that count as a small mistake ('case': a German noun's small first letter,
+// 'tones': the accents of pinyin). An Arabic letter variant ('variant') and an answer in pinyin
+// only ('pinyin') are no mistake.
+export const SMALL_MISTAKES = Object.freeze(['article', 'pronoun', 'case', 'accents', 'tones', 'typo']);
 
 // Forms that are no mistake at all (any capitals are fine outside German, where a noun's small
 // first letter is noted as a small mistake).
@@ -464,7 +466,7 @@ export function closestDiff(given, expected, lang) {
   let best = null;
   let bestCost = Infinity;
   for (const target of candidates) {
-    const parts = diffAnswer(given, target);
+    const parts = diffAnswer(given, target, lang);
     const cost = parts.reduce((n, p) => n + (p.type === 'same' ? 0 : p.text.length), 0);
     if (cost < bestCost) {
       best = parts;

@@ -250,6 +250,11 @@
   -webkit-line-clamp: 7;
 }
 
+/* Arabic vowel marks on the first and last line would be clipped by overflow: hidden. */
+.fc-face__text:lang(ar) {
+  line-height: 1.6;
+}
+
 .fc-face__text--empty {
   color: var(--text-3);
   font-family: var(--font-ui);

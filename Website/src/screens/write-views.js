@@ -4,7 +4,7 @@
 // tiles, confetti, key hints and the answer-streak flame are shared with Learn mode.
 
 import { h, prefersReducedMotion, replayClass } from '../lib/dom.js';
-import { LANGS, plural } from '../lib/labels.js';
+import { plural, textAttrs } from '../lib/labels.js';
 import { formatDuration } from '../lib/time.js';
 import { compactDuration } from './write-model.js';
 import { shortcutText, shortcutAria } from './write-keys.js';
@@ -13,13 +13,12 @@ import { isApplePlatform } from './editor-util.js';
 import { button, iconButton, progressBar, masteryBar, ring, chip, kbd, emptyState } from '../ui/components.js';
 import { icon } from '../ui/icons.js';
 
-const bcp47 = (lang) => (LANGS[lang] && LANGS[lang].bcp47) || null;
 const pct = (v) => `${Math.round(Math.max(0, Math.min(1, v || 0)) * 100)} %`;
 
 /* ----------------------------------------------------------------- sidebar */
 
 export function createSidebar({ setId, title, onOptions, onRestart }) {
-  const titleEl = h('span', { class: 'wr-side__title' }, title);
+  const titleEl = h('span', { class: 'wr-side__title', dir: 'auto' }, title);
   const back = h(
     'a',
     { class: 'wr-side__back', href: `#/set/${setId}`, 'aria-label': `Zurück zum Lernset ${title}` },
@@ -213,8 +212,8 @@ export function termList(rows, { markers = true } = {}) {
               icon(row.correct ? 'check' : 'x', { size: 14, strokeWidth: 2.5 }),
             )
           : null,
-        h('span', { class: 'wr-item__term', lang: bcp47(row.termLang) }, row.term),
-        h('span', { class: 'wr-item__def', lang: bcp47(row.defLang) }, row.definition),
+        h('span', { class: 'wr-item__term', ...textAttrs(row.termLang) }, row.term),
+        h('span', { class: 'wr-item__def', ...textAttrs(row.defLang) }, row.definition),
         row.trailing ? h('span', { class: 'wr-item__trailing' }, row.trailing) : null,
       ),
     ),

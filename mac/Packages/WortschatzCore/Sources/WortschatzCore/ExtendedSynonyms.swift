@@ -29,9 +29,10 @@ public struct SynonymQuery: Codable, Sendable, Equatable, Hashable {
 
 /// The pure part of the synonym check for answers that are not in the set (see the file header).
 public enum ExtendedSynonyms {
-    /// English language names for the model's prompts.
+    /// English language names for the model's prompts. Not Arabic: the on-device model does not
+    /// support it (measured 2026-10-15); the app also checks `supportsLocale` for Chinese.
     public static let modelLanguageNames: [Lang: String] = [
-        .de: "German", .fr: "French", .en: "English", .es: "Spanish", .it: "Italian",
+        .de: "German", .fr: "French", .en: "English", .es: "Spanish", .it: "Italian", .zh: "Chinese",
     ]
 
     /// Longer answers are not looked up: the model is asked for word translations.
@@ -113,9 +114,12 @@ public enum ExtendedSynonyms {
     }
 
     /// Comparison key: lower case, no accents, "ss" for "ß", no punctuation or notes in brackets,
-    /// no leading article or reflexive pronoun of `lang` ("la Voiture" → "voiture").
+    /// no leading article or reflexive pronoun of `lang` ("la Voiture" → "voiture", "الكتاب" →
+    /// "كتاب"). The script folds come first: Arabic vowel marks and tatweel (which `.folding`
+    /// keeps), presentation forms, full-width brackets and punctuation, spaces between Han
+    /// characters.
     public static func looseKey(_ text: String, lang: Lang?) -> String {
-        var t = stripBracketed(TextNormalizer.normalizeBasic(text))
+        var t = stripBracketed(TextNormalizer.foldScripts(TextNormalizer.normalizeBasic(text)))
             .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: Locale(identifier: "en_US_POSIX"))
             .replacingOccurrences(of: "ß", with: "ss")
             .replacingOccurrences(of: "œ", with: "oe")
@@ -138,13 +142,14 @@ public enum ExtendedSynonyms {
     }
 
     /// Leading articles and reflexive pronouns of `lang` (all languages for nil) as they start a
-    /// lower-case text: "la ", "l'", "se ", "to " …, longest first.
+    /// lower-case text: "la ", "l'", "se ", "to ", "ال" (glued) …, longest first.
     static func articlePrefixes(_ lang: Lang?) -> [String] {
         let langs = lang.map { [$0] } ?? Array(Grading.ARTICLES.keys)
         var prefixes = Set<String>()
         for l in langs {
             for article in Grading.ARTICLES[l] ?? [] {
-                prefixes.insert(article.hasSuffix("'") ? article : article + " ")
+                let glued = article.hasSuffix("'") || Grading.GLUED_ARTICLES.contains(article)
+                prefixes.insert(glued ? article : article + " ")
             }
             for pronoun in Grading.REFLEXIVES[l] ?? [] where pronoun.hasSuffix(" ") || pronoun.hasSuffix("'") {
                 prefixes.insert(pronoun)

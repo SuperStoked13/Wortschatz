@@ -12,6 +12,11 @@
 //   - 4-column table           → left pairs first, then right pairs
 //   - stacked pairs per column → each page column top to bottom (term line, definition line, gap, …)
 //   - unaligned text columns   → each page column top to bottom
+//
+// Right-to-left text (Arabic, Hebrew): a cell whose letters are mostly RTL is
+// read from right to left and belongs to the column of its right edge. Items
+// with `dir: 'rtl'` (pdf.js) hold their text in logical order, starting at the
+// right edge. Han characters (Chinese) are joined without spaces.
 
 const SPACE_FACTOR = 0.25; // gap (× char width) above which two fragments are separate words
 const PARAGRAPH_FACTOR = 1.8; // vertical gap (× line step) that starts a new paragraph
@@ -25,6 +30,11 @@ const STARTS_LOWER = /^[(\[]?[a-zà-ÿœæ]/;
 // A cell ending in an article, preposition or object placeholder continues on the next line.
 const OPEN_END = /(?:^|\s)(?:le|la|les|l'|un|une|des|du|de|d'|à|au|aux|en|et|ou|avec|pour|sur|dans|par|chez|der|die|das|den|dem|ein|eine|einen|einem|einer|und|oder|mit|von|für|auf|zu|zum|zur|im|am|in|über|bei|jdm|jdn|jds|etw|sich|the|a|to|of|and|or|with|for|from|into)$/iu;
 const ENTRY_START = /^(?:(?:le|la|les|un|une|des|du|der|die|das|den|dem|ein|eine|the|a|an|to|el|los|las|il|lo|gli|uno|una)\s|l')/iu;
+// Right-to-left scripts (Hebrew, Arabic, Syriac, Thaana, NKo, ... and their presentation forms).
+const RTL_CHAR = /[\u0590-\u08FF\uFB1D-\uFDFF\uFE70-\uFEFE]/u;
+// Han ranges as in core/langdetect.js.
+const HAN_END = /[\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF\u{20000}-\u{2FA1F}]$/u;
+const HAN_START = /^[\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF\u{20000}-\u{2FA1F}]/u;
 
 // ---------------------------------------------------------------------------
 // Small numeric helpers
@@ -52,6 +62,26 @@ function clamp(v, lo, hi) {
 }
 
 // ---------------------------------------------------------------------------
+// Scripts
+
+// More than half of the letters are right-to-left.
+function isRtlText(s) {
+  let letters = 0;
+  let rtl = 0;
+  for (const ch of s) {
+    if (!/\p{L}/u.test(ch)) continue;
+    letters++;
+    if (RTL_CHAR.test(ch)) rtl++;
+  }
+  return rtl * 2 > letters;
+}
+
+// Joins two words with a space, except between two Han characters.
+function joinWords(a, b) {
+  return HAN_END.test(a) && HAN_START.test(b) ? a + b : `${a} ${b}`;
+}
+
+// ---------------------------------------------------------------------------
 // Items
 
 function readItems(items) {
@@ -66,7 +96,7 @@ function readItems(items) {
     if (x === null || y === null) continue;
     const w = toNumber(it.w);
     const h = toNumber(it.h);
-    raw.push({ str, x, y, w: w > 0 ? w : 0, h: h > 0 ? h : 0 });
+    raw.push({ str, x, y, w: w > 0 ? w : 0, h: h > 0 ? h : 0, rtl: it.dir === 'rtl' });
   }
   return raw;
 }
@@ -82,6 +112,7 @@ function measure(raw) {
 // Fill missing sizes, then split every item into visible pieces: leading and
 // trailing whitespace is trimmed (remembered as word boundaries) and runs of
 // tabs / 3+ spaces inside one item become separate pieces (monospace columns).
+// A right-to-left item starts at its right edge.
 function toPieces(raw, metrics) {
   const pieces = [];
   for (const it of raw) {
@@ -95,7 +126,7 @@ function toPieces(raw, metrics) {
       const end = start + m[0].length;
       pieces.push({
         str: m[0],
-        x: it.x + start * cw,
+        x: it.rtl ? it.x + (it.str.length - end) * cw : it.x + start * cw,
         y: it.y,
         w: m[0].length * cw,
         h,
@@ -149,21 +180,39 @@ function buildCells(row, metrics, gapFactor) {
   const cells = [];
   let cell = null;
   for (const it of row.items) {
-    if (cell) {
-      const gap = it.x - cell.x1;
-      if (gap <= tabGap) {
-        const sep = cell.trail || it.lead || gap > spaceGap ? ' ' : '';
-        cell.text += sep + it.str;
-        cell.x1 = Math.max(cell.x1, it.x + it.w);
-        cell.trail = it.trail;
-        continue;
-      }
-      cells.push(cell);
+    if (cell && it.x - cell.x1 <= tabGap) {
+      cell.items.push(it);
+      cell.x1 = Math.max(cell.x1, it.x + it.w);
+      continue;
     }
-    cell = { text: it.str, x0: it.x, x1: it.x + it.w, trail: it.trail };
+    cell = { items: [it], x0: it.x, x1: it.x + it.w };
+    cells.push(cell);
   }
-  if (cell) cells.push(cell);
-  return cells.map((c) => ({ text: c.text.replace(/\s+/g, ' ').trim(), x0: c.x0, x1: c.x1 })).filter((c) => c.text);
+  return cells
+    .map((c) => {
+      const rtl = isRtlText(c.items.map((it) => it.str).join(''));
+      return { text: cellText(c.items, rtl, spaceGap).replace(/\s+/g, ' ').trim(), x0: c.x0, x1: c.x1, rtl };
+    })
+    .filter((c) => c.text);
+}
+
+// The pieces of one cell in reading order (right to left for RTL text). A gap
+// wider than a space or a word boundary inside an item becomes a space,
+// except between two Han characters.
+function cellText(items, rtl, spaceGap) {
+  const order = rtl ? items.slice().reverse() : items;
+  let text = order[0].str;
+  let edge = rtl ? order[0].x : order[0].x + order[0].w; // where the text read so far ends
+  let trail = order[0].trail;
+  for (let i = 1; i < order.length; i++) {
+    const it = order[i];
+    const gap = rtl ? edge - (it.x + it.w) : it.x - edge;
+    const space = (trail || it.lead || gap > spaceGap) && !(HAN_END.test(text) && HAN_START.test(it.str));
+    text += (space ? ' ' : '') + it.str;
+    edge = rtl ? Math.min(edge, it.x) : Math.max(edge, it.x + it.w);
+    trail = it.trail;
+  }
+  return text;
 }
 
 // Typical baseline-to-baseline distance of consecutive lines. The lower
@@ -207,7 +256,8 @@ function findColumnBounds(rows, metrics) {
   for (const c of cells) {
     const b0 = Math.floor((c.x0 - xMin) / binW);
     const b1 = Math.max(b0, Math.ceil((c.x1 - xMin) / binW) - 1);
-    starts[b0]++;
+    // Right-to-left text starts at the right edge (right-aligned columns have ragged left edges).
+    starts[c.rtl ? b1 : b0]++;
     for (let b = b0; b <= b1 && b < nb; b++) cover[b]++;
   }
   const textRows = rows.filter((r) => r.cells.length).length;
@@ -244,6 +294,11 @@ function columnIndex(bounds, x) {
   return i;
 }
 
+// A cell belongs to the column of the edge its text starts at.
+function anchorX(cell) {
+  return cell.rtl ? cell.x1 : cell.x0;
+}
+
 // Drops columns that only a handful of cells start in (stray page numbers,
 // one indented line, …) by merging them into a neighbour.
 function pruneBounds(bounds, cells) {
@@ -251,7 +306,7 @@ function pruneBounds(bounds, cells) {
   for (;;) {
     if (!bs.length) return null;
     const counts = new Array(bs.length + 1).fill(0);
-    for (const c of cells) counts[columnIndex(bs, c.x0)]++;
+    for (const c of cells) counts[columnIndex(bs, anchorX(c))]++;
     const max = Math.max(...counts);
     const minStarts = Math.max(2, Math.ceil(max * 0.2));
     let weakest = -1;
@@ -269,8 +324,9 @@ function assignColumns(rows, bounds) {
   const k = bounds.length + 1;
   for (const row of rows) {
     const parts = Array.from({ length: k }, () => []);
-    for (const c of row.cells) parts[columnIndex(bounds, c.x0)].push(c.text);
-    row.cols = parts.map((p) => p.join(' '));
+    for (const c of row.cells) parts[columnIndex(bounds, anchorX(c))].push(c.text);
+    // Several cells in one column are read like the pieces of a cell.
+    row.cols = parts.map((p) => (p.length ? (isRtlText(p.join('')) ? p.slice().reverse() : p).reduce(joinWords) : ''));
   }
   return k;
 }
@@ -385,7 +441,7 @@ function emitFlow(rows, cols, ctx) {
 
 function joinWrapped(a, b) {
   if (!a) return b;
-  return /-$/.test(a) ? a + b : `${a} ${b}`;
+  return /-$/.test(a) ? a + b : joinWords(a, b);
 }
 
 function endsOpen(s) {

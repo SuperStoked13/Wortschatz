@@ -1,4 +1,5 @@
 import SwiftUI
+import WortschatzCore
 
 /// Visual state of a multiple-choice tile.
 enum ChoiceTileState: Sendable, Equatable {
@@ -36,15 +37,18 @@ struct ChoiceTile: View {
     var state: ChoiceTileState = .idle
     /// The letters of `text` the learner typed (`Character` offsets), drawn in the accent colour.
     var emphasis: Range<Int>? = nil
+    /// The answer's language: tags the text (Chinese glyphs, VoiceOver's voice) and lets Arabic
+    /// run right to left.
+    var lang: Lang = .other
     let action: () -> Void
 
     var body: some View {
         Button(action: action) {
             Text(label)
         }
-        .buttonStyle(ChoiceTileStyle(number: number, state: state))
+        .buttonStyle(ChoiceTileStyle(number: number, state: state, lang: lang))
         .focusEffectDisabled()
-        .accessibilityLabel(text)
+        .accessibilityLabel(Text(LearnText.spoken(text, lang: lang)))
         .accessibilityValue(accessibilityState)
         .accessibilityIdentifier("choice-\(number)")
         .shortcutAccessibilityHint(state.isAnswered ? nil : .digit(number))
@@ -53,7 +57,7 @@ struct ChoiceTile: View {
 
     /// `text` with the typed letters underlined in the accent colour.
     private var label: AttributedString {
-        var out = AttributedString(text)
+        var out = LearnText.spoken(text, lang: lang)
         guard let emphasis, !emphasis.isEmpty, emphasis.lowerBound >= 0, emphasis.upperBound <= text.count else {
             return out
         }
@@ -77,9 +81,10 @@ struct ChoiceTile: View {
 private struct ChoiceTileStyle: ButtonStyle {
     let number: Int
     let state: ChoiceTileState
+    let lang: Lang
 
     func makeBody(configuration: Configuration) -> some View {
-        ChoiceTileBody(configuration: configuration, number: number, state: state)
+        ChoiceTileBody(configuration: configuration, number: number, state: state, lang: lang)
     }
 }
 
@@ -87,6 +92,7 @@ private struct ChoiceTileBody: View {
     let configuration: ButtonStyleConfiguration
     let number: Int
     let state: ChoiceTileState
+    let lang: Lang
 
     @Environment(\.isFocused) private var isFocused
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -109,7 +115,8 @@ private struct ChoiceTileBody: View {
                 .multilineTextAlignment(.leading)
                 .lineLimit(3)
                 .minimumScaleFactor(0.8)
-                .frame(maxWidth: .infinity, alignment: .leading)
+                // Arabic starts at the tile's right edge; the badge stays on the left.
+                .cardTextLine(lang)
         }
         .opacity(state == .dimmed ? 0.4 : state == .filtered ? 0.5 : 1)
         .padding(.horizontal, Spacing.l)
@@ -191,12 +198,14 @@ private struct ChoiceTileBody: View {
 /// equal height.
 ///
 /// ```swift
-/// ChoiceGrid(choices: question.choices.map(\.text), state: { i in tileState(i) }) { i in
+/// ChoiceGrid(choices: question.choices.map(\.text), lang: question.answerLang, state: { i in tileState(i) }) { i in
 ///     send(.choose(i))
 /// }
 /// ```
 struct ChoiceGrid: View {
     let choices: [String]
+    /// The answers' language (`ChoiceTile.lang`).
+    var lang: Lang = .other
     /// State of the tile at a 0-based index.
     var state: (Int) -> ChoiceTileState = { _ in .idle }
     /// The typed letters of the tile at a 0-based index (`ChoiceTile.emphasis`).
@@ -216,7 +225,8 @@ struct ChoiceGrid: View {
                                 number: index + 1,
                                 text: choices[index],
                                 state: state(index),
-                                emphasis: emphasis(index)
+                                emphasis: emphasis(index),
+                                lang: lang
                             ) {
                                 onChoose(index)
                             }

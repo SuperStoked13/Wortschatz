@@ -73,11 +73,42 @@ extension VocabParser {
         return false
     }
 
+    /// `[\u0600-\u06FF…\u{20000}-\u{2FA1F}]` (`SCRIPT_TEXT_RE`): Arabic or Han text.
+    static func isScriptChar(_ c: Unicode.Scalar) -> Bool {
+        TextNormalizer.isArabicScalar(c) || TextNormalizer.isHanScalar(c)
+    }
+
+    /// "你好（nǐ hǎo）- Hallo": a closing bracket glued to a dash that is spaced on its other side,
+    /// on an Arabic or Chinese line without another dash delimiter or a tab, gets a space before
+    /// the dash (`raw.replace(/([)）])([-–—])(?=[ \u00A0\u3000])/gu, '$1 $2')`).
+    static func spaceBracketDash(_ raw: PText) -> PText {
+        guard raw.contains(where: isScriptChar), !raw.contains("\t"), !hasSpacedDash(raw) else { return raw }
+        let u = raw.u
+        var out: [Unicode.Scalar] = []
+        out.reserveCapacity(u.count + 2)
+        var i = 0
+        while i < u.count {
+            if i + 2 < u.count, u[i] == ")" || u[i] == "）", u[i + 1] == "-" || u[i + 1] == "–" || u[i + 1] == "—",
+               u[i + 2] == " " || u[i + 2] == "\u{A0}" || u[i + 2] == "\u{3000}" {
+                out.append(u[i])
+                out.append(" ")
+                out.append(u[i + 1])
+                i += 2
+                continue
+            }
+            out.append(u[i])
+            i += 1
+        }
+        return out.count == u.count ? raw : PText(out)
+    }
+
     /// Glued dashes are the delimiter of a dash list ("le chat–die Katze" on most lines, or mixed
     /// with spaced dashes). They are then spaced so that normalisation does not turn them into
-    /// word-internal hyphens; in other lists they join compounds and become hyphens.
-    /// `dashList`: true/false when the delimiter is known, nil to decide here.
-    static func spaceGluedDashes(_ raws: [PText], dashList: Bool? = nil) -> [PText] {
+    /// word-internal hyphens; in other lists they join compounds and become hyphens. Unless the
+    /// list is known not to be a dash list, a bracket glued to a dash is spaced first
+    /// (`spaceBracketDash`). `dashList`: true/false when the delimiter is known, nil to decide here.
+    static func spaceGluedDashes(_ input: [PText], dashList: Bool? = nil) -> [PText] {
+        let raws = dashList == false ? input : input.map(spaceBracketDash)
         let rewrite: Bool
         if let dashList {
             rewrite = dashList
@@ -113,14 +144,14 @@ extension VocabParser {
         } else {
             source = s.u
         }
-        // Unify apostrophes, dashes and odd spaces; drop zero-width characters; collapse
-        // /[ \f\v\r\n]+/ to one space.
+        // Unify apostrophes, dashes and odd spaces; drop zero-width characters and bidi controls;
+        // collapse /[ \f\v\r\n]+/ to one space.
         var collapsed: [Unicode.Scalar] = []
         collapsed.reserveCapacity(source.count)
         var inRun = false
         for u in source {
             let v = u.value
-            if TextNormalizer.isZeroWidth(v) { continue }
+            if TextNormalizer.isZeroWidth(v) || TextNormalizer.isBidiControl(v) { continue }
             let c: Unicode.Scalar = TextNormalizer.isApostrophe(v) ? "'"
                 : TextNormalizer.isDash(v) ? "-" : TextNormalizer.isOddSpace(v) ? " " : u
             switch c.value {
@@ -280,7 +311,7 @@ extension VocabParser {
         return out
     }
 
-    private static let codes: Set<PText> = ["FR", "DE", "EN", "ES", "IT"]
+    private static let codes: Set<PText> = ["FR", "DE", "EN", "ES", "IT", "AR", "ZH"]
 
     private static let langNames: [PText: Int] = {
         var out: [PText: Int] = [:]
@@ -290,6 +321,8 @@ extension VocabParser {
             (en, "englisch anglais english inglés ingles inglese"),
             (es, "spanisch espagnol spanish español espanol spagnolo"),
             (it, "italienisch italien italian italiano"),
+            (ar, "arabisch arabe arabic árabe arabo عربي العربية"),
+            (zh, "chinesisch chinois chinese chino cinese mandarin 中文 汉语 漢語 普通话 普通話"),
         ]
         for (concept, names) in table {
             for name in names.split(separator: " ") { out[PText(String(name))] = concept }
@@ -306,6 +339,7 @@ extension VocabParser {
             ("uebersetzung", "trans"), ("traduction", "trans"), ("translation", "trans"), ("traducción", "trans"),
             ("traduzione", "trans"), ("bedeutung", "meaning"), ("meaning", "meaning"), ("signification", "meaning"),
             ("frage", "q"), ("question", "q"), ("antwort", "a"), ("answer", "a"), ("réponse", "a"),
+            ("pinyin", "pinyin"),
         ]
         var out: [PText: String] = [:]
         for (k, v) in pairs { out[PText(k)] = v }

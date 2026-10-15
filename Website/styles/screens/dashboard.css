@@ -681,6 +681,11 @@
   color: inherit;
 }
 
+/* Padding inside an Arabic word would break its joined letters apart. */
+.dash-mark:lang(ar) {
+  padding: 0;
+}
+
 .dash-card__progress {
   margin-top: var(--space-5);
   margin-bottom: var(--space-4);

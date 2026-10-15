@@ -6,7 +6,7 @@
 // swipes, keys and the views around the card: flashcards-swipe/-keys/-views.js.
 
 import { h, prefersReducedMotion } from '../lib/dom.js';
-import { LANGS } from '../lib/labels.js';
+import { bcp47, textAttrs } from '../lib/labels.js';
 import { getPref, setPref, PREF } from '../lib/prefs.js';
 import { playSound } from '../lib/sounds.js';
 import { speak, stopSpeaking } from '../lib/speech.js';
@@ -30,7 +30,6 @@ const SUMMARY_LEAVE_MS = 120;
 // Room kept below the action bar when the card's height is fitted to the window.
 const BOTTOM_ROOM = 16;
 
-const bcp47 = (lang) => (LANGS[lang] && LANGS[lang].bcp47) || null;
 const hasText = (text) => typeof text === 'string' && text.trim() !== '';
 
 function entryState() {
@@ -141,7 +140,7 @@ export function render(outlet, ctx) {
     live.textContent = '';
     announceTimer = setTimeout(() => {
       if (disposed) return;
-      live.replaceChildren(...parts.filter(Boolean).map((p) => (typeof p === 'string' ? p : h('span', { lang: bcp47(p.lang) }, p.text))));
+      live.replaceChildren(...parts.filter(Boolean).map((p) => (typeof p === 'string' ? p : h('span', textAttrs(p.lang), p.text))));
     }, 60);
   }
 

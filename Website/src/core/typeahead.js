@@ -6,9 +6,13 @@
 // one option may match. Case, accents and the kind of apostrophe do not matter; an option can
 // also be started without its article ("voi" → la voiture) or at one of its alternatives
 // ("laide" in "laid, laide"). Arrow keys move a highlight over the 2-column grid instead.
+// Arabic: vowel marks, tatweel, hamza forms, ة/ه and ى/ي do not matter and «ال» is a glued
+// article («كت» → الكتاب). Chinese: spaces do not matter and the pinyin of «你好 (nǐ hǎo)» or
+// «你好 nǐ hǎo» starts it too («ni»).
 // DOM-free: the Learn screen feeds keys into typingKey() and draws the result.
 
-import { ARTICLES, REFLEXIVES } from './grading.js';
+import { ARTICLES, REFLEXIVES, GLUED_ARTICLES } from './grading.js';
+import { foldScripts, hasHan } from './text.js';
 
 // The most characters kept while typing on a multiple-choice question.
 export const TYPE_AHEAD_MAX = 80;
@@ -24,6 +28,8 @@ const NO_MATCH = Object.freeze({ selected: null, matching: Object.freeze([]), ra
 const APOSTROPHES = new Set(['’', '‘', '`', '´', 'ʼ', '′']);
 const BREAKS = new Set([',', ';', '/']);
 const COMPLETE_AT = new Set([',', ';', '/', '(']);
+const OPENERS = new Set(['(', '[']);
+const LATIN_RE = /^[a-z]$/;
 // A "character" as the Mac counts them (Swift Character): a base code point and the combining
 // marks after it.
 const CHAR_RE = /\P{M}\p{M}*|\p{M}+/gu;
@@ -31,20 +37,31 @@ const WHITESPACE_RE = /^[\s\u0085]+$/u;
 const ALNUM_RE = /^[\p{L}\p{N}]$/u;
 
 const isWhitespace = (ch) => WHITESPACE_RE.test(ch);
+const isHan = (ch) => typeof ch === 'string' && ch !== '' && hasHan(ch);
 const characters = (text) => String(text == null ? '' : text).match(CHAR_RE) || [];
 
 // One character folded for comparison: lower case, no accents, one kind of apostrophe. The
-// Mac's case folding turns ß into ss.
+// Mac's case folding turns ß into ss. Arabic: the script folds (vowel marks and tatweel go,
+// presentation forms, ، ؛ and full-width punctuation become plain), hamza goes with the
+// accents (أ → ا), ٱ → ا, ة → ه, ى → ي.
 function foldChar(ch) {
   if (APOSTROPHES.has(ch)) return "'";
-  return ch.toLowerCase().normalize('NFD').replace(/\p{M}/gu, '').replace(/ß/g, 'ss');
+  return foldScripts(ch)
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/\p{M}/gu, '')
+    .replace(/ß/g, 'ss')
+    .replace(/ٱ/g, 'ا')
+    .replace(/ة/g, 'ه')
+    .replace(/ى/g, 'ي');
 }
 
 // A text folded for type-ahead comparison (TypeAheadText): lower case, no accents, one kind of
 // apostrophe, single spaces, no leading space, a trailing space kept ("la " means the article
-// is done). origin/originEnd map every folded character to the UTF-16 range of the original
-// character it came from, for underlining the typed part.
-function foldText(text) {
+// is done). No spaces between two Han characters, none at all with noSpaces (Chinese).
+// origin/originEnd map every folded character to the UTF-16 range of the original character it
+// came from, for underlining the typed part.
+function foldText(text, noSpaces = false) {
   const chars = [];
   const origin = [];
   const originEnd = [];
@@ -54,16 +71,21 @@ function foldText(text) {
     const start = offset;
     offset += ch.length;
     if (isWhitespace(ch)) {
-      if (chars.length) pending = { start, end: offset };
+      if (chars.length && !noSpaces) pending = { start, end: offset };
       continue;
     }
+    const folded = foldChar(ch);
+    // Nothing to compare (tatweel, a lone mark): a space before it waits for the next character.
+    if (!folded) continue;
     if (pending) {
-      chars.push(' ');
-      origin.push(pending.start);
-      originEnd.push(pending.end);
+      if (!(isHan(chars[chars.length - 1]) && isHan(folded))) {
+        chars.push(' ');
+        origin.push(pending.start);
+        originEnd.push(pending.end);
+      }
       pending = null;
     }
-    for (const f of foldChar(ch)) {
+    for (const f of folded) {
       chars.push(f);
       origin.push(start);
       originEnd.push(offset);
@@ -119,11 +141,18 @@ function isArticle(chars, prefixes) {
 }
 
 // Where typing may start: the option itself and each alternative ("laid, laide"), and the word
-// after their leading article or pronoun ("la voiture" → "voiture").
+// after their leading article or pronoun ("la voiture" → "voiture"). An option with Chinese
+// characters also starts after a bracket and where pinyin follows the characters ("你好 (nǐ hǎo)",
+// "你好 nǐ hǎo" → "ni").
 function starts(t, prefixes) {
   const alternatives = [0];
+  const chinese = t.chars.some(isHan);
+  let lastHan = false; // the last letter before i is a Han character
   t.chars.forEach((ch, i) => {
-    if (!BREAKS.has(ch)) return;
+    const pinyin = chinese && lastHan && LATIN_RE.test(ch);
+    if (ch !== ' ') lastHan = isHan(ch);
+    if (pinyin && alternatives[alternatives.length - 1] !== i) alternatives.push(i);
+    if (!BREAKS.has(ch) && !(chinese && OPENERS.has(ch))) return;
     let j = i + 1;
     while (j < t.chars.length && t.chars[j] === ' ') j++;
     if (j < t.chars.length) alternatives.push(j);
@@ -140,12 +169,14 @@ function starts(t, prefixes) {
 const prefixCache = new Map();
 
 // Leading articles and reflexive pronouns of `lang` (every language for null) as they start a
-// lower-case text: "la ", "l'", "se ", "to " …, longest first (ExtendedSynonyms.articlePrefixes).
+// lower-case text: "la ", "l'", "se ", "to ", "ال" …, longest first (ExtendedSynonyms.articlePrefixes).
 export function articlePrefixes(lang = null) {
   const langs = lang == null ? Object.keys(ARTICLES) : [lang];
   const set = new Set();
   for (const l of langs) {
-    for (const article of ARTICLES[l] || []) set.add(article.endsWith("'") ? article : `${article} `);
+    for (const article of ARTICLES[l] || []) {
+      set.add(article.endsWith("'") || GLUED_ARTICLES.includes(article) ? article : `${article} `);
+    }
     for (const pronoun of REFLEXIVES[l] || []) if (pronoun.endsWith(' ') || pronoun.endsWith("'")) set.add(pronoun);
   }
   return [...set].sort((a, b) => (a.length !== b.length ? b.length - a.length : a < b ? -1 : a > b ? 1 : 0));
@@ -157,6 +188,9 @@ function foldedPrefixes(lang) {
   return prefixCache.get(key);
 }
 
+// Chinese: spaces do not count, in the letters typed and in the options.
+const noSpaces = (lang) => lang === 'zh';
+
 /**
  * Which of `choices` (texts) the letters `typed` start, and the one they pick. `lang` is the
  * language of the options (its articles); null allows the articles of every language.
@@ -165,7 +199,7 @@ function foldedPrefixes(lang) {
  * isActive (letters are typed), hasEnoughLetters }.
  */
 export function typeAhead(typed, choices, lang = null) {
-  const input = foldText(typed);
+  const input = foldText(typed, noSpaces(lang));
   if (!input.chars.some((c) => c !== ' ')) return NO_MATCH;
   const prefixes = foldedPrefixes(lang);
 
@@ -178,7 +212,7 @@ export function typeAhead(typed, choices, lang = null) {
   const strong = [];
   const weak = [];
   (Array.isArray(choices) ? choices : []).forEach((choice, index) => {
-    const option = foldText(choice);
+    const option = foldText(choice, noSpaces(lang));
     const from = starts(option, prefixes);
     // The whole input from the start of the option, an alternative or a word after an article.
     const start = from.find((s) => startsWithAt(option.chars, s, input.chars));
@@ -209,6 +243,19 @@ export function typeAhead(typed, choices, lang = null) {
 }
 
 /* ------------------------------------------------------------------ keys */
+
+/**
+ * The digit 0–9 a key types, ASCII or Arabic-Indic (٠–٩, ۰–۹: an Arabic keyboard chooses like
+ * 1–4 and 0); null for anything else. The screen sends it as { kind: 'digit', n }.
+ */
+export function digitValue(text) {
+  const s = String(text == null ? '' : text);
+  if (/^[0-9]$/.test(s)) return Number(s);
+  const code = s.length === 1 ? s.charCodeAt(0) : -1;
+  if (code >= 0x660 && code <= 0x669) return code - 0x660;
+  if (code >= 0x6f0 && code <= 0x6f9) return code - 0x6f0;
+  return null;
+}
 
 /**
  * Arrow keys over the grid of `count` options laid out in `columns` columns (2 on wide
@@ -321,7 +368,8 @@ export function typingKey(state, key, { choices = [], lang = null, columns = 2, 
       };
     }
     case 'digit': {
-      const n = Number(key.n);
+      const d = digitValue(key.n);
+      const n = d == null ? Number(key.n) : d;
       if (n === 0) return { state: { ...s, typed: '', highlighted: null }, action: { type: 'dontKnow' }, announce: null };
       if (Number.isInteger(n) && n >= 1 && n <= list.length) {
         return { state: { ...s, typed: '', highlighted: null }, action: { type: 'choose', index: n - 1 }, announce: null };

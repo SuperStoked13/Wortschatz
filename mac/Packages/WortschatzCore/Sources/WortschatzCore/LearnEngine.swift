@@ -1041,9 +1041,10 @@ public enum LearnEngine {
     private static let textKeys = TextMemo<JSText>()
     private static let answerKeySets = TextMemo<Set<JSText>>()
 
-    /// Comparison key for answer texts: basic normalisation + JS lowercase.
+    /// Comparison key for answer texts: basic normalisation, script folds (Arabic vowel marks,
+    /// full-width punctuation) + JS lowercase.
     private static func textKey(_ text: String) -> JSText {
-        textKeys.value(for: text) { Grading.normalizeBasic(JSText($0)).lowercased() }
+        textKeys.value(for: text) { Grading.foldScripts(Grading.normalizeBasic(JSText($0))).lowercased() }
     }
 
     /// The whole answer and each of its alternatives ("laid, laide" → laid, laide | laid | laide).

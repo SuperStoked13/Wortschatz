@@ -6,6 +6,7 @@ import {
   diffAnswer,
   ARTICLES,
   REFLEXIVES,
+  GLUED_ARTICLES,
   ABBREVIATIONS,
   DEFAULT_TOLERANCE,
 } from '../src/core/grading.js';
@@ -1353,6 +1354,382 @@ test('abbreviations: "zB" without dots means "zum Beispiel"', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Arabic
+
+test('Arabic: vowel marks, Quranic marks and tatweel never matter and give no note', () => {
+  exactMatch('كتاب', 'كِتَابٌ', 'ar');
+  exactMatch('كِتَابٌ', 'كتاب', 'ar');
+  exactMatch('مدرسة', 'مُدَرِّسَةٌ', 'ar');
+  exactMatch('هذا', 'هٰذَا', 'ar');
+  exactMatch('الرحمن', 'الرَّحْمَٰنِ', 'ar');
+  exactMatch('كتـــاب', 'كتاب', 'ar');
+  exactMatch('كتاب', 'كتـاب', 'ar');
+  // Whatever the accents setting, and in sets of another language.
+  exactMatch('كتاب', 'كِتَابٌ', 'ar', { ignoreAccents: false, typos: false });
+  exactMatch('كتاب', 'كِتَابٌ', null);
+  exactMatch('كتاب', 'كِتَابٌ', 'other');
+});
+
+test('Arabic: presentation forms and bidi marks never matter', () => {
+  exactMatch('كتاب', 'ﻛﺘﺎﺏ', 'ar');
+  exactMatch('ﻛﺘﺎﺏ', 'كتاب', 'ar');
+  exactMatch('لا', 'ﻻ', 'ar');
+  exactMatch('كتاب', '‏كتاب‏', 'ar');
+  exactMatch('‫كتاب‬', 'كتاب', 'ar');
+});
+
+test('Arabic: letter variants are correct with the note «Schreibvariante»', () => {
+  accepts('مدرسه', 'مدرسة', 'ar', null, ['variant']); // ة/ه
+  accepts('مدرسة', 'مدرسه', 'ar', null, ['variant']);
+  accepts('مستشفي', 'مستشفى', 'ar', null, ['variant']); // ى/ي
+  accepts('اب', 'أب', 'ar', null, ['variant']); // hamza on alef
+  accepts('اسلام', 'إسلام', 'ar', null, ['variant']);
+  accepts('القران', 'القرآن', 'ar', null, ['variant']); // madda
+  accepts('اسم', 'ٱسم', 'ar', null, ['variant']); // alef wasla
+  accepts('مسوول', 'مسؤول', 'ar', null, ['variant']); // ؤ → و
+  accepts('رييس', 'رئيس', 'ar', null, ['variant']); // ئ → ي
+  // Always allowed, even with every tolerance off.
+  accepts('مدرسه', 'مدرسة', 'ar', { articles: false, abbreviations: false, multipleAnswers: false, parentheses: false, ignoreCase: false, ignoreAccents: false, typos: false }, ['variant']);
+  // Gated on the script, not on the set's language.
+  accepts('اب', 'أب', null, null, ['variant']);
+  accepts('مدرسه', 'مدرسة', 'other', null, ['variant']);
+});
+
+test('Arabic: a hamza difference is a variant, not an accent or a typo', () => {
+  accepts('اب', 'أب', 'ar', { ignoreAccents: true }, ['variant']);
+  accepts('مسوول', 'مسؤول', 'ar', { ignoreAccents: true, typos: true }, ['variant']);
+  accepts('مدرسة', 'مدرسه', 'ar', { typos: true }, ['variant']);
+  accepts('مستشفي', 'مستشفى', 'ar', { ignoreAccents: true, typos: true }, ['variant']);
+});
+
+test('Arabic: a variant and a real typo together', () => {
+  accepts('مدرصه', 'مدرسة', 'ar', { typos: true }, ['variant', 'typo']);
+  rejects('مدرصه', 'مدرسة', 'ar', null, 'typo');
+  // The typo comparator is tried before its variant twin: a budget of 2 takes both.
+  accepts('مدرسه كبيرا', 'مدرسة كبيرة', 'ar', { typos: true }, ['typo']);
+});
+
+test('Arabic: ال is a glued article', () => {
+  accepts('كتاب', 'الكتاب', 'ar', null, ['article']);
+  accepts('شمس', 'الشَّمْسُ', 'ar', null, ['article']);
+  rejects('كتاب', 'الكتاب', 'ar', { articles: false }, 'missingArticle');
+  accepts('الكتاب', 'كتاب', 'ar', null, []); // an extra article is ignored
+  exactMatch('الكتاب', 'الكتاب', 'ar');
+  accepts('ال كتاب', 'الكتاب', 'ar', null, []);
+  // With a letter variant in the word.
+  accepts('مدرسه', 'المدرسة', 'ar', null, ['article', 'variant']);
+  accepts('المدرسه', 'المدرسة', 'ar', null, ['variant']);
+  // Dictionary forms: "كتاب، ال" and a bracketed article.
+  accepts('الكتاب', 'كتاب، ال', 'ar', null, []);
+  accepts('كتاب', '(ال)كتاب', 'ar', null, ['parentheses']);
+  // ال alone is no article.
+  exactMatch('ال', 'ال', 'ar');
+  // Only for Arabic (the lang of the answer).
+  rejects('كتاب', 'الكتاب', 'fr');
+});
+
+test('Arabic: ، and ؛ separate alternatives, ؟ is punctuation', () => {
+  accepts('كتاب', 'كتاب، دفتر', 'ar', null, ['partial']);
+  accepts('دفتر', 'كتاب ؛ دفتر', 'ar', null, ['partial']);
+  accepts('دفتر، كتاب', 'كتاب، دفتر', 'ar', null, ['order']);
+  exactMatch('كتاب، دفتر', 'كتاب, دفتر', 'ar');
+  exactMatch('هل', 'هل؟', 'ar');
+  exactMatch('هل؟', 'هل', 'ar');
+  exactMatch('نعم', 'نعم!', 'ar');
+});
+
+test('Arabic: a sentence ending in . ? ! or … is one answer despite its commas', () => {
+  rejects('كيف حالك', 'كيف حالك، يا أحمد؟', 'ar');
+  rejects('مرحبا', 'مرحبا، أنا طالب.', 'ar');
+  exactMatch('مرحبا، أنا طالب', 'مرحبا، أنا طالب.', 'ar');
+  // Without a final mark it stays a list.
+  accepts('مرحبا', 'مرحبا، أنا طالب', 'ar', null, ['partial']);
+  expect(splitAlternatives('مرحبا، أنا طالب.', 'ar')).toEqual(['مرحبا، أنا طالب.']);
+  expect(splitAlternatives('مرحبا، أنا طالب.')).toEqual(['مرحبا، أنا طالب.']);
+});
+
+test('Arabic: splitAlternatives keeps the vowel marks and characters as written', () => {
+  expect(splitAlternatives('كتاب، دفتر')).toEqual(['كتاب', 'دفتر']);
+  expect(splitAlternatives('كِتَابٌ، دَفْتَرٌ', 'ar')).toEqual(['كِتَابٌ', 'دَفْتَرٌ']);
+  expect(splitAlternatives('كتاب؛ قلم؛ دفتر')).toEqual(['كتاب', 'قلم', 'دفتر']);
+  expect(splitAlternatives('كتـاب، أب')).toEqual(['كتـاب', 'أب']);
+  expect(splitAlternatives('هل؟')).toEqual(['هل؟']);
+  expect(splitAlternatives('كتاب/دفتر')).toEqual(['كتاب', 'دفتر']);
+});
+
+test('Arabic: wrong answers stay wrong', () => {
+  rejects('كتب', 'كتاب', 'ar', null, 'typo');
+  accepts('كتب', 'كتاب', 'ar', { typos: true }, ['typo']);
+  rejects('قلم', 'كتاب', 'ar', null, null);
+  rejects('بيت', 'بنت', 'ar', null, null);
+});
+
+// ---------------------------------------------------------------------------
+// Chinese
+
+test('Chinese: lang codes resolve to zh and ar', () => {
+  accepts('nǐ hǎo', '你好 (nǐ hǎo)', 'zh-CN', null, ['pinyin']);
+  accepts('nǐ hǎo', '你好 (nǐ hǎo)', 'ZH', null, ['pinyin']);
+  accepts('كتاب', 'الكتاب', 'ar-SA', null, ['article']);
+});
+
+test('Chinese: characters or pinyin are both correct', () => {
+  accepts('你好', '你好 (nǐ hǎo)', 'zh', null, []);
+  accepts('nǐ hǎo', '你好 (nǐ hǎo)', 'zh', null, ['pinyin']);
+  exactMatch('你好 (nǐ hǎo)', '你好 (nǐ hǎo)', 'zh');
+  accepts('你好 nǐ hǎo', '你好 (nǐ hǎo)', 'zh', null, []);
+  accepts('你好nǐhǎo', '你好 (nǐ hǎo)', 'zh', null, []);
+  // Full-width brackets, no brackets, pinyin first.
+  accepts('你好', '你好（nǐ hǎo）', 'zh', null, []);
+  accepts('nǐ hǎo', '你好（nǐ hǎo）', 'zh', null, ['pinyin']);
+  accepts('你好', '你好 nǐ hǎo', 'zh', null, []);
+  accepts('nǐ hǎo', '你好 nǐ hǎo', 'zh', null, ['pinyin']);
+  accepts('你好', 'nǐ hǎo 你好', 'zh', null, []);
+  accepts('nǐ hǎo', 'nǐ hǎo 你好', 'zh', null, ['pinyin']);
+  accepts('nǐ hǎo', 'nǐ hǎo (你好)', 'zh', null, ['pinyin']);
+});
+
+test('Chinese: the characters alone get no brackets note, whatever the brackets setting', () => {
+  accepts('你好', '你好 (nǐ hǎo)', 'zh', { parentheses: true }, []);
+  accepts('你好', '你好 (nǐ hǎo)', 'zh', { parentheses: false }, []);
+  accepts('nǐ hǎo', '你好 (nǐ hǎo)', 'zh', { parentheses: false }, ['pinyin']);
+  // Other bracket contents keep the brackets rules.
+  accepts('你好', '你好 (问候)', 'zh', null, ['parentheses']);
+});
+
+test('Chinese: cards with only characters need characters', () => {
+  rejects('nǐ hǎo', '你好', 'zh');
+  rejects('ni hao', '你好', 'zh', { ignoreAccents: true, typos: true });
+  accepts('你好', '你好', 'zh', null, []);
+});
+
+test('Chinese: several pinyin readings in the brackets each count', () => {
+  accepts('nǐ hǎo', '你好 (nǐ hǎo, ní hǎo)', 'zh', null, ['pinyin']);
+  accepts('ní hǎo', '你好 (nǐ hǎo, ní hǎo)', 'zh', null, ['pinyin']);
+  accepts('你好', '你好 (nǐ hǎo, ní hǎo)', 'zh', null, []);
+});
+
+test('Chinese: tone numbers equal tone marks', () => {
+  accepts('ni3 hao3', '你好 (nǐ hǎo)', 'zh', null, ['pinyin']);
+  accepts('ni3hao3', '你好 (nǐ hǎo)', 'zh', null, ['pinyin']);
+  accepts('xie4xie5', '谢谢 (xiè xie)', 'zh', null, ['pinyin']);
+  accepts('xie4xie', '谢谢 (xiè xie)', 'zh', null, ['pinyin']);
+  // Stored with numbers, typed with marks.
+  accepts('nǐ hǎo', '你好 (ni3 hao3)', 'zh', null, ['pinyin']);
+  exactMatch('ma1', 'mā', 'zh');
+  exactMatch('ma2', 'má', 'zh');
+  exactMatch('ma3', 'mǎ', 'zh');
+  exactMatch('ma4', 'mà', 'zh');
+  exactMatch('ma5', 'ma', 'zh');
+  exactMatch('ma0', 'ma', 'zh');
+  exactMatch('Ni3', 'Nǐ', 'zh');
+});
+
+test('Chinese: the tone mark goes on a or e, on o in ou, otherwise on the last vowel', () => {
+  exactMatch('hao3', 'hǎo', 'zh');
+  exactMatch('xie4', 'xiè', 'zh');
+  exactMatch('dou1', 'dōu', 'zh');
+  exactMatch('liu2', 'liú', 'zh');
+  exactMatch('gui4', 'guì', 'zh');
+  exactMatch('lüe4', 'lüè', 'zh');
+  exactMatch('zhuang4', 'zhuàng', 'zh');
+  exactMatch('er2', 'ér', 'zh');
+});
+
+test('Chinese: v and u: stand for ü in tone syllables', () => {
+  exactMatch('lv4', 'lǜ', 'zh');
+  exactMatch('lǜ', 'lv4', 'zh');
+  exactMatch('nu:3', 'nǚ', 'zh');
+  exactMatch('nv3', 'nǚ', 'zh');
+  exactMatch('lv5', 'lü', 'zh');
+  // Outside a tone syllable v stays v.
+  rejects('lv', 'lü', 'zh');
+});
+
+test('Chinese: digits that are no tone syllable stay', () => {
+  exactMatch('3个', '3个', 'zh');
+  exactMatch('MP3', 'MP3', 'zh');
+  rejects('ni3', 'ni', 'zh', null, 'tonesOnly');
+});
+
+test('Chinese: spaces do not count', () => {
+  accepts('nihao', '你好 (ni hao)', 'zh', null, ['pinyin']);
+  accepts('nǐhǎo', '你好 (nǐ hǎo)', 'zh', null, ['pinyin']);
+  accepts('ni hao', 'nihao', 'zh', null, []);
+  exactMatch('你 好', '你好', 'zh');
+  exactMatch('你好', '你 好', 'zh');
+  accepts('我是 学生', '我是学生', 'zh', null, []);
+});
+
+test('Chinese: missing tones behave like accents (Töne)', () => {
+  rejects('ni hao', '你好 (nǐ hǎo)', 'zh', null, 'tonesOnly');
+  rejects('nihao', '你好 (nǐ hǎo)', 'zh', null, 'tonesOnly');
+  accepts('ni hao', '你好 (nǐ hǎo)', 'zh', { ignoreAccents: true }, ['pinyin', 'tones']);
+  rejects('ma', 'mā', 'zh', null, 'tonesOnly');
+  rejects('mà', 'mā', 'zh', null, 'tonesOnly');
+  accepts('mà', 'mā', 'zh', { ignoreAccents: true }, ['tones']);
+  accepts('lu', 'lǜ', 'zh', { ignoreAccents: true }, ['tones']);
+  // Other languages keep «Akzente».
+  rejects('ni hao', 'nǐ hǎo', 'fr', null, 'accentsOnly');
+  accepts('ni hao', 'nǐ hǎo', 'fr', { ignoreAccents: true }, ['accents']);
+});
+
+test('Chinese: a wrong character is never a typo; pinyin keeps the typo rule', () => {
+  rejects('太', '大', 'zh', { typos: true });
+  rejects('我是学士', '我是学生', 'zh', { typos: true });
+  rejects('中家 zhōngguó', '中国 (zhōng guó)', 'zh', { typos: true });
+  accepts('zhōnggua', '中国 (zhōng guó)', 'zh', { typos: true }, ['pinyin', 'typo']);
+  accepts('中国 zhōnggua', '中国 (zhōng guó)', 'zh', { typos: true }, ['typo']);
+  rejects('zhōnggua', '中国 (zhōng guó)', 'zh', null, 'typo');
+});
+
+test('Chinese: ，、； and / separate alternatives', () => {
+  accepts('谢谢', '谢谢，多谢', 'zh', null, ['partial']);
+  accepts('多谢', '谢谢、多谢', 'zh', null, ['partial']);
+  accepts('多谢', '谢谢；多谢', 'zh', null, ['partial']);
+  accepts('多谢', '谢谢/多谢', 'zh', null, ['partial']);
+  accepts('您', '你/您', 'zh', null, ['partial']);
+  expect(splitAlternatives('谢谢，多谢')).toEqual(['谢谢', '多谢']);
+  expect(splitAlternatives('谢谢、多谢；再见')).toEqual(['谢谢', '多谢', '再见']);
+  expect(splitAlternatives('谢谢/多谢')).toEqual(['谢谢', '多谢']);
+  expect(splitAlternatives('你/您')).toEqual(['你', '您']);
+  // Full-width brackets are brackets: their commas do not separate.
+  expect(splitAlternatives('你好（nǐ hǎo，ní hǎo），您好')).toEqual(['你好（nǐ hǎo，ní hǎo）', '您好']);
+});
+
+test('Chinese: CJK punctuation and quotes never matter', () => {
+  exactMatch('你好', '你好！', 'zh');
+  exactMatch('你好！', '你好', 'zh');
+  exactMatch('你好', '你好。', 'zh');
+  exactMatch('好吗', '好吗？', 'zh');
+  exactMatch('你好', '「你好」', 'zh');
+  exactMatch('红楼梦', '《红楼梦》', 'zh');
+  exactMatch('你好', '『你好』', 'zh');
+  exactMatch('你好', '〈你好〉', 'zh');
+});
+
+test('Chinese: a sentence with a final 。 is one answer', () => {
+  rejects('你好', '你好，我是学生。', 'zh');
+  exactMatch('你好，我是学生', '你好，我是学生。', 'zh');
+  expect(splitAlternatives('你好，我是学生。', 'zh')).toEqual(['你好，我是学生。']);
+  expect(splitAlternatives('你好，我是学生。')).toEqual(['你好，我是学生。']);
+  // A question too.
+  rejects('你好', '你好，你叫什么名字？', 'zh');
+});
+
+test('Chinese: the pinyin rules apply only when the answer language is Chinese', () => {
+  rejects('nǐ hǎo', '你好 (nǐ hǎo)', 'fr');
+  accepts('你好', '你好 (nǐ hǎo)', 'fr', null, ['parentheses']);
+  accepts('你好', '你好 (nǐ hǎo)', null, null, ['parentheses']);
+  rejects('ni3', 'nǐ', 'fr');
+  rejects('nihao', 'ni hao', 'fr');
+  // Spaces between characters never count.
+  exactMatch('你 好', '你好', 'fr');
+});
+
+test('Chinese and Arabic: note and hint order', () => {
+  const r = grade('ni hao, xie xie', '你好 (nǐ hǎo), 谢谢 (xiè xie)', { ignoreAccents: true }, 'zh');
+  expect(r.correct).toBe(true);
+  expect(r.notes).toEqual(['pinyin', 'tones']);
+  accepts('مدرسه', 'المدرسة', 'ar', null, ['article', 'variant']);
+  accepts('مدرسه, كتاب', 'كتاب، المدرسة', 'ar', { typos: true }, ['article', 'variant', 'order']);
+});
+
+// ---------------------------------------------------------------------------
+// Diffs for Arabic and Chinese
+
+test('diffChars: marks stay with their letter', () => {
+  expect(diffChars('كتب', 'كِتَبَ')).toEqual([
+    { type: 'del', text: 'كتب' },
+    { type: 'add', text: 'كِتَبَ' },
+  ]);
+  expect(diffChars('كِتب', 'كِتَبَ')).toEqual([
+    { type: 'same', text: 'كِ' },
+    { type: 'del', text: 'تب' },
+    { type: 'add', text: 'تَبَ' },
+  ]);
+  // A Latin letter with a mark that has no precomposed form is one character too.
+  expect(diffChars('q', 'q́')).toEqual([
+    { type: 'del', text: 'q' },
+    { type: 'add', text: 'q́' },
+  ]);
+});
+
+test('diffAnswer: Arabic vowel marks only show when the learner typed some', () => {
+  expect(diffAnswer('كتاب', 'كِتَابٌ')).toEqual([{ type: 'same', text: 'كتاب' }]);
+  expect(diffAnswer('كتب', 'كِتَابٌ')).toEqual([
+    { type: 'same', text: 'كت' },
+    { type: 'add', text: 'ا' },
+    { type: 'same', text: 'ب' },
+  ]);
+  expect(diffAnswer('كتاب', 'كتـاب')).toEqual([{ type: 'same', text: 'كتاب' }]);
+  // Some marks typed: the marks count, letter by letter.
+  expect(diffAnswer('كِتاب', 'كِتَابٌ')).toEqual([
+    { type: 'same', text: 'كِ' },
+    { type: 'del', text: 'ت' },
+    { type: 'add', text: 'تَ' },
+    { type: 'same', text: 'ا' },
+    { type: 'del', text: 'ب' },
+    { type: 'add', text: 'بٌ' },
+  ]);
+});
+
+test('diffAnswer: Chinese diffs against the form typed, tone numbers as marks', () => {
+  expect(diffAnswer('ni hao', '你好 (nǐ hǎo)', 'zh')).toEqual([
+    { type: 'same', text: 'n' },
+    { type: 'del', text: 'i' },
+    { type: 'add', text: 'ǐ' },
+    { type: 'same', text: ' h' },
+    { type: 'del', text: 'a' },
+    { type: 'add', text: 'ǎ' },
+    { type: 'same', text: 'o' },
+  ]);
+  expect(diffAnswer('ni3 hao', '你好（nǐ hǎo）', 'zh')).toEqual([
+    { type: 'same', text: 'nǐ h' },
+    { type: 'del', text: 'a' },
+    { type: 'add', text: 'ǎ' },
+    { type: 'same', text: 'o' },
+  ]);
+  expect(diffAnswer('你们', '你好 (nǐ hǎo)', 'zh')).toEqual([
+    { type: 'same', text: '你' },
+    { type: 'del', text: '们' },
+    { type: 'add', text: '好' },
+  ]);
+  expect(diffAnswer('你好 (ni hǎo)', '你好 (nǐ hǎo)', 'zh')).toEqual([
+    { type: 'same', text: '你好 (n' },
+    { type: 'del', text: 'i' },
+    { type: 'add', text: 'ǐ' },
+    { type: 'same', text: ' hǎo)' },
+  ]);
+  // Without the language: the whole answer, as before.
+  expect(diffAnswer('ni hao', '你好 (nǐ hǎo)')[0]).toEqual({ type: 'add', text: '你好 (' });
+});
+
+// ---------------------------------------------------------------------------
+// Latin languages keep their behaviour
+
+test('Latin regressions: accents, brackets, spaces and typos as before', () => {
+  rejects('garcon', 'garçon', 'fr', null, 'accentsOnly');
+  accepts('garcon', 'garçon', 'fr', { ignoreAccents: true }, ['accents']);
+  accepts('le pain', 'le pain (frais)', 'fr', null, ['parentheses']);
+  rejects('frais', 'le pain (frais)', 'fr');
+  rejects('lepain', 'le pain', 'fr');
+  rejects('Haus', 'Hand', 'de', { typos: true });
+  accepts('Hause', 'Hause', 'de', { typos: true }, []);
+  accepts('Strase', 'Strasse', 'de', { typos: true }, ['typo']);
+  accepts('ja', 'ja, nein.', 'de', null, ['partial']);
+  rejects('Ça va', 'Ça va bien, merci.', 'fr');
+  accepts('homme', "l'homme", 'fr', null, ['article']);
+  expect(splitAlternatives('le chat (frais), la chatte')).toEqual(['le chat (frais)', 'la chatte']);
+  expect(diffAnswer('garcon', 'garçon')).toEqual([
+    { type: 'same', text: 'gar' },
+    { type: 'del', text: 'c' },
+    { type: 'add', text: 'ç' },
+    { type: 'same', text: 'on' },
+  ]);
+});
+
+// ---------------------------------------------------------------------------
 // exported constants
 
 test('constants: ARTICLES per language', () => {
@@ -1366,7 +1743,14 @@ test('constants: ARTICLES per language', () => {
 });
 
 test('constants: REFLEXIVES per language', () => {
-  expect(REFLEXIVES).toEqual({ fr: ['se ', "s'"], de: ['sich '], en: ['oneself'], es: [], it: [] });
+  expect(REFLEXIVES).toEqual({ fr: ['se ', "s'"], de: ['sich '], en: ['oneself'], es: [], it: [], ar: [], zh: [] });
+});
+
+test('constants: Arabic has the glued article ال, Chinese has none', () => {
+  expect(ARTICLES.ar).toEqual(['ال']);
+  expect(ARTICLES.zh).toEqual([]);
+  expect(GLUED_ARTICLES).toEqual(['ال']);
+  expect(Object.keys(ARTICLES)).toEqual(['fr', 'de', 'en', 'es', 'it', 'ar', 'zh']);
 });
 
 test('constants: ABBREVIATIONS are [RegExp, string] pairs', () => {

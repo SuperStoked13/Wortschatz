@@ -41,6 +41,8 @@ struct WriteCardEditor: View {
                 .padding(.top, Spacing.l)
 
             Form {
+                // A grouped form ends a field's text at the right edge already, so Arabic needs
+                // no right-to-left direction here (it would move the label to the right too).
                 Section {
                     TextField(labels.term, text: $term)
                         .focused($focusedField, equals: .term)

@@ -210,4 +210,27 @@ struct ExtendedSynonymsTests {
         #expect(feedback.notes.map(\.note) == [.extendedSynonym])
         #expect(feedback.notes.allSatisfy { $0.isSynonym })
     }
+
+    // MARK: Arabic and Chinese
+
+    @Test("The model is asked about Chinese, not Arabic")
+    func scriptLanguages() {
+        #expect(ExtendedSynonyms.modelLanguageNames[.zh] == "Chinese")
+        #expect(ExtendedSynonyms.modelLanguageNames[.ar] == nil)
+        let zh = SynonymQuery(prompt: "Hallo", expected: "你好 (nǐ hǎo)", promptLang: .de, answerLang: .zh)
+        #expect(ExtendedSynonyms.supports(zh))
+        let ar = SynonymQuery(prompt: "Buch", expected: "كتاب", promptLang: .de, answerLang: .ar)
+        #expect(!ExtendedSynonyms.supports(ar))
+        #expect(ExtendedSynonyms.translationRequest("Hallo", from: .de, to: .zh) == "Translate the German word or phrase \"Hallo\" into Chinese.")
+    }
+
+    @Test("looseKey: Arabic marks, tatweel, ال and full-width punctuation do not matter")
+    func scriptLooseKeys() {
+        #expect(ExtendedSynonyms.looseKey("الكِتَابُ", lang: .ar) == "كتاب")
+        #expect(ExtendedSynonyms.looseKey("كتـــاب", lang: .ar) == "كتاب")
+        #expect(ExtendedSynonyms.looseKey("ﻛﺘﺎﺏ", lang: nil) == "كتاب")
+        #expect(ExtendedSynonyms.looseKey("你 好！", lang: .zh) == "你好")
+        #expect(ExtendedSynonyms.looseKey("你好（nǐ hǎo）", lang: .zh) == "你好")
+        #expect(ExtendedSynonyms.looseKey("nǐ hǎo", lang: .zh) == "ni hao")
+    }
 }

@@ -578,4 +578,17 @@ test('form copy uses Swiss spelling in every mode', () => {
   }
 });
 
+test('«Akzente ignorieren» shows missing tones for Chinese; Arabic vowel marks are no example', () => {
+  const example = (termLang) => {
+    const toggle = toggleNamed(render({ termLang, defLang: 'de' }).form, 'Akzente ignorieren');
+    return toggle.querySelector('.ui-toggle__desc').textContent;
+  };
+  expect(example('zh')).toBe('«ni hao» = «nǐ hǎo», «ahnlich» = «ähnlich»');
+  expect(example('ar')).toBe('«ahnlich» = «ähnlich»');
+  expect(example('fr')).toBe('«ecole» = «école», «ahnlich» = «ähnlich»');
+  // Both languages are named in the sentences of the form.
+  expect(directionText('definition', 'ar', 'de')).toBe('Du siehst Arabisch und schreibst Deutsch.');
+  expect(directionText('term', 'zh', 'de', 'learn')).toBe('Du siehst Deutsch und antwortest auf Chinesisch.');
+});
+
 await run();

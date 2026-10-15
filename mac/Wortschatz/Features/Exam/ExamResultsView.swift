@@ -215,6 +215,7 @@ private struct ExamAnswerRow: View {
                     Text(LearnText.spoken(q.prompt, lang: q.promptLang))
                         .font(.callout)
                         .foregroundStyle(.secondary)
+                        .cardTextDirection(q.promptLang)
                 }
                 answer
                 if let note = item.note {
@@ -242,6 +243,7 @@ private struct ExamAnswerRow: View {
                 .font(Typography.answer)
                 .foregroundStyle(Theme.success.text)
                 .fixedSize(horizontal: false, vertical: true)
+                .cardTextDirection(q.answerLang)
             if item.synonym {
                 expectedLine
             }
@@ -267,6 +269,7 @@ private struct ExamAnswerRow: View {
             Text(LearnText.spoken(q.expected, lang: q.answerLang))
                 .fontWeight(.semibold)
                 .foregroundStyle(Theme.success.text)
+                .cardTextDirection(q.answerLang)
         }
         .font(.callout)
         .fixedSize(horizontal: false, vertical: true)

@@ -20,10 +20,10 @@ import {
   hasOpenModal,
 } from '../ui/components.js';
 import { icon } from '../ui/icons.js';
-import { LANGS, STATUS, plural, langName } from '../lib/labels.js';
+import { STATUS, plural, langName, textAttrs } from '../lib/labels.js';
 import { canSpeak, speak, stopSpeaking } from '../lib/speech.js';
 import { relativeTime } from '../lib/time.js';
-import { isTypingTarget } from '../lib/shortcuts.js';
+import { isTypingTarget, isComposingKey } from '../lib/shortcuts.js';
 import { db } from '../store/db.js';
 import { downloadText, setToText } from '../store/backup.js';
 import { cardStatus, setProgress } from '../core/mastery.js';
@@ -126,7 +126,6 @@ const filterMemory = new Map();
 
 /* ------------------------------------------------------------------ helpers */
 
-const langAttr = (code) => (LANGS[code] && LANGS[code].bcp47) || null;
 const setPath = (setId) => `/set/${encodeURIComponent(setId)}`;
 const editHref = (setId) => `#${setPath(setId)}/edit`;
 const modePath = (setId, mode, query = '') => `${setPath(setId)}/${mode}${query ? `?${query}` : ''}`;
@@ -387,6 +386,8 @@ function openExport(set) {
     readonly: true,
     rows: '10',
     spellcheck: 'false',
+    // Each line takes the direction of its text (Arabic lines run right to left).
+    dir: 'auto',
     'aria-label': 'Exportierter Text',
   });
   // Tab stops just past the longest term make the preview read like two columns.
@@ -632,7 +633,7 @@ export function render(outlet, ctx = {}) {
       h(
         'div',
         { class: 'set-head__main' },
-        h('h1', { class: 'ui-h1 set-head__title' }, set.title),
+        h('h1', { class: 'ui-h1 set-head__title', dir: 'auto' }, set.title),
         h(
           'div',
           { class: 'set-head__meta' },
@@ -648,7 +649,7 @@ export function render(outlet, ctx = {}) {
             ),
           ),
         ),
-        set.description ? h('p', { class: 'set-head__desc' }, set.description) : null,
+        set.description ? h('p', { class: 'set-head__desc', dir: 'auto' }, set.description) : null,
       ),
     );
   }
@@ -876,8 +877,8 @@ export function render(outlet, ctx = {}) {
       'li',
       { class: 'set-term' },
       status,
-      h('p', { class: ['set-term__term', !card.term && 'is-empty'], id: termId, lang: langAttr(m.set.termLang) }, card.term || '–'),
-      h('p', { class: ['set-term__def', !card.definition && 'is-empty'], lang: langAttr(m.set.defLang) }, card.definition || '–'),
+      h('p', { class: ['set-term__term', !card.term && 'is-empty'], id: termId, ...textAttrs(m.set.termLang) }, card.term || '–'),
+      h('p', { class: ['set-term__def', !card.definition && 'is-empty'], ...textAttrs(m.set.defLang) }, card.definition || '–'),
       h('div', { class: 'set-term__actions' }, speaker, star),
     );
     const row = {
@@ -1184,7 +1185,7 @@ export function render(outlet, ctx = {}) {
   // ⌘E), and Enter starts Lernen like the Mac's «Lernen ↩» when no control has the focus. Not
   // while typing or with a dialog open; held keys repeat nothing.
   function onKeydown(e) {
-    if (e.defaultPrevented || e.isComposing || !model || !view) return;
+    if (e.defaultPrevented || isComposingKey(e) || !model || !view) return;
     if (isPlainEnter(e)) {
       // An Enter that just brought us here (Learn's «Zurück zum Lernset») starts nothing.
       if (e.repeat || leaving || Date.now() - shownAt < ENTER_GATE_MS || hasOpenModal()) return;

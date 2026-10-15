@@ -12,7 +12,7 @@ import { createCardList } from './editor-cards.js';
 import { createImportPanel } from './editor-import.js';
 import { termKey, titleFromFileName, isApplePlatform, fill } from './editor-util.js';
 import { reportUnsaved } from '../lib/host.js';
-import { commandKey } from '../lib/shortcuts.js';
+import { commandKey, isComposingKey } from '../lib/shortcuts.js';
 
 const TERM_LANGS = LANG_ORDER;
 const DEF_LANGS = ['de', ...LANG_ORDER.filter((c) => c !== 'de')];
@@ -130,7 +130,7 @@ export function render(outlet, ctx = {}) {
     value: original ? original.title : '',
     placeholder: 'z. B. Unité 3 – Les personnes',
     size: 'lg',
-    attrs: { maxlength: '120', autocomplete: 'off', class: 'ed-meta__title', enterkeyhint: 'next' },
+    attrs: { maxlength: '120', autocomplete: 'off', class: 'ed-meta__title', enterkeyhint: 'next', dir: 'auto' },
     onInput: () => {
       titleNote.hidden = true;
       if (state.attempted) titleField.setError(titleField.value.trim() ? null : 'Gib deinem Lernset einen Titel.');
@@ -145,12 +145,12 @@ export function render(outlet, ctx = {}) {
     multiline: true,
     rows: 1,
     autoGrow: true,
-    attrs: { maxlength: '600', class: 'ed-meta__desc' },
+    attrs: { maxlength: '600', class: 'ed-meta__desc', dir: 'auto' },
     onInput: () => changed(),
   });
 
   titleField.input.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' && !e.metaKey && !e.ctrlKey && !e.isComposing) {
+    if (e.key === 'Enter' && !e.metaKey && !e.ctrlKey && !isComposingKey(e)) {
       e.preventDefault();
       descField.focus();
     }
@@ -593,14 +593,14 @@ export function render(outlet, ctx = {}) {
   /* ---------------------------------------------------- global events */
 
   const onKeydown = (e) => {
-    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey && !e.isComposing) {
+    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey && !isComposingKey(e)) {
       if (hasOpenModal()) return;
       e.preventDefault();
       save();
       return;
     }
     // Ctrl+S / ⌘S saves too (instead of the browser's «Seite speichern unter»).
-    if (!e.isComposing && commandKey(e, 's')) {
+    if (!isComposingKey(e) && commandKey(e, 's')) {
       e.preventDefault();
       if (!e.repeat && !hasOpenModal()) save();
     }

@@ -1,4 +1,5 @@
-// Language identification for short vocabulary lines (fr / de / en / es / it).
+// Language identification for short vocabulary lines (fr / de / en / es / it,
+// plus ar / zh by their script).
 //
 // Vocabulary lines are tiny ("calme", "der Mut", "sage"), so classic n-gram
 // detectors fail on them. This module combines several weak signals into
@@ -10,18 +11,28 @@
 //   - typical suffixes (-tion, -euse, -ung, -keit, -ing, -ción, -zione ...)
 //   - characteristic character n-grams (sch, eau, th, w, k, z, gli ...)
 //   - a character-trigram model trained lazily on the lexicon itself, which
-//     generalises to words that are not in the lexicon.
+//     generalises to words that are not in the lexicon
+//   - the script: every Arabic word is Arabic evidence, every run of Han
+//     characters and every pinyin word with tone marks (ǎ ě ǐ, ā) Chinese
+//     evidence. Such words skip the Latin signals above.
 // Column-level detection aggregates soft votes over many lines, so a single
 // ambiguous line never decides the language of a whole column.
+// Arabic and Chinese come last and take part in probabilities only with
+// evidence, so results for Latin-script text are the same as with five languages.
 // Pure and DOM-free (runs under jsc).
 
 import { normalizeBasic } from './text.js';
 
-export const SUPPORTED = ['fr', 'de', 'en', 'es', 'it'];
+export const SUPPORTED = ['fr', 'de', 'en', 'es', 'it', 'ar', 'zh'];
+
+// Languages of the lexicon, trigram, suffix and consonant signals.
+const LATIN = ['fr', 'de', 'en', 'es', 'it'];
+// Languages recognised by their script: left out of probabilities without evidence.
+const SCRIPT = new Set(['ar', 'zh']);
 
 // Small tie-breaking prior: the app is used by German speakers learning French
 // (sometimes English). Only applied when turning scores into probabilities.
-const PRIOR = { fr: 0.2, de: 0.25, en: 0.1, es: 0.05, it: 0 };
+const PRIOR = { fr: 0.2, de: 0.25, en: 0.1, es: 0.05, it: 0, ar: 0, zh: 0 };
 
 const SHARP_S = '\u00DF';
 
@@ -399,7 +410,7 @@ function buildTables() {
     if (!entry) lexicon.set(word, (entry = {}));
     entry[lang] = Math.max(entry[lang] || 0, w);
   };
-  for (const lang of SUPPORTED) {
+  for (const lang of LATIN) {
     for (const w of words(FUNCTION_WORDS[lang])) add(w, lang, W_FUNCTION);
     for (const w of words(VOCAB_WORDS[lang])) add(w, lang, W_VOCAB);
     for (const w of words(LEXICON_ONLY[lang] || '')) add(w, lang, W_LEXICON_ONLY);
@@ -414,7 +425,7 @@ function buildTables() {
   const counts = {};
   const totals = {};
   const vocab = new Set();
-  for (const lang of SUPPORTED) {
+  for (const lang of LATIN) {
     const c = new Map();
     let total = 0;
     const all = words(FUNCTION_WORDS[lang]).concat(words(VOCAB_WORDS[lang]));
@@ -456,8 +467,25 @@ const TRIGRAM_K = 0.3;
 const TRIGRAM_WEIGHT = 0.3;
 const TRIGRAM_CAP = 3;
 
+// Scripts by explicit code-point ranges (the Swift port has no Script property).
+// Arabic: U+0600–06FF, U+0750–077F, U+08A0–08FF, presentation forms U+FB50–FDFF, U+FE70–FEFE.
+// Han: U+3400–4DBF, U+4E00–9FFF, U+F900–FAFF, U+20000–2FA1F.
+const SCRIPT_CHAR = /[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB50-\uFDFF\uFE70-\uFEFE\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF\u{20000}-\u{2FA1F}]/u;
+// A token split into Arabic runs, Han runs and the rest (Latin and other letters).
+const SCRIPT_RUN_RE =
+  /([\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB50-\uFDFF\uFE70-\uFEFE]+)|([\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF\u{20000}-\u{2FA1F}]+)|[^\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB50-\uFDFF\uFE70-\uFEFE\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF\u{20000}-\u{2FA1F}]+/gu;
+// Arabic vowel and Quranic marks (they would split words) and the tatweel.
+const ARABIC_MARKS = /[\u0610-\u061A\u064B-\u065F\u0670\u06D6-\u06DC\u06DF-\u06E8\u06EA-\u06ED\u0640]/g;
+const W_SCRIPT = 4.0; // per Arabic word or Han run
+// Pinyin tone marks that the Latin languages never use: the caron (3rd tone)
+// and ü with a tone are telling, the macron (1st tone) a little less (long vowels).
+const PINYIN_STRONG = /[ǎěǐǒǔǚǜǘǖ]/;
+const PINYIN_MACRON = /[āēīōū]/;
+const W_PINYIN = 3.5; // per word with a strong tone mark
+const W_PINYIN_MACRON = 2.8; // per word with only macrons
+
 function emptyScores() {
-  return { fr: 0, de: 0, en: 0, es: 0, it: 0 };
+  return { fr: 0, de: 0, en: 0, es: 0, it: 0, ar: 0, zh: 0 };
 }
 
 function addWeights(out, weights, factor = 1) {
@@ -480,7 +508,7 @@ function trigramEvidence(word, t, out) {
   const ll = {};
   let min = Infinity;
   const grams = trigrams(word);
-  for (const lang of SUPPORTED) {
+  for (const lang of LATIN) {
     const c = t.counts[lang];
     const denom = Math.log(t.totals[lang] + TRIGRAM_K * t.V);
     let sum = 0;
@@ -488,14 +516,38 @@ function trigramEvidence(word, t, out) {
     ll[lang] = sum;
     if (sum < min) min = sum;
   }
-  for (const lang of SUPPORTED) out[lang] += Math.min(TRIGRAM_CAP, (ll[lang] - min) * TRIGRAM_WEIGHT);
+  for (const lang of LATIN) out[lang] += Math.min(TRIGRAM_CAP, (ll[lang] - min) * TRIGRAM_WEIGHT);
+}
+
+// Letter tokens with their offsets. A token holding Arabic or Han letters is
+// cut into script runs; `script` is 'ar' / 'zh' for those runs, else null.
+function tokensOf(s) {
+  const out = [];
+  TOKEN_RE.lastIndex = 0;
+  let m;
+  while ((m = TOKEN_RE.exec(s)) !== null) {
+    const token = m[0];
+    if (!SCRIPT_CHAR.test(token)) {
+      out.push({ token, index: m.index, script: null });
+      continue;
+    }
+    SCRIPT_RUN_RE.lastIndex = 0;
+    let r;
+    while ((r = SCRIPT_RUN_RE.exec(token)) !== null) {
+      if (!/\p{L}/u.test(r[0])) continue;
+      out.push({ token: r[0], index: m.index + r.index, script: r[1] ? 'ar' : r[2] ? 'zh' : null });
+    }
+  }
+  return out;
 }
 
 // Additive, non-negative evidence per language (higher = more likely).
 export function scoreLanguages(text) {
   const out = emptyScores();
   try {
-    const s = normalizeBasic(text == null ? '' : String(text)).slice(0, 4000);
+    const s = normalizeBasic(text == null ? '' : String(text))
+      .replace(ARABIC_MARKS, '')
+      .slice(0, 4000);
     if (!s || !/\p{L}/u.test(s)) return out;
     const t = getTables();
 
@@ -509,16 +561,23 @@ export function scoreLanguages(text) {
       addWeights(out, w, n === 0 ? 1 : n < 4 ? 0.5 : 0);
     }
 
-    TOKEN_RE.lastIndex = 0;
-    let m;
     let prevEnd = 0;
     let prevLower = null;
     let index = 0;
-    while ((m = TOKEN_RE.exec(s)) !== null) {
-      const token = m[0];
+    for (const { token, index: at, script } of tokensOf(s)) {
       const lower = token.toLowerCase();
+      const pinyin = !script && (PINYIN_STRONG.test(lower) ? W_PINYIN : PINYIN_MACRON.test(lower) ? W_PINYIN_MACRON : 0);
+      if (script || pinyin) {
+        // Arabic word, Han run or pinyin with tone marks: the script is the evidence.
+        if (script) out[script] += W_SCRIPT;
+        else out.zh += pinyin;
+        prevEnd = at + token.length;
+        prevLower = lower;
+        index++;
+        continue;
+      }
       const key = foldKey(lower);
-      const gap = s.slice(prevEnd, m.index);
+      const gap = s.slice(prevEnd, at);
       const leading = index === 0 || SEGMENT_BREAK.test(gap);
 
       // Lexicon
@@ -539,7 +598,7 @@ export function scoreLanguages(text) {
       if (bare.length >= 2) {
         // Suffixes
         if (bare.length >= 4) {
-          for (const lang of SUPPORTED) {
+          for (const lang of LATIN) {
             let best = 0;
             for (const [suffix, w] of SUFFIXES[lang]) {
               if (w > best && bare.length >= suffix.length + 2 && bare.endsWith(suffix)) best = w;
@@ -555,7 +614,7 @@ export function scoreLanguages(text) {
         trigramEvidence(bare, t, out);
       }
 
-      prevEnd = m.index + token.length;
+      prevEnd = at + token.length;
       prevLower = lower;
       index++;
     }
@@ -566,17 +625,24 @@ export function scoreLanguages(text) {
   return out;
 }
 
-// Scores (plus the tie-breaking prior) -> probability distribution.
+// The languages a score (or vote) map can be about: Arabic and Chinese only
+// with evidence, so that they never dilute the Latin languages.
+function contenders(map) {
+  return SUPPORTED.filter((lang) => !SCRIPT.has(lang) || map[lang] > 0);
+}
+
+// Scores (plus the tie-breaking prior) -> probability distribution over the contenders.
 function softmax(scores) {
+  const langs = contenders(scores);
   let max = -Infinity;
-  for (const lang of SUPPORTED) max = Math.max(max, scores[lang] + PRIOR[lang]);
+  for (const lang of langs) max = Math.max(max, scores[lang] + PRIOR[lang]);
   const p = {};
   let sum = 0;
-  for (const lang of SUPPORTED) {
+  for (const lang of langs) {
     p[lang] = Math.exp(scores[lang] + PRIOR[lang] - max);
     sum += p[lang];
   }
-  for (const lang of SUPPORTED) p[lang] /= sum;
+  for (const lang of langs) p[lang] /= sum;
   return p;
 }
 
@@ -586,7 +652,7 @@ function hasEvidence(scores) {
 }
 
 function rank(map) {
-  return SUPPORTED.slice().sort((a, b) => map[b] - map[a] || PRIOR[b] - PRIOR[a]);
+  return contenders(map).sort((a, b) => map[b] - map[a] || PRIOR[b] - PRIOR[a]);
 }
 
 // Most likely language of a single text with a 0..1 confidence.
@@ -617,7 +683,7 @@ export function detectColumn(lines) {
       let max = 0;
       for (const lang of SUPPORTED) max = Math.max(max, scores[lang]);
       for (const lang of SUPPORTED) {
-        votes[lang] += p[lang];
+        if (p[lang] !== undefined) votes[lang] += p[lang];
         // Cap the influence of a single long line on the evidence sum.
         evidence[lang] += Math.max(-8, scores[lang] - max);
       }

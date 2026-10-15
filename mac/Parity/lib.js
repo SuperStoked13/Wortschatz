@@ -154,6 +154,9 @@ export function fuzzString(rng, alphabet, min, max) {
 
 export const FIXTURE_FILES = [
   'alternating.txt',
+  'arabic-german.txt',
+  'chinese-dash.txt',
+  'chinese-german.txt',
   'collapsed-columns.txt',
   'csv-quoted.csv',
   'dash-en-em.txt',

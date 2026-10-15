@@ -4,7 +4,8 @@
 // Inputs: every string literal of tests/langdetect.test.js and tests/parser.test.js (plus their
 // lines and cells), every line / cell / column of every tests/fixtures file, every lexicon word of
 // the module (plain, capitalised, upper case, with articles), cognates, mixed lines, odd input
-// (non-strings, astral letters, Object.prototype keys, > 4000 UTF-16 units) and seeded word salads.
+// (non-strings, astral letters, Object.prototype keys, > 4000 UTF-16 units), seeded word salads and
+// Arabic / Chinese / pinyin text and columns.
 import { SUPPORTED, scoreLanguages, detectLanguage, detectColumn } from '../../Website/src/core/langdetect.js';
 import { Cases, mulberry32, randInt, pick, chance, fixtureTexts, readText } from './lib.js';
 
@@ -335,6 +336,7 @@ for (let i = 0; i < 3500; i++) text(salad(i < 2500 ? 4 : 12));
 
 // Columns: random salads, single-language lexicon columns, two-language mixtures (near ties)
 const BY_LANG = {};
+const LATIN = ['fr', 'de', 'en', 'es', 'it'];
 {
   const src = readText('src/core/langdetect.js');
   for (const block of ['FUNCTION_WORDS', 'VOCAB_WORDS']) {
@@ -355,7 +357,8 @@ for (let i = 0; i < 400; i++) {
   column(col);
 }
 for (let i = 0; i < 300; i++) {
-  const [a, b] = [pick(rng, SUPPORTED), pick(rng, SUPPORTED)];
+  // The lexicon salads cover the five Latin languages (BY_LANG has no Arabic or Chinese words).
+  const [a, b] = [pick(rng, LATIN), pick(rng, LATIN)];
   const n = randInt(rng, 1, 12);
   const col = [];
   for (let j = 0; j < n; j++) {
@@ -366,6 +369,69 @@ for (let i = 0; i < 300; i++) {
     col.push(w);
   }
   column(col);
+}
+
+// ---------------------------------------------------------------------------
+// 7. Arabic and Chinese: script runs glued to Latin letters, harakat / tatweel / presentation
+//    forms (also at the 4000-unit cut), pinyin with carons, macrons and other accents, and
+//    columns mixing script languages with Latin ones (votes only with evidence, near ties).
+{
+  const rng2 = mulberry32(0x5c7a);
+  const AR_WORDS = ['كتاب', 'الكتاب', 'مدرسة', 'مَدْرَسَةٌ', 'الْكِتَابُ', 'كـتـاب', 'ﻛﺘﺎﺏ', 'سيارة', 'عربية', 'مرحبا', 'السلامة',
+    'المعلّم', 'شكرًا', 'أخ', 'إلى', 'ٱلله', 'ب\u0654ت', 'آب', 'قرآن', 'ۖ', 'ـ', '١٢', '؟', '،', '؛'];
+  const ZH_WORDS = ['你好', '谢谢', '再见', '学生', '朋友', '中国', '书', '水', '我是学生。', '你好，朋友', '对不起', '「书」', '《书》',
+    '々', '〇', 'の', 'カタカナ', '，', '。', '！'];
+  const PINYIN = ['nǐ', 'hǎo', 'nǐ hǎo', 'shuǐ', 'lǎoshī', 'duìbuqǐ', 'Běijīng', 'lǜ', 'lǚ', 'nǚ', 'lüè', 'Ǎ', 'NǏ', 'māma', 'kāfēi',
+    'hē', 'zàijiàn', 'xièxie', 'shì', 'péngyou', 'xuésheng', 'ni3', 'hao3', 'ni3 hao3', 'xiexie', "wǎn'ān", 'Zhōngguó', 'ěr'];
+  const LATIN_WORDS = ['le chat', 'die Katze', 'Buch', 'das Buch', 'the house', 'el niño', 'la città', 'Hallo', 'danke', 'CD', 'x'];
+  const JOIN = ['', ' ', ' ', ', ', ' - ', '\t', '/', ' (', ') ', '：', '、', ' ، ', '\u200F', "'"];
+  const POOL2 = [...AR_WORDS, ...ZH_WORDS, ...PINYIN, ...LATIN_WORDS];
+  for (const w of POOL2) {
+    text(w);
+    text(`${w} ${w}`);
+    text(`le ${w}`);
+    text(`${w}Hallo`);
+    text(`Hallo${w}`);
+    text(`${w}'s`);
+  }
+  for (let i = 0; i < 1500; i++) {
+    let s = '';
+    const n = randInt(rng2, 1, 6);
+    for (let k = 0; k < n; k++) s += (k ? pick(rng2, JOIN) : '') + pick(rng2, POOL2);
+    text(s);
+  }
+  // Long input: marks removed before the 4000-unit cut, script runs on both sides of it.
+  text('مَدْرَسَةٌ '.repeat(500));
+  text(`${'a'.repeat(3996)}الكتاب`);
+  text(`${'ـ'.repeat(4500)}كتاب`);
+  text(`${'你好 '.repeat(1333)}朋友`);
+  text(`${'le chat '.repeat(499)}nǐ hǎo`);
+  // Columns: pure script columns, mixed with Latin, single evidence lines, near ties.
+  const lineOf = (pool) => {
+    let s = pick(rng2, pool);
+    if (chance(rng2, 0.3)) s += pick(rng2, JOIN) + pick(rng2, pool);
+    return s;
+  };
+  for (let i = 0; i < 500; i++) {
+    const n = randInt(rng2, 1, 12);
+    const mix = randInt(rng2, 0, 5);
+    const col = [];
+    for (let k = 0; k < n; k++) {
+      const pools = [AR_WORDS, ZH_WORDS, PINYIN, LATIN_WORDS];
+      if (mix === 0) col.push(lineOf(AR_WORDS));
+      else if (mix === 1) col.push(lineOf(ZH_WORDS));
+      else if (mix === 2) col.push(lineOf(PINYIN));
+      else if (mix === 3) col.push(lineOf(k % 2 ? LATIN_WORDS : pick(rng2, [AR_WORDS, ZH_WORDS])));
+      else if (mix === 4) col.push(lineOf(pick(rng2, pools)));
+      else col.push(chance(rng2, 0.85) ? salad(3) : lineOf(pick(rng2, [AR_WORDS, ZH_WORDS, PINYIN])));
+    }
+    column(col);
+  }
+  column(['die Katze', 'der Hund', 'كتاب', 'das Haus', 'die Maus']);
+  column(['你好', 'كتاب']);
+  column(['كتاب', '你好']);
+  column(['你好', 'nǐ hǎo', 'xiexie']);
+  column(['xiexie', 'nihao', 'zaijian']);
 }
 
 cases.emit();

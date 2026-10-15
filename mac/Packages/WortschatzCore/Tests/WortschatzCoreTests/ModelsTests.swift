@@ -50,6 +50,17 @@ struct ModelsTests {
         #expect(VocabSet(json: "not a set") == nil)
     }
 
+    @Test("Arabic and Chinese are set languages; other codes still fall back")
+    func arabicAndChinese() throws {
+        let set = try JSONDecoder().decode(VocabSet.self, from: Data(#"{"id":"x","termLang":"ar","defLang":"zh","createdAt":5}"#.utf8))
+        #expect([set.termLang, set.defLang] == [.ar, .zh])
+        #expect(try JSONValue(encoding: set)["termLang"] == "ar")
+        let odd = try JSONDecoder().decode(VocabSet.self, from: Data(#"{"id":"x","termLang":"zh-CN","defLang":"AR","createdAt":5}"#.utf8))
+        #expect([odd.termLang, odd.defLang] == [.fr, .de])
+        #expect(Lang.allCases.map(\.rawValue) == ["fr", "en", "es", "it", "ar", "zh", "de", "other"])
+        #expect(Lang.ar.isRTL && !Lang.zh.isRTL && !Lang.other.isRTL)
+    }
+
     @Test func vocabSetEncodesNullsLikeJS() throws {
         let set = VocabSet(id: "a", title: "T", createdAt: 1)
         let json = try JSONValue(encoding: set)

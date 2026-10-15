@@ -14,7 +14,10 @@
 //      duplicates, missing sides, glued dashes, typographic quotes), plus targeted structures
 //      (wrapped terms, number vocabulary, numbered table rows, uneven page columns, OCR columns
 //      with misdetected lines, custom card separators);
-//   4. hand-picked Unicode and regex edge cases and seeded fuzz text.
+//   4. hand-picked Unicode and regex edge cases and seeded fuzz text;
+//   5. Arabic and Chinese lists: brackets glued to dashes, the full-width colon, Han | pinyin |
+//      translation rows in every order and delimiter, pinyin under hints, header rows, bidi
+//      controls, harakat, tatweel and presentation forms.
 // Inputs that are not strings (tests only) are kept as JSON; the Swift test converts them with JS
 // String() semantics. Identical (text, options) inputs are recorded once.
 //
@@ -74,7 +77,7 @@ replayTests();
 // ---------------------------------------------------------------------------
 // 2. Every fixture under an options matrix
 
-const LANG_HINTS = ['fr', 'en', 'es', 'it', 'de', 'other'];
+const LANG_HINTS = ['fr', 'en', 'es', 'it', 'ar', 'zh', 'de', 'other'];
 const DELIMITERS = ['\t', ' - ', '-', ' – ', '—', ' = ', '=', ':', ': ', ' : ', ';', ',', '|', ' | ', '->', '→', '  ', ' ', '\n', '::', '/', 'x'];
 
 const OPTION_MATRIX = [
@@ -580,6 +583,147 @@ for (const text of EDGE) {
     for (let k = 0; k < len; k++) s += pick(rng, words) + pick(rng, SEPS);
     parse(s, pick(rng, OPTS));
   }
+}
+
+// ---------------------------------------------------------------------------
+// 5. Arabic and Chinese: closing brackets glued to a dash, the full-width colon, Han | pinyin |
+//    translation rows in every order and delimiter (with rows that break the shares), pinyin with
+//    tone marks, tone numbers or none under a zh hint, header rows, bidi controls, harakat,
+//    tatweel and presentation forms. Only BMP letters (see the note at the top).
+
+{
+  const rng = mulberry32(0xa2c7);
+  const ZH = [
+    ['你好', 'nǐ hǎo', 'ni3 hao3', 'ni hao', 'hallo'],
+    ['谢谢', 'xièxie', 'xie4xie5', 'xiexie', 'danke'],
+    ['再见', 'zàijiàn', 'zai4jian4', 'zaijian', 'auf Wiedersehen'],
+    ['老师', 'lǎoshī', 'lao3shi1', 'laoshi', 'der Lehrer, die Lehrerin'],
+    ['学生', 'xuésheng', 'xue2sheng5', 'xuesheng', 'der Schüler'],
+    ['朋友', 'péngyou', 'peng2you5', 'pengyou', 'der Freund'],
+    ['中国', 'Zhōngguó', 'Zhong1guo2', 'Zhongguo', 'China'],
+    ['晚安', "wǎn'ān", "wan3'an1", "wan'an", 'gute Nacht'],
+    ['对不起', 'duìbuqǐ', 'dui4bu5qi3', 'duibuqi', 'Entschuldigung'],
+    ['绿色', 'lǜsè', 'lv4se4', 'lüse', 'grün'],
+    ['我是学生。', 'Wǒ shì xuésheng.', 'Wo3 shi4 xue2sheng5.', 'Wo shi xuesheng.', 'Ich bin Schüler.'],
+    ['水', 'shuǐ', 'shui3', 'shui', 'das Wasser'],
+  ];
+  const AR = [
+    ['الكتاب', 'das Buch'], ['القلم', 'der Stift'], ['البيت', 'das Haus'], ['مَدْرَسَة', 'die Schule'],
+    ['المعلّم', 'der Lehrer'], ['سيارة، عربية', 'das Auto'], ['الشارع', 'die Strasse'], ['كـتـاب', 'das Buch'],
+    ['ﻛﺘﺎﺏ', 'das Buch'], ['مع السلامة', 'auf Wiedersehen'], ['شكرًا', 'danke'], ['أخ', 'der Bruder'],
+  ];
+  const OPTS = [
+    undefined, undefined, { termLang: 'zh' }, { termLang: 'ar' }, { termLang: 'zh', defLang: 'en' }, { mode: 'lines' },
+    { swap: true }, { orient: false }, { termLang: 'fr' }, { defLang: 'zh' },
+  ];
+  const BRACKETS = [['(', ')'], ['（', '）'], ['(', '）'], ['[', ']']];
+  const DASHES = ['-', '–', '—'];
+  const SPACES = [' ', ' ', '\u00A0', '\u3000', ''];
+  const BIDI = ['\u200F', '\u200E', '\u061C', '\u202B', '\u202C', '\u2067', '\u2069'];
+
+  // Closing brackets glued to dashes.
+  for (let i = 0; i < 260; i++) {
+    const rows = sample(rng, ZH, randInt(rng, 1, 7));
+    const lines = rows.map((r) => {
+      const [o, c] = pick(rng, BRACKETS);
+      const py = r[randInt(rng, 1, 3)];
+      const gap = chance(rng, 0.7) ? ' ' : '';
+      let line = `${r[0]}${gap}${o}${py}${c}${pick(rng, DASHES)}${pick(rng, SPACES)}${r[4]}`;
+      if (chance(rng, 0.08)) line += ' - extra';
+      if (chance(rng, 0.05)) line += '\tx';
+      if (chance(rng, 0.08)) line = `${line} ${o}b${c}${pick(rng, DASHES)} c`;
+      return line;
+    });
+    if (chance(rng, 0.2)) lines.splice(randInt(rng, 0, lines.length), 0, `${AR[randInt(rng, 0, AR.length - 1)][0]} (m)- Buch`);
+    if (chance(rng, 0.15)) lines.push('le chat (m)- die Katze', 'le chien (m)– der Hund');
+    parse(lines.join('\n'), pick(rng, OPTS));
+  }
+  parse('le chat (m)- die Katze\nle chien (m)- der Hund\nla vache (f)- die Kuh');
+  parse('你好)-\u00A0Hallo\n谢谢）—\u3000danke');
+
+  // The full-width colon.
+  for (let i = 0; i < 160; i++) {
+    const rows = sample(rng, ZH, randInt(rng, 1, 6));
+    const lines = rows.map((r) => {
+      const side = chance(rng, 0.5) ? r[0] : `${r[0]} (${r[1]})`;
+      const colon = pick(rng, ['：', '：', ' ：', '： ', ' ： ', '：\t', ': ']);
+      return chance(rng, 0.85) ? `${side}${colon}${r[4]}` : `注意：${side} - ${r[4]}`;
+    });
+    parse(lines.join('\n'), pick(rng, OPTS));
+  }
+  parse('你好：Hallo：hello\n谢谢：danke：thanks');
+  parse('：Hallo\n谢谢：\n：');
+
+  // Han | pinyin | translation in every order and delimiter.
+  const ORDERS = [[0, 1, 2], [1, 0, 2], [2, 0, 1], [2, 1, 0], [0, 2, 1], [1, 2, 0]];
+  const CELL_DELIMS = ['\t', ' - ', ';', '|', ' | ', ' = ', '  ', ' – ', ', '];
+  for (let i = 0; i < 520; i++) {
+    const order = pick(rng, ORDERS);
+    const delim = pick(rng, CELL_DELIMS);
+    const style = randInt(rng, 1, 3);
+    const rows = sample(rng, ZH, randInt(rng, 1, 9));
+    const lines = rows.map((r) => {
+      let py = r[chance(rng, 0.85) ? style : randInt(rng, 1, 3)];
+      if (chance(rng, 0.15)) {
+        const [o, c] = pick(rng, BRACKETS.slice(0, 3));
+        py = `${o}${py}${c}`;
+      }
+      const cells = [r[0], py, r[4]];
+      if (chance(rng, 0.06)) cells[randInt(rng, 0, 2)] = '';
+      if (chance(rng, 0.05)) cells[1] = 'Hallo Welt';
+      const ordered = order.map((k) => cells[k]);
+      return chance(rng, 0.07) ? ordered.slice(0, 2).join(delim) : ordered.join(delim);
+    });
+    if (chance(rng, 0.2)) lines.unshift(pick(rng, ['中文\tPinyin\tDeutsch', '汉字 | Pinyin | Deutsch', 'Chinesisch - Pinyin - Deutsch']));
+    if (chance(rng, 0.1)) lines.push('', 'Seite 2');
+    parse(lines.join('\n'), pick(rng, OPTS));
+  }
+  // Exactly at the share thresholds (60 % three-cell rows, 80 % Han and pinyin cells).
+  for (const [three, total] of [[3, 5], [2, 4], [4, 5], [5, 5], [4, 6]]) {
+    const rows = ZH.slice(0, total).map((r, k) => (k < three ? `${r[0]}\t${r[1]}\t${r[4]}` : `${r[0]}\t${r[4]}`));
+    parse(rows.join('\n'));
+    const mixed = ZH.slice(0, total).map((r, k) => `${k < three ? r[0] : r[4]}\t${k < three ? r[1] : 'Wort'}\t${r[4]}`);
+    parse(mixed.join('\n'));
+  }
+
+  // Pinyin (toneless, numbers, marks) under hints, both orders.
+  for (let i = 0; i < 160; i++) {
+    const style = randInt(rng, 1, 3);
+    const rows = sample(rng, ZH, randInt(rng, 1, 8));
+    const germanFirst = chance(rng, 0.3);
+    const delim = pick(rng, [' - ', '\t', ' = ', ': ', ';']);
+    const lines = rows.map((r) => (germanFirst ? `${r[4]}${delim}${r[style]}` : `${r[style]}${delim}${r[4]}`));
+    if (chance(rng, 0.15)) lines.push(`le chat${delim}die Katze`);
+    parse(lines.join('\n'), pick(rng, [{ termLang: 'zh' }, { termLang: 'zh', defLang: 'fr' }, { termLang: 'zh', swap: true }, undefined]));
+  }
+
+  // Arabic lists: delimiters, layouts, bidi controls, Latin mixed in.
+  for (let i = 0; i < 240; i++) {
+    const rows = sample(rng, AR, randInt(rng, 1, 8));
+    const layout = randInt(rng, 0, 4);
+    const delim = pick(rng, [' - ', '\t', ' = ', ' : ', ';', ' | ', ' – ', '  ']);
+    let lines;
+    if (layout === 0) lines = rows.map(([a, d]) => `${a}${delim}${d}`);
+    else if (layout === 1) lines = rows.map(([a, d]) => `${d}${delim}${a}`);
+    else if (layout === 2) lines = rows.flatMap(([a, d]) => [a, d]);
+    else if (layout === 3) lines = rows.flatMap(([a, d]) => [a, d, '']);
+    else lines = rows.map(([a, d]) => `${a} ${d}`);
+    lines = lines.map((l) => (chance(rng, 0.15) ? `${pick(rng, BIDI)}${l}${pick(rng, BIDI)}` : l));
+    if (chance(rng, 0.2)) lines.unshift(pick(rng, ['Arabisch - Deutsch', 'العربية | Deutsch', 'AR ; DE', 'عربي = Deutsch', 'arabe - allemand']));
+    if (chance(rng, 0.1)) lines.push('', '1');
+    parse(lines.join('\n'), pick(rng, OPTS));
+  }
+
+  // Header rows naming Arabic or Chinese, and names as cards.
+  const NAMES = ['Arabisch', 'arabe', 'Arabic', 'árabe', 'arabo', 'عربي', 'العربية', 'AR', 'Chinesisch', 'chinois', 'Chinese',
+    'chino', 'cinese', 'Mandarin', '中文', '汉语', '漢語', '普通话', '普通話', 'ZH', 'Pinyin'];
+  for (const name of NAMES) {
+    for (const other of ['Deutsch', 'DE', 'Pinyin', name]) {
+      parse(`${name} - ${other}\n你好 - Hallo\n谢谢 - danke`);
+      parse(`${name}\t${other}\nكتاب\tBuch\nقلم\tStift`);
+    }
+  }
+  parse('chinois - Chinesisch\narabe - Arabisch');
 }
 
 cases.emit();

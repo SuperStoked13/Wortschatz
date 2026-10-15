@@ -224,4 +224,81 @@ test('Write placeholder and the set start tile detail keep their contrast', () =
   expect(declsFor(rules('set'), '.set-start__detail').color).toBe('#FFFFFF');
 });
 
+/* ------------------------------------------------------ Arabic and Chinese text */
+
+const screenRules = (name) => SCREENS.find(([n]) => n === name)[1];
+
+// [ids, classes + attributes + pseudo-classes, types] of a selector without :is()/:not().
+function specificity(selector) {
+  const plain = selector.replace(/::[\w-]+/g, '');
+  const ids = (plain.match(/#[\w-]+/g) || []).length;
+  const classes = (plain.match(/\.[\w-]+|\[[^\]]*\]|:[\w-]+(\([^)]*\))?/g) || []).length;
+  const types = (plain.replace(/\[[^\]]*\]|\([^)]*\)|[.#:][\w-]+/g, ' ').match(/[a-z][\w-]*/gi) || []).length;
+  return [ids, classes, types];
+}
+
+// Whether rule a ({ spec, order }) overrides rule b on an element both match.
+function overrides(a, b) {
+  for (let i = 0; i < 3; i++) if (a.spec[i] !== b.spec[i]) return a.spec[i] > b.spec[i];
+  return a.order > b.order;
+}
+
+test('Arabic and Chinese text: natural spacing, Chinese fonts, start-aligned options, unbroken Arabic words', () => {
+  for (const lang of [':lang(ar)', ':lang(zh)']) {
+    const decls = declsFor(BASE, lang);
+    expect(decls['letter-spacing']).toBe('normal');
+    expect(decls['--tracking-tight']).toBe('normal');
+    expect(decls['--tracking-display']).toBe('normal');
+  }
+  const zh = declsFor(BASE, ':lang(zh)');
+  for (const font of ['"Segoe UI"', '"Microsoft YaHei UI"', '"PingFang SC"', '"Noto Sans CJK SC"']) expect(zh['--font-ui']).toContain(font);
+  expect(zh['--font-display']).toBe('var(--font-ui)');
+  expect(zh['font-family']).toBe('var(--font-ui)');
+  // Wrapped Arabic options align right inside their tile.
+  expect(declsFor(screenRules('learn'), '.ln-tile')['text-align']).toBe('start');
+  // Padding inside a word would break the joined Arabic letters apart.
+  for (const [name, sel] of [
+    ['write', '.wr-diff__del:lang(ar)'],
+    ['write', '.wr-diff__add:lang(ar)'],
+    ['exam', '.ex-diff:lang(ar)'],
+    ['dashboard', '.dash-mark:lang(ar)'],
+  ]) {
+    expect(declsFor(screenRules(name), sel).padding).toBe('0');
+  }
+  for (const [name, sel] of [
+    ['write', '.wr-fb__expected:lang(ar)'],
+    ['learn', '.ln-tile__text:lang(ar)'],
+    ['flashcards', '.fc-face__text:lang(ar)'],
+    ['set', '.set-term__term:lang(ar)'],
+    ['set', '.set-term__def:lang(ar)'],
+    ['exam', '.ex-q__prompt :lang(ar)'],
+    ['exam', '.ex-answer:lang(ar)'],
+  ]) {
+    expect(declsFor(screenRules(name), sel)['line-height']).toBe('1.6');
+  }
+  // The editor's hidden sizing copy wraps each line in its own direction, like the field.
+  expect(declsFor(screenRules('editor'), '.ed-grow::after')['unicode-bidi']).toBe('plaintext');
+});
+
+test('the Arabic prompt line height wins over every prompt rule of Lernen and Schreiben', () => {
+  // learn.css loads before write.css (index.html).
+  const ordered = ['learn', 'write'].flatMap((name) => screenRules(name));
+  const entries = [];
+  ordered.forEach((r, order) => {
+    if (!('line-height' in r.decls)) return;
+    for (const sel of r.selector.split(',').map((s) => s.trim())) {
+      if (sel.includes('.wr-q__prompt')) entries.push({ sel, order, spec: specificity(sel), value: r.decls['line-height'] });
+    }
+  });
+  const arabic = entries.filter((e) => e.sel.endsWith(':lang(ar)'));
+  expect(arabic.map((e) => e.value)).toEqual(['1.6', '1.6']);
+  const others = entries.filter((e) => !e.sel.endsWith(':lang(ar)'));
+  expect(others.length).toBeGreaterThan(4);
+  for (const other of others) {
+    // A multiple choice prompt (.ln-mc) is matched by the Lernen rule, a written one by Schreiben's.
+    const mine = arabic.find((a) => a.sel.includes('.ln-mc') === other.sel.includes('.ln-mc'));
+    if (!overrides(mine, other)) throw new Error(`${other.sel} overrides ${mine.sel}`);
+  }
+});
+
 await run('styles.test.js');

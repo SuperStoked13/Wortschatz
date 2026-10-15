@@ -13,7 +13,10 @@ import Foundation
 /// Language codes of a set side (`LANG_CODES` in db.js). Usable as a dictionary key that encodes
 /// as a JSON object key (`[Lang: Double]` → `{"fr": 1.2, ...}`).
 public enum Lang: String, Codable, Sendable, CaseIterable, Hashable, CodingKeyRepresentable {
-    case fr, en, es, it, de, other
+    case fr, en, es, it, ar, zh, de, other
+
+    /// Written right to left (Arabic; `rtl` of the `LANGS` entry in labels.js).
+    public var isRTL: Bool { self == .ar }
 }
 
 // MARK: - Cards and sets

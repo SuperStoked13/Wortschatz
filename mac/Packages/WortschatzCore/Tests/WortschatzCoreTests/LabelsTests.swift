@@ -12,8 +12,23 @@ struct LabelsTests {
         #expect(Labels.langShort(.other) == "—")
         #expect(Labels.langName("xx") == "Andere")
         #expect(Labels.langPair(.fr, .de) == "FR → DE")
-        #expect(Labels.LANG_ORDER == [.fr, .en, .es, .it, .de, .other])
+        #expect(Labels.LANG_ORDER == [.fr, .en, .es, .it, .ar, .zh, .de, .other])
         #expect(Set(Labels.LANGS.keys) == Set(Lang.allCases))
+        #expect(Set(Labels.LANG_ORDER) == Set(Lang.allCases))
+    }
+
+    @Test("Arabic and Chinese")
+    func arabicAndChinese() {
+        #expect(Labels.LANGS[.ar] == LangInfo(name: "Arabisch", short: "AR", bcp47: "ar"))
+        #expect(Labels.LANGS[.zh] == LangInfo(name: "Chinesisch", short: "ZH", bcp47: "zh-CN"))
+        #expect(Labels.langName("ar") == "Arabisch")
+        #expect(Labels.langPair(.zh, .de) == "ZH → DE")
+        // Only Arabic is written right to left.
+        #expect(Lang.allCases.filter(\.isRTL) == [.ar])
+        #expect(Labels.NOTE_LABELS[.pinyin] == "Nur Pinyin")
+        #expect(Labels.NOTE_LABELS[.tones] == "Töne")
+        #expect(Labels.NOTE_LABELS[.variant] == "Schreibvariante")
+        #expect(Labels.HINT_LABELS[.tonesOnly] == "Nur die Töne fehlen")
     }
 
     @Test func statusNotesAndHints() {

@@ -13,7 +13,7 @@
 // sound (lib/sounds.js) — only when they happen, never when a screen is shown again.
 
 import { h } from '../lib/dom.js';
-import { LANGS, NOTE_LABELS, HINT_LABELS } from '../lib/labels.js';
+import { NOTE_LABELS, HINT_LABELS, textAttrs } from '../lib/labels.js';
 import { speak, stopSpeaking } from '../lib/speech.js';
 import { playStudyStep } from '../lib/sounds.js';
 import { db } from '../store/db.js';
@@ -53,8 +53,6 @@ const SUBSET_WHAT = {
   learning: 'nur die nicht gemeisterten Begriffe',
   missed: 'nur die zuletzt falsch beantworteten Begriffe',
 };
-
-const bcp47 = (lang) => (LANGS[lang] && LANGS[lang].bcp47) || null;
 
 function entryState() {
   const st = history.state;
@@ -189,7 +187,7 @@ export function render(outlet, ctx) {
     live.textContent = '';
     announceTimer = setTimeout(() => {
       if (disposed) return;
-      live.replaceChildren(...parts.map((p) => (typeof p === 'string' ? p : h('span', { lang: bcp47(p.lang) }, p.text))));
+      live.replaceChildren(...parts.map((p) => (typeof p === 'string' ? p : h('span', textAttrs(p.lang), p.text))));
     }, 60);
   }
 
@@ -467,7 +465,7 @@ export function render(outlet, ctx) {
     });
     const lead = isDontKnow ? 'Kein Problem.' : 'Nicht ganz.';
     const tail = last.copy ? ' Tippe die richtige Antwort ab.' : '';
-    announce(`${lead} Richtige Antwort: ${info.expected}.${hintLabel ? ` ${hintLabel}.` : ''}${tail}`);
+    announce(`${lead} Richtige Antwort: `, { text: info.expected, lang: info.answerLang }, `.${hintLabel ? ` ${hintLabel}.` : ''}${tail}`);
     lock();
   }
 

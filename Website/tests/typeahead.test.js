@@ -14,6 +14,7 @@ import {
   returnLabel,
   typingHint,
   correctionHint,
+  digitValue,
 } from '../src/core/typeahead.js';
 
 const pick = (typed, choices, lang = 'fr') => typeAhead(typed, choices, lang).selected;
@@ -307,6 +308,96 @@ test('The hint under the tiles says what Enter does and how to correct', () => {
   expect(correctionHint(false)).toBe('Rücktaste korrigiert · Esc löscht');
   expect(correctionHint(true)).toBe('⌫ korrigiert · esc löscht');
   expect([correctionHint(false), correctionHint(true), 'Eingabe gelöscht'].join(' ').includes('ß')).toBe(false);
+});
+
+/* ------------------------------------------------------- Arabic, Chinese */
+
+test('Arabic: vowel marks, tatweel and presentation forms do not matter', () => {
+  expect(pick('كتا', ['كِتَابٌ', 'قلم', 'بيت'], 'ar')).toBe(0);
+  expect(pick('كِتَا', ['كتاب', 'قلم', 'بيت'], 'ar')).toBe(0);
+  expect(pick('كتـا', ['كتاب', 'قلم', 'بيت'], 'ar')).toBe(0);
+  expect(pick('كتا', ['كتـــاب', 'قلم', 'بيت'], 'ar')).toBe(0);
+  expect(pick('مد', ['ﻣﺪﺭﺳﺔ', 'قلم', 'بيت'], 'ar')).toBe(0);
+  // The typed part is underlined over the original characters, marks included.
+  expect(typeAhead('كتا', ['كِتَابٌ'], 'ar').ranges[0]).toEqual([0, 5]);
+});
+
+test('Arabic: hamza forms, ة/ه and ى/ي do not matter', () => {
+  expect(pick('اب', ['أب', 'أم', 'بيت'], 'ar')).toBe(0);
+  expect(pick('اس', ['إسلام', 'قلم'], 'ar')).toBe(0);
+  expect(pick('اسم', ['ٱسم', 'قلم'], 'ar')).toBe(0);
+  expect(pick('مسو', ['مسؤول', 'قلم'], 'ar')).toBe(0);
+  expect(pick('ريي', ['رئيس', 'قلم'], 'ar')).toBe(0);
+  expect(pick('مدرسه', ['مدرسة', 'مدرس', 'قلم'], 'ar')).toBe(0);
+  expect(pick('مستشفي', ['مستشفى', 'قلم'], 'ar')).toBe(0);
+});
+
+test('Arabic: ال is a glued article', () => {
+  const choices = ['الكتاب', 'المدرسة', 'قلم', 'بيت'];
+  expect(articlePrefixes('ar')).toEqual(['ال']);
+  expect(articlePrefixes()).toContain('ال');
+  expect(articlePrefixes()).toContain('la ');
+  // Without the article.
+  expect(pick('كت', choices, 'ar')).toBe(0);
+  expect(typeAhead('كت', choices, 'ar').ranges[0]).toEqual([2, 4]);
+  expect(pick('مد', choices, 'ar')).toBe(1);
+  // The article alone picks nothing; two letters after it do.
+  expect(pick('ال', choices, 'ar')).toBe(null);
+  expect(typeAhead('ال', choices, 'ar').matching).toEqual([0, 1]);
+  expect(pick('الك', choices, 'ar')).toBe(null);
+  expect(pick('الكت', choices, 'ar')).toBe(0);
+  // Any language (null) knows it too.
+  expect(pick('كت', choices, null)).toBe(0);
+});
+
+test('Arabic: ، separates alternatives', () => {
+  expect(pick('دف', ['كتاب، دفتر', 'قلم', 'بيت'], 'ar')).toBe(0);
+  expect(typeAhead('دف', ['كتاب، دفتر'], 'ar').ranges[0]).toEqual([6, 8]);
+});
+
+test('Chinese: pinyin after the characters starts an option, spaces do not matter', () => {
+  const choices = ['你好 (nǐ hǎo)', '谢谢 (xiè xie)', '再见（zài jiàn）', '您好 nín hǎo'];
+  expect(pick('xie', choices, 'zh')).toBe(1);
+  expect(pick('zai', choices, 'zh')).toBe(2);
+  expect(pick('nin', choices, 'zh')).toBe(3);
+  // "ni" starts nǐ hǎo and nín hǎo.
+  expect(pick('ni', choices, 'zh')).toBe(null);
+  expect(typeAhead('ni', choices, 'zh').matching).toEqual([0, 3]);
+  expect(pick('nih', choices, 'zh')).toBe(0);
+  expect(pick('ni hao', choices, 'zh')).toBe(0);
+  expect(pick('nihao', choices, 'zh')).toBe(0);
+  expect(pick('zaijian', choices, 'zh')).toBe(2);
+  expect(typeAhead('nih', choices, 'zh').ranges[0]).toEqual([4, 8]);
+  // The characters still work.
+  expect(pick('你好', choices, 'zh')).toBe(0);
+  expect(pick('你 好', choices, 'zh')).toBe(0);
+});
+
+test('Chinese: spaces between characters never matter, other spaces only for Chinese', () => {
+  expect(pick('你好', ['你 好', '谢谢'], 'fr')).toBe(0);
+  expect(pick('xiexie', ['谢谢 (xiè xie)', '你好 (nǐ hǎo)'], 'fr')).toBe(null);
+  expect(pick('xie xie', ['谢谢 (xiè xie)', '你好 (nǐ hǎo)'], 'fr')).toBe(0);
+});
+
+test('Latin options do not start after a bracket', () => {
+  expect(pick('fr', ['le pain (frais)', 'le vin'], 'fr')).toBe(null);
+  expect(pick('fr', ['le pain (frais)', 'le vin'], 'zh')).toBe(null);
+});
+
+test('Arabic-Indic digits choose like 1–4 and 0', () => {
+  expect(digitValue('3')).toBe(3);
+  expect(digitValue(3)).toBe(3);
+  expect(digitValue('٠')).toBe(0);
+  expect(digitValue('١')).toBe(1);
+  expect(digitValue('٩')).toBe(9);
+  expect(digitValue('۰')).toBe(0);
+  expect(digitValue('۴')).toBe(4);
+  for (const x of ['a', '', '12', '١٢', null, undefined, ' ']) expect(digitValue(x)).toBe(null);
+  const choices = ['a', 'b', 'c', 'd'];
+  expect(typingKey(TYPING_IDLE, { kind: 'digit', n: '٢' }, { choices }).action).toEqual({ type: 'choose', index: 1 });
+  expect(typingKey(TYPING_IDLE, { kind: 'digit', n: '۴' }, { choices }).action).toEqual({ type: 'choose', index: 3 });
+  expect(typingKey(TYPING_IDLE, { kind: 'digit', n: '٠' }, { choices }).action).toEqual({ type: 'dontKnow' });
+  expect(typingKey(TYPING_IDLE, { kind: 'digit', n: '٥' }, { choices }).action).toBe(null);
 });
 
 await run('typeahead.test.js');

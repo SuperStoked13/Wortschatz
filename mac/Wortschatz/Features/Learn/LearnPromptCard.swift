@@ -31,7 +31,7 @@ struct LearnPromptCard<Answer: View>: View {
                         .foregroundStyle(.primary)
                         .multilineTextAlignment(.leading)
                         .fixedSize(horizontal: false, vertical: true)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .cardTextLine(question.promptLang)
                         // The first question glides in like every later one.
                         .entranceShift(x: StudyEntrance.promptShift)
                         .id(question.qid)
@@ -184,6 +184,7 @@ struct LearnWrittenSection: View {
         let wantsFocus = LearnKeyRouter.focus(for: state) == .answer
         return StudyAnswerBox(
             correctAnswer: correctAnswer,
+            lang: question.answerLang,
             // Ringed as soon as the step wants the keys there, not only once AppKit has moved
             // them (a few frames later): the ring no longer flickers in after the field.
             isActive: wantsFocus || focus.wrappedValue == .answer,
@@ -194,6 +195,7 @@ struct LearnWrittenSection: View {
                 text: Binding(get: { controller.state.draft }, set: { controller.send(.draftChanged($0)) }),
                 selection: $selection,
                 isCopy: copy,
+                lang: question.answerLang,
                 placeholder: copy ? "Richtige Antwort abtippen" : question.placeholder,
                 focus: focus,
                 wantsFocus: wantsFocus,
@@ -203,8 +205,10 @@ struct LearnWrittenSection: View {
         }
     }
 
-    /// The special-character bar inserts at the caret (or replaces the selection).
+    /// The special-character bar inserts at the caret (or replaces the selection); not while an
+    /// input method composes in the field (its marked text is not in `draft` yet).
     private func insert(_ character: String) {
+        guard !LearnKeyRouter.isComposingText else { return }
         var text = state.draft
         var caret = selection
         SpecialCharacters.insert(character, into: &text, selection: &caret)
@@ -221,6 +225,8 @@ private struct LearnAnswerField: View {
     @Binding var text: String
     @Binding var selection: TextSelection?
     let isCopy: Bool
+    /// The answer's language (Arabic is typed from the right edge).
+    let lang: Lang
     let placeholder: String
     var focus: FocusState<LearnKeyRouter.Focus?>.Binding
     /// The step wants the keys in this field (no popover, sheet or alert is open).
@@ -235,6 +241,7 @@ private struct LearnAnswerField: View {
         field
             .textFieldStyle(.plain)
             .font(Typography.answerField)
+            .cardFieldDirection(lang)
             .autocorrectionDisabled()
             .writingToolsBehavior(.disabled)
             .focused(focus, equals: .answer)
@@ -266,6 +273,8 @@ private struct LearnAnswerField: View {
 struct StudyAnswerBox<Field: View>: View {
     /// What was typed, after a correct answer; nil while the field asks.
     let correctAnswer: AttributedString?
+    /// The answer's language: Arabic stays at the right edge, where the field had it.
+    var lang: Lang = .other
     /// The field has (or is about to get) the keys.
     var isActive = false
     /// A rejected copy.
@@ -286,7 +295,7 @@ struct StudyAnswerBox<Field: View>: View {
                         .font(Typography.answerField)
                         .foregroundStyle(Theme.success.text)
                         .lineLimit(3)
-                    Spacer(minLength: 0)
+                        .cardTextLine(lang)
                     Image(systemName: "checkmark.circle.fill")
                         .font(.system(size: 22, weight: .semibold))
                         .symbolRenderingMode(.palette)
@@ -391,6 +400,7 @@ private struct LearnCorrectDetails: View {
                         .foregroundStyle(.secondary)
                     Text(LearnText.spoken(exact.expected, lang: answerLang))
                         .fontWeight(.semibold)
+                        .cardTextDirection(answerLang)
                 }
                 .font(.title3)
                 .accessibilityElement(children: .combine)
@@ -438,6 +448,7 @@ private struct LearnMissDetails<Copy: View>: View {
                         .font(Typography.answerField)
                         .foregroundStyle(Theme.success.text)
                         .fixedSize(horizontal: false, vertical: true)
+                        .cardTextDirection(question.answerLang)
                     LearnIconButton(label: "Antwort vorlesen", help: "Antwort vorlesen", systemImage: "speaker.wave.2") {
                         onSpeak(question.expected, question.answerLang)
                     }
@@ -500,6 +511,7 @@ struct StudyDiffText: View {
         }
         .font(font)
         .fixedSize(horizontal: false, vertical: true)
+        .cardTextDirection(lang)
         .accessibilityLabel(Text(LearnText.spoken(given, lang: lang)))
     }
 

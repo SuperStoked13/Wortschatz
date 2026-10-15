@@ -78,7 +78,7 @@ export function segmentedProgress({ size = 'md', label = 'Lernfortschritt' } = {
 /* ----------------------------------------------------------------- sidebar */
 
 export function createLearnSidebar({ setId, title, onOptions, onRestart }) {
-  const titleEl = h('span', { class: 'wr-side__title' }, title);
+  const titleEl = h('span', { class: 'wr-side__title', dir: 'auto' }, title);
   const back = h(
     'a',
     { class: 'wr-side__back', href: `#/set/${setId}`, 'aria-label': `Zurück zum Lernset ${title}` },
