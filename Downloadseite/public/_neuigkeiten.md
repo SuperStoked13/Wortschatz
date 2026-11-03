@@ -27,6 +27,10 @@ erscheint nicht auf der Seite.
 
 ## Nächste Version
 
+## 1.2 – 2026-11-03
+
+- Neu (Windows): Die Windows-App ist jetzt ein eigenes Programm statt einer Webseite im Fenster. Sie sieht aus wie die Mac-App, startet schneller und hat Karteikarten, Prüfung, Töne, Rechtsklick-Menüs und Tastenkürzel. Beim ersten Start übernimmt sie alles aus der bisherigen App und entfernt diese danach.
+
 ## 1.1 – 2026-10-15
 
 - Neu: Arabisch und Mandarin als Lernsprachen. Bei Mandarin zählen Schriftzeichen oder Pinyin, Töne gehen auch als Zahlen (ni3 hao3). Bei Arabisch spielen Vokalzeichen keine Rolle.

@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Port of mac/Packages/WortschatzCore/Tests: parity tests replay the same JS fixtures
+       (mac/Packages/WortschatzCore/Tests/WortschatzCoreTests/Fixtures, read in place). -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit" />
+    <PackageReference Include="xunit.runner.visualstudio" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../src/Wortschatz.Core/Wortschatz.Core.csproj" />
+  </ItemGroup>
+</Project>

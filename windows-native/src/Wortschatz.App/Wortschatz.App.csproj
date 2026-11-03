@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- The native Windows app (Avalonia, Glas design). Built for Windows with build.sh; runs on Linux too (dev/tests). -->
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>Wortschatz.App</RootNamespace>
+    <AssemblyName>Wortschatz</AssemblyName>
+    <Product>Wortschatz</Product>
+    <Version>1.2.0</Version>
+    <ApplicationIcon Condition="Exists('Assets\app.ico')">Assets\app.ico</ApplicationIcon>
+    <BuiltInComInteropSupport>true</BuiltInComInteropSupport>
+    <ApplicationManifest Condition="Exists('app.manifest')">app.manifest</ApplicationManifest>
+  </PropertyGroup>
+  <ItemGroup>
+    <AvaloniaResource Include="Assets\**" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Avalonia" />
+    <PackageReference Include="Avalonia.Desktop" />
+    <PackageReference Include="Avalonia.Themes.Simple" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Wortschatz.Core\Wortschatz.Core.csproj" />
+  </ItemGroup>
+</Project>

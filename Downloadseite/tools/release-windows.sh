@@ -1,17 +1,19 @@
 #!/bin/bash
-# Legt die Windows-App (windows/dist/Wortschatz.exe) als Download in Downloadseite/releases/ ab,
-# zusammen mit windows.json. Der laufende Server übernimmt die neue Version innert 15 Sekunden.
+# Legt die Windows-App (windows-native/dist/Wortschatz.exe, native C#-App seit 1.2) als Download in
+# Downloadseite/releases/ ab, zusammen mit windows.json. Der laufende Server übernimmt die neue Version innert 15 Sekunden.
 #
-# Aufruf (im Terminal):
-#   Downloadseite/tools/release-windows.sh                baut zuerst mit windows/build.sh (nur auf dem Mac)
-#   Downloadseite/tools/release-windows.sh --skip-build   die vorhandene windows/dist/Wortschatz.exe verwenden
-#   Downloadseite/tools/release-windows.sh --version 1.1  Versionsnummer selbst setzen
+# Aufruf (im Terminal, braucht das .NET SDK 10, läuft unter Linux, macOS und Windows):
+#   Downloadseite/tools/release-windows.sh                testet und baut zuerst mit windows-native/build.sh
+#   Downloadseite/tools/release-windows.sh --skip-build   die vorhandene windows-native/dist/Wortschatz.exe verwenden
+#   Downloadseite/tools/release-windows.sh --version 1.2  Versionsnummer selbst setzen
+#
+# Die frühere Windows-App (windows/ + Website/, WebView2, bis 1.1) wird nicht mehr ausgeliefert.
 set -euo pipefail
 
 SITE="$(cd "$(dirname "$0")/.." && pwd)"
 PROJECT="$(cd "$SITE/.." && pwd)"
-EXE="$PROJECT/windows/dist/Wortschatz.exe"
-WINRES="$PROJECT/windows/host/winres/winres.json"
+EXE="$PROJECT/windows-native/dist/Wortschatz.exe"
+CSPROJ="$PROJECT/windows-native/src/Wortschatz.App/Wortschatz.App.csproj"
 OUT="$SITE/releases"
 
 BUILD=1
@@ -30,11 +32,11 @@ sha256() {
 }
 
 if [[ "$BUILD" == 1 ]]; then
-  "$PROJECT/windows/build.sh"
+  "$PROJECT/windows-native/build.sh" test
 fi
 
 if [[ ! -f "$EXE" ]]; then
-  echo "Keine Windows-App gefunden unter $EXE. Zuerst windows/build.sh ausführen."
+  echo "Keine Windows-App gefunden unter $EXE. Zuerst windows-native/build.sh ausführen."
   exit 1
 fi
 if [[ "$(head -c 2 "$EXE")" != "MZ" ]]; then
@@ -42,9 +44,9 @@ if [[ "$(head -c 2 "$EXE")" != "MZ" ]]; then
   exit 1
 fi
 
-# Version aus den Windows-Ressourcen (ProductVersion "1.0.0" wird zu "1.0").
+# Version aus dem Projekt (<Version>1.2.0</Version> wird zu "1.2").
 if [[ -z "$VERSION" ]]; then
-  VERSION=$(grep -m1 '"ProductVersion"' "$WINRES" 2>/dev/null | sed -E 's/.*"ProductVersion": *"([^"]+)".*/\1/' || true)
+  VERSION=$(grep -m1 '<Version>' "$CSPROJ" 2>/dev/null | sed -E 's/.*<Version>([^<]+)<\/Version>.*/\1/' || true)
   [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.0$ ]] && VERSION="${VERSION%.0}"
 fi
 VERSION="${VERSION:-1.0}"

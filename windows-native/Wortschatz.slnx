@@ -1,0 +1,12 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Wortschatz.App/Wortschatz.App.csproj" />
+    <Project Path="src/Wortschatz.Core/Wortschatz.Core.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Wortschatz.Core.Tests/Wortschatz.Core.Tests.csproj" />
+  </Folder>
+  <Folder Name="/tools/">
+    <Project Path="tools/Wortschatz.Snapshots/Wortschatz.Snapshots.csproj" />
+  </Folder>
+</Solution>
