@@ -7,10 +7,19 @@ namespace Wortschatz.Core;
 // multiple choice), 1 = familiar (asked written), 2 = mastered (not asked any more). A correct answer
 // moves the card up one stage, a wrong one sends it back to stage 0.
 //
-// The session works in rounds over an active batch of up to `roundSize` unmastered cards: one question
-// per card in shuffled order, plus one retry at the end of the round for a card answered wrong. The next
-// round drops the mastered cards from the batch and refills it (stage-1 cards first, then stage-0 cards
-// in order) until every card in scope is mastered.
+// Spacing (Abstand, since 1.4): a card comes back only after at least MIN_GAP (10) other questions –
+// fewer only when fewer cards are left – and at the latest after about MAX_WAIT (15); in between, the
+// longer it waits the likelier it is picked, mixed with new cards (at most MAX_REPEATS questions in a row
+// of cards asked before while there are new ones, no new card while MAX_LEARNING cards are being learned
+// unless twice as many repeats came in a row). A wrong answer sends the card back to stage 0; it too
+// comes back only after the gap. New cards are taken stage-1 cards first, then stage-0 cards, in order.
+//
+// A round is the next `roundSize` questions (then the checkpoint shows the interim result), planned when
+// the round starts as if every answer were right (PlanRound); an actual answer adjusts the card's later
+// questions in the round to its new stage (FollowStage).
+//
+// Rechecks (Nachkontrolle, opt-in, only for sessions with more than 60 cards): a card answered wrong in
+// the session is asked once more RECHECK_GAP to RECHECK_WAIT (30–50) questions after it was mastered.
 //
 // Every function takes a LearnState and returns a NEW state; inputs are never changed. Each function
 // first repairs its input (CopyState), which also makes the private copy the function then mutates.
@@ -33,9 +42,10 @@ public sealed record Choice(string CardId, string Text) : IJsonEncodable
 
 /// <summary>
 /// A queued question as stored in the state (<c>state.queue[]</c>). <c>Choices</c> only for Mc;
-/// <c>RetryChoices</c> (options for a re-queue after a miss) only when multiple choice is possible.
-/// Null lists are omitted in JSON, like JS. Qid: "&lt;round&gt;.1:&lt;cardId&gt;" (main question),
-/// ".2:" (retry after a miss), ".3:" (repetition question).
+/// <c>RetryChoices</c> (options for when the question has to be asked at stage 0 after all) only when
+/// multiple choice is possible. Null lists are omitted in JSON, like JS. Qid: "&lt;round&gt;.&lt;kind&gt;:&lt;cardId&gt;",
+/// kind 1 = learning, 3 = repetition question, 4 = recheck; a card's n-th question of the same round
+/// (n ≥ 2) is "&lt;round&gt;.&lt;kind&gt;.&lt;n&gt;:&lt;cardId&gt;". (".2:" was the retry after a miss before 1.4.)
 /// </summary>
 public sealed record LearnQueueQuestion(
     string Qid, string CardId, QuestionType Type, AskSide Ask, IReadOnlyList<Choice>? Choices = null,
@@ -69,7 +79,7 @@ public sealed record LearnRoundLogEntry(string? Qid, string CardId, QuestionType
     }
 }
 
-/// <summary>A closed round (<c>state.rounds[]</c>); <c>CardIds</c> is the round's batch.</summary>
+/// <summary>A closed round (<c>state.rounds[]</c>); <c>CardIds</c>: the cards answered in it, in the order of their first answer.</summary>
 public sealed record LearnRoundRecord(int Round, int Answered, int Correct, IReadOnlyList<string> CardIds) : IJsonEncodable
 {
     public JSONValue ToJson() => JSONValue.Obj(("round", Round), ("answered", Answered), ("correct", Correct), ("cardIds", CardIds.ToJsonArray()));
@@ -89,10 +99,9 @@ public sealed record LearnSessionOptions(int RoundSize = 7, bool Mc = true, bool
 }
 
 /// <summary>
-/// <c>state.review</c>: repetition questions (Wiederholungsfragen, a Mac option the web app lacks). The
-/// cards mastered when the session started are asked once more, a few per round next to the cards being
-/// learned (a whole round once nothing is left to learn), the ones answered longest ago first. A wrong
-/// answer sends a card back to stage 0.
+/// <c>state.review</c>: repetition questions (Wiederholungsfragen). The cards mastered when the session
+/// started are asked once more, mixed in among the new cards (about every third), the ones answered longest
+/// ago first. A wrong answer sends a card back to stage 0.
 /// </summary>
 public sealed class LearnReview : IJsonEncodable
 {
@@ -104,6 +113,20 @@ public sealed class LearnReview : IJsonEncodable
     public LearnReview Clone() => new() { Due = [.. Due], Results = new(Results, StringComparer.Ordinal) };
 
     public JSONValue ToJson() => JSONValue.Obj(("due", Due.ToJsonArray()), ("results", LearnJson.Map(Results, b => b)));
+}
+
+/// <summary>
+/// <c>state.recheck</c>: rechecks (Nachkontrolle). A card answered wrong in the session waits here once it is
+/// mastered, until its recheck is planned 30–50 questions later; a wrong recheck sends it back to stage 0.
+/// </summary>
+public sealed class LearnRecheck : IJsonEncodable
+{
+    /// <summary>Mastered cards waiting for their recheck (not queued yet), in the order they were mastered.</summary>
+    public List<string> Due { get; set; } = [];
+
+    public LearnRecheck Clone() => new() { Due = [.. Due] };
+
+    public JSONValue ToJson() => JSONValue.Obj(("due", Due.ToJsonArray()));
 }
 
 /// <summary>
@@ -131,12 +154,14 @@ public sealed class LearnState : IJsonEncodable
     public List<string> InitiallyMastered { get; set; } = [];
     /// <summary>cardId → true once answered (ever).</summary>
     public Dictionary<string, bool> Seen { get; set; } = new(StringComparer.Ordinal);
-    /// <summary>The current batch (≤ roundSize unmastered cards).</summary>
-    public List<string> Active { get; set; } = [];
     public int Round { get; set; } = 1;
     public List<LearnQueueQuestion> Queue { get; set; } = [];
-    /// <summary>cardId → true when its retry was queued this round.</summary>
-    public Dictionary<string, bool> Retried { get; set; } = new(StringComparer.Ordinal);
+    /// <summary>Answers given in the session (the number of the next question); never goes back.</summary>
+    public int Clock { get; set; }
+    /// <summary>cardId → Clock value of its last answer in the session.</summary>
+    public Dictionary<string, int> LastAt { get; set; } = new(StringComparer.Ordinal);
+    /// <summary>How many of the last answers in a row were to cards asked before in the session.</summary>
+    public int Repeats { get; set; }
     public List<LearnRoundLogEntry> RoundLog { get; set; } = [];
     public List<LearnRoundRecord> Rounds { get; set; } = [];
     public int Answered { get; set; }
@@ -151,6 +176,8 @@ public sealed class LearnState : IJsonEncodable
     public double ElapsedMs { get; set; }
     /// <summary>The repetition questions; null without them (always for the web app's states).</summary>
     public LearnReview? Review { get; set; }
+    /// <summary>The rechecks; null without them.</summary>
+    public LearnRecheck? Recheck { get; set; }
 
     /// <summary>A repaired state from any JSON value (<c>LearnEngine.CopyState(json)</c>); never fails.</summary>
     public static LearnState FromJson(JSONValue json) => LearnEngine.CopyState(json);
@@ -167,10 +194,11 @@ public sealed class LearnState : IJsonEncodable
             ["stage"] = LearnJson.Map(Stage, n => n),
             ["initiallyMastered"] = InitiallyMastered.ToJsonArray(),
             ["seen"] = LearnJson.Map(Seen, b => b),
-            ["active"] = Active.ToJsonArray(),
             ["round"] = Round,
             ["queue"] = Queue.ToJsonArray(),
-            ["retried"] = LearnJson.Map(Retried, b => b),
+            ["clock"] = Clock,
+            ["lastAt"] = LearnJson.Map(LastAt, n => n),
+            ["repeats"] = Repeats,
             ["roundLog"] = RoundLog.ToJsonArray(),
             ["rounds"] = Rounds.ToJsonArray(),
             ["answered"] = Answered,
@@ -183,6 +211,7 @@ public sealed class LearnState : IJsonEncodable
             ["elapsedMs"] = ElapsedMs,
         };
         if (Review is not null) map["review"] = Review.ToJson();
+        if (Recheck is not null) map["recheck"] = Recheck.ToJson();
         return JSONValue.Object(map);
     }
 }
@@ -204,6 +233,19 @@ public static class LearnEngine
     public const double IdleGapMs = 5 * 60 * 1000;
     /// <summary>The stage of a mastered card (<c>MASTERY_STREAK</c>).</summary>
     public const int MasteredStage = Mastery.MASTERY_STREAK;
+    /// <summary>Other questions at least between two questions of a card (fewer only when fewer cards are left).</summary>
+    public const int MIN_GAP = 10;
+    /// <summary>After this many other questions a waiting card is asked for sure.</summary>
+    public const int MAX_WAIT = 15;
+    /// <summary>The same for rechecks, counted from the answer that mastered the card.</summary>
+    public const int RECHECK_GAP = 30;
+    public const int RECHECK_WAIT = 50;
+    /// <summary>At most this many questions in a row of cards asked before while there are new cards.</summary>
+    public const int MAX_REPEATS = 3;
+    /// <summary>No new card while this many cards are being learned (unless 2 × MAX_REPEATS repeats came in a row).</summary>
+    public const int MAX_LEARNING = 10;
+    /// <summary>Rechecks only in sessions with more cards than this.</summary>
+    public const int RECHECK_MIN_CARDS = 60;
 
     /// <summary>The public view of a question (<c>current(state)</c>): <c>Choices</c> only for Mc.</summary>
     public sealed record Question(string Qid, string CardId, QuestionType Type, AskSide Ask, IReadOnlyList<Choice>? Choices = null) : IJsonEncodable
@@ -294,11 +336,12 @@ public static class LearnEngine
     /// <summary>
     /// <c>createLearn(cards, { answerWith, learn }, { subset, progress, rng, now })</c>. Cards without an id,
     /// repeated ids (the first wins) and cards with an empty side are skipped; options come from every
-    /// askable card of <paramref name="cards"/>. A non-finite now becomes 0. <paramref name="review"/> (Mac only) adds
-    /// repetition questions for the cards mastered already; without it the session is the web app's.
+    /// askable card of <paramref name="cards"/>. A non-finite now becomes 0. <paramref name="review"/> adds repetition
+    /// questions for the cards mastered already, <paramref name="recheck"/> rechecks (sessions with more than
+    /// RECHECK_MIN_CARDS cards only).
     /// </summary>
     public static LearnState CreateLearn(IReadOnlyList<Card> cards, AnswerWith answerWith, LearnOptions learn, StudySubset? subset = null,
-        IReadOnlyDictionary<string, CardProgress>? progress = null, RNG? rng = null, double? now = null, bool review = false)
+        IReadOnlyDictionary<string, CardProgress>? progress = null, RNG? rng = null, double? now = null, bool review = false, bool recheck = false)
     {
         rng ??= Rand.SystemRNG();
         progress ??= new Dictionary<string, CardProgress>();
@@ -323,18 +366,17 @@ public static class LearnEngine
             Subset = sub, AnswerWith = answerWith, Learn = NormalizeLearn(learn), Order = order, Stage = stage,
             InitiallyMastered = mastered, Seen = seen, StartedAt = at, UpdatedAt = at,
             Review = review ? new LearnReview { Due = MostOverdueFirst(mastered, progress) } : null,
+            Recheck = recheck && order.Count > RECHECK_MIN_CARDS ? new LearnRecheck() : null,
         };
-        FillBatch(s);
-        var reviews = TakeReviews(s);
-        s.Queue = BuildQueue(s, cards, rng, reviews);
+        s.Queue = PlanRound(s, cards, rng);
         MarkFinished(s, at);
         return s;
     }
 
     /// <summary><c>createLearn</c> with full study options (reads AnswerWith and Learn).</summary>
     public static LearnState CreateLearn(IReadOnlyList<Card> cards, StudyOptions options, StudySubset? subset = null,
-        IReadOnlyDictionary<string, CardProgress>? progress = null, RNG? rng = null, double? now = null, bool review = false) =>
-        CreateLearn(cards, options.AnswerWith, options.Learn, subset, progress, rng, now, review);
+        IReadOnlyDictionary<string, CardProgress>? progress = null, RNG? rng = null, double? now = null, bool review = false, bool recheck = false) =>
+        CreateLearn(cards, options.AnswerWith, options.Learn, subset, progress, rng, now, review, recheck);
 
     // MARK: - Repair
 
@@ -433,22 +475,30 @@ public static class LearnEngine
                 if (known.Contains(k) && x.BoolValue is { } ok) results[k] = ok;
             review = new LearnReview { Due = Ids(rv["due"]), Results = results };
         }
+        // Only sessions with rechecks carry the key.
+        LearnRecheck? recheck = Get("recheck") is { ObjectValue: not null } rc ? new LearnRecheck { Due = Ids(rc["due"]) } : null;
 
         var learnSrc = Get("learn");
         int roundSize = learnSrc?["roundSize"]?.FiniteNumber is { } rs ? (int)Math.Max(-1, Math.Min(Math.Floor(rs), int.MaxValue)) : 0;
         int answered = CountValue(Get("answered"));
         double startedAt = Get("startedAt")?.FiniteNumber ?? 0;
+        // Sessions stored before spacing (1.4) have no clock: their answer count stands in for it.
+        int clock = Get("clock")?.IntegerValue is { } c0 && c0 >= 0 ? c0 : answered;
+        var lastAt = new Dictionary<string, int>(StringComparer.Ordinal);
+        foreach (var (k, x) in Get("lastAt")?.ObjectValue ?? new JsonObjectMap())
+            if (known.Contains(k) && x.IntegerValue is { } at && at >= 0) lastAt[k] = at;
         return new LearnState
         {
             Subset = StudySubset.FromJson(Get("subset") ?? JSONValue.Null),
             AnswerWith = EnumRaw.ParseJson<AnswerWith>(Get("answerWith")) ?? AnswerWith.Term,
             Learn = NormalizeLearn(roundSize, learnSrc?["mc"]?.BoolValue != false, learnSrc?["written"]?.BoolValue != false),
             Order = order, Stage = stage, InitiallyMastered = Ids(Get("initiallyMastered")), Seen = TrueMap(Get("seen")),
-            Active = Ids(Get("active")), Round = round, Queue = queue, Retried = TrueMap(Get("retried")),
+            Round = round, Queue = queue, Clock = clock, LastAt = lastAt,
+            Repeats = Get("repeats")?.IntegerValue is { } rp && rp >= 0 ? rp : 0,
             RoundLog = roundLog, Rounds = rounds, Answered = answered, Correct = Math.Min(answered, CountValue(Get("correct"))),
             Misses = misses, Last = last, StartedAt = startedAt, UpdatedAt = Get("updatedAt")?.FiniteNumber ?? startedAt,
             FinishedAt = Get("finishedAt")?.NumberValue, ElapsedMs = Math.Max(0, Get("elapsedMs")?.FiniteNumber ?? 0),
-            Review = review,
+            Review = review, Recheck = recheck,
         };
     }
 
@@ -499,8 +549,9 @@ public static class LearnEngine
             Subset = NormalizeSubset(state.Subset), AnswerWith = state.AnswerWith,
             Learn = NormalizeLearn(state.Learn.RoundSize, state.Learn.Mc, state.Learn.Written),
             Order = order, Stage = stage, InitiallyMastered = Ids(state.InitiallyMastered),
-            Seen = Known(state.Seen, v => v), Active = Ids(state.Active), Round = round, Queue = queue,
-            Retried = Known(state.Retried, v => v),
+            Seen = Known(state.Seen, v => v), Round = round, Queue = queue,
+            Clock = state.Clock >= 0 ? state.Clock : answered, LastAt = Known(state.LastAt, v => v >= 0),
+            Repeats = Math.Max(0, state.Repeats),
             RoundLog = state.RoundLog.Where(e => known.Contains(e.CardId)).Select(e => e with { StageAfter = ClampStage(e.StageAfter) }).ToList(),
             Rounds = state.Rounds.Select(r =>
             {
@@ -512,6 +563,7 @@ public static class LearnEngine
             StartedAt = startedAt, UpdatedAt = double.IsFinite(state.UpdatedAt) ? state.UpdatedAt : startedAt,
             FinishedAt = state.FinishedAt, ElapsedMs = double.IsFinite(state.ElapsedMs) ? Math.Max(0, state.ElapsedMs) : 0,
             Review = state.Review is { } rv ? new LearnReview { Due = Ids(rv.Due), Results = Known(rv.Results) } : null,
+            Recheck = state.Recheck is { } rc ? new LearnRecheck { Due = Ids(rc.Due) } : null,
         };
     }
 
@@ -522,8 +574,8 @@ public static class LearnEngine
         CopyState(state).Queue.FirstOrDefault() is { } q ? PublicQuestion(q) : null;
 
     /// <summary>
-    /// Answers the current question (no-op when the round is over). A miss is asked once more at the end
-    /// of the round, as multiple choice when possible.
+    /// Answers the current question (no-op when the round is over). A miss comes back like any card, after
+    /// the gap; the card's later questions in this round follow its new stage.
     /// </summary>
     public static LearnState Answer(LearnState state, bool correct, double? now = null)
     {
@@ -541,16 +593,14 @@ public static class LearnEngine
         if (correct) s.Correct = Inc(s.Correct);
         else s.Misses[id] = Inc(s.Misses.GetValueOrDefault(id));
         s.Queue.RemoveAt(0);
+        s.Repeats = s.LastAt.ContainsKey(id) ? Inc(s.Repeats) : 0;
+        s.LastAt[id] = s.Clock;
+        s.Clock = Inc(s.Clock);
         s.RoundLog.Add(new LearnRoundLogEntry(q.Qid, id, q.Type, q.Ask, correct, stageAfter));
         s.Last = new LearnLastAnswer(q.Qid, id, q.Type, q.Ask, correct, stageBefore);
 
-        if (!correct && !s.Retried.GetValueOrDefault(id))
-        {
-            s.Retried[id] = true;
-            var retry = new LearnQueueQuestion(RetryQid(s.Round, id), id, QuestionType.Written, q.Ask);
-            if (s.Learn.Mc && q.RetryChoices is { } options) retry = retry with { Type = QuestionType.Mc, Choices = options };
-            s.Queue.Add(retry);
-        }
+        FollowStage(s, id);
+        if (stageBefore < MasteredStage) NoteRecheck(s, id);
         if (IsReviewQuestion(q.Qid) && s.Review is { } review)
         {
             // The first answer to a mastered card's repetition question counts; a miss means it is learned
@@ -564,7 +614,7 @@ public static class LearnEngine
 
     /// <summary>
     /// "Ich hatte recht": the last answer (if it was wrong) becomes correct: the card's stage is
-    /// stageBefore + 1 and its retry in this round is dropped. Idempotent; a no-op after NextRound.
+    /// stageBefore + 1 and its later questions in this round follow that stage. Idempotent; a no-op after NextRound.
     /// </summary>
     public static LearnState Override(LearnState state, double? now = null)
     {
@@ -579,7 +629,8 @@ public static class LearnEngine
         s.Misses[id] = Math.Max(0, s.Misses.GetValueOrDefault(id) - 1);
         int i = s.RoundLog.FindLastIndex(e => e.CardId == id && (e.Qid is null || e.Qid == l.Qid));
         if (i >= 0) s.RoundLog[i] = s.RoundLog[i] with { Correct = true, StageAfter = stageAfter };
-        if (s.Queue.RemoveAll(q => q.CardId == id) > 0) s.Retried.Remove(id);
+        FollowStage(s, id);
+        if (l.StageBefore < MasteredStage) NoteRecheck(s, id);
         s.Last = l with { Correct = true };
         if (IsReviewQuestion(l.Qid) && s.Review is { } review)
         {
@@ -624,8 +675,8 @@ public static class LearnEngine
     }
 
     /// <summary>
-    /// Closes the finished round into <c>rounds</c>, drops mastered cards from the batch, refills it and
-    /// builds the next round's questions. When every card is mastered the final round is closed and the
+    /// Closes the finished round into <c>rounds</c> and plans the next round's questions (PlanRound). When every
+    /// card is mastered (and every repetition question and recheck asked) the final round is closed and the
     /// session stays finished (its roundLog is kept for the checkpoint). No-op mid-round. Scope cards missing
     /// from <paramref name="cards"/> (deleted) are removed; null keeps every card (JS: a non-array) and builds
     /// written questions only.
@@ -642,6 +693,7 @@ public static class LearnEngine
             foreach (var id in s.Order.ToList())
                 if (!present.Contains(id)) DropCard(s, id, null, rng);
         }
+        DropLateRechecks(s);
         if (IsComplete(s))
         {
             if (s.RoundLog.Count > 0 && !RoundIsClosed(s)) ArchiveRound(s);
@@ -656,11 +708,8 @@ public static class LearnEngine
             s.Round = Inc(s.Round);
         }
         s.RoundLog = [];
-        s.Retried = new(StringComparer.Ordinal);
         s.Last = null;
-        FillBatch(s);
-        var reviews = TakeReviews(s);
-        s.Queue = BuildQueue(s, cards ?? [], rng, reviews);
+        s.Queue = PlanRound(s, cards ?? [], rng);
         return s;
     }
 
@@ -689,19 +738,11 @@ public static class LearnEngine
 
     // MARK: - Repetition questions
 
-    /// <summary>Whether question <paramref name="qid"/> is a repetition question ("&lt;round&gt;.3:&lt;cardId&gt;").</summary>
-    public static bool IsReviewQuestion(string qid)
-    {
-        int colon = qid.IndexOf(':');
-        if (colon < 0) return false;
-        var head = qid[..colon];
-        if (!head.EndsWith(".3", StringComparison.Ordinal)) return false;
-        var round = head[..^2];
-        return round.Length > 0 && round.All(c => c is >= '0' and <= '9');
-    }
+    /// <summary>Whether question <paramref name="qid"/> is a repetition question ("&lt;round&gt;.3:&lt;cardId&gt;" or "&lt;round&gt;.3.&lt;n&gt;:…").</summary>
+    public static bool IsReviewQuestion(string qid) => QuestionKind(qid) == REVIEW;
 
-    /// <summary>How many repetition questions a round asks next to the cards being learned.</summary>
-    public static int ReviewsPerRound(int roundSize) => Math.Max(1, roundSize / 3);
+    /// <summary>Whether question <paramref name="qid"/> is a recheck ("&lt;round&gt;.4:&lt;cardId&gt;" or "&lt;round&gt;.4.&lt;n&gt;:…").</summary>
+    public static bool IsRecheckQuestion(string qid) => QuestionKind(qid) == RECHECK;
 
     /// <summary>The repetition questions so far; null for a session without them.</summary>
     public static ReviewStats? ReviewStatsOf(LearnState state)
@@ -768,9 +809,11 @@ public static class LearnEngine
 
     /// <summary>
     /// Brings the session in line with <paramref name="progress"/>: every stage becomes min(streak, 2) and seen follows
-    /// whether the card was ever answered. A card mastered now leaves the batch and this round's queue; a card
-    /// whose stage changed otherwise keeps its queued questions, switched to the type of its new stage; a card
-    /// no longer mastered is studied again from the next round on. A finished session is left as it is.
+    /// whether the card was ever answered. A card mastered now leaves this round's queue; a card whose stage
+    /// changed otherwise keeps its queued questions, switched to the type of its new stage; a card no longer
+    /// mastered is studied again. A queued repetition question or recheck of a card no longer mastered (missed
+    /// elsewhere) becomes an ordinary question, and the card leaves the cards waiting for a recheck. A finished
+    /// session is left as it is.
     /// </summary>
     public static LearnState SyncProgress(LearnState state, IReadOnlyDictionary<string, CardProgress> progress, double? now = null)
     {
@@ -794,13 +837,13 @@ public static class LearnEngine
         {
             if (s.Stage.GetValueOrDefault(id) >= MasteredStage)
             {
-                s.Active.RemoveAll(x => x == id);
                 s.Queue.RemoveAll(q => q.CardId == id);
             }
             else
             {
                 s.InitiallyMastered.RemoveAll(x => x == id);
-                s.Queue = s.Queue.Select(q => q.CardId == id ? Retype(s, q) : q).ToList();
+                s.Recheck?.Due.RemoveAll(x => x == id);
+                s.Queue = s.Queue.Select(q => q.CardId == id ? Retype(s, q with { Qid = AsLearnQid(q.Qid) }) : q).ToList();
             }
         }
         FinishEarly(s, nowMs);
@@ -982,9 +1025,35 @@ public static class LearnEngine
 
     // MARK: - Internals: questions
 
-    static string MainQid(int round, string cardId) => $"{round}.1:{cardId}";
-    static string RetryQid(int round, string cardId) => $"{round}.2:{cardId}";
-    static string ReviewQid(int round, string cardId) => $"{round}.3:{cardId}";
+    // Question kinds in the qid: learning, repetition question, recheck.
+    const int LEARN = 1;
+    const int REVIEW = 3;
+    const int RECHECK = 4;
+
+    /// <summary>"&lt;round&gt;.&lt;kind&gt;:&lt;cardId&gt;"; a card's n-th question in the round (n ≥ 2) "&lt;round&gt;.&lt;kind&gt;.&lt;n&gt;:&lt;cardId&gt;".</summary>
+    static string QuestionId(int round, int kind, string cardId, int n) => n > 1 ? $"{round}.{kind}.{n}:{cardId}" : $"{round}.{kind}:{cardId}";
+
+    static bool AsciiDigits(string s) => s.Length > 0 && s.All(c => c is >= '0' and <= '9');
+
+    /// <summary>The kind of a qid matching /^\d+\.K(\.\d+)?:/ (JS <c>REVIEW_QID</c>/<c>RECHECK_QID</c>) for a one-digit K; -1 otherwise.</summary>
+    static int QuestionKind(string qid)
+    {
+        int colon = qid.IndexOf(':');
+        if (colon < 0) return -1;
+        var parts = qid[..colon].Split('.');
+        if (parts.Length is < 2 or > 3 || !AsciiDigits(parts[0]) || parts[1].Length != 1 || !AsciiDigits(parts[1])) return -1;
+        if (parts.Length == 3 && !AsciiDigits(parts[2])) return -1;
+        return parts[1][0] - '0';
+    }
+
+    /// <summary>A repetition question or recheck asked as a learning question: JS <c>qid.replace(/^(\d+)\.[34]/, '$1.1')</c>.</summary>
+    static string AsLearnQid(string qid)
+    {
+        int i = 0;
+        while (i < qid.Length && qid[i] is >= '0' and <= '9') i++;
+        if (i == 0 || i + 1 >= qid.Length || qid[i] != '.' || qid[i + 1] is not ('3' or '4')) return qid;
+        return string.Concat(qid.AsSpan(0, i + 1), "1", qid.AsSpan(i + 2));
+    }
 
     static Question PublicQuestion(LearnQueueQuestion q) =>
         new(q.Qid, q.CardId, q.Type, q.Ask, q.Type == QuestionType.Mc ? q.Choices : null);
@@ -998,66 +1067,168 @@ public static class LearnEngine
 
     /// <summary>
     /// Stage 0 → multiple choice, stage 1 → written; a disabled type falls back to the other one, and multiple
-    /// choice needs at least two options. RetryChoices holds the options for a re-queue after a wrong answer,
-    /// which is always asked at stage 0.
+    /// choice needs at least two options. RetryChoices holds the options for when the question has to be asked
+    /// at stage 0 after all (a wrong answer earlier in the round).
     /// </summary>
-    static LearnQueueQuestion MakeQuestion(LearnState s, Card card, IReadOnlyList<Card> pool, string qid, RNG rng)
+    static LearnQueueQuestion MakeQuestion(LearnState s, Card card, int stage, IReadOnlyList<Card> pool, string qid, RNG rng)
     {
         var ask = PickAsk(s.AnswerWith, rng);
         var choices = s.Learn.Mc ? BuildChoices(pool, card, ask, rng) : [];
         bool canMc = choices.Count >= 2;
-        var type = s.Stage.GetValueOrDefault(card.Id) == 0
+        var type = stage == 0
             ? (canMc ? QuestionType.Mc : QuestionType.Written)
             : (s.Learn.Written || !canMc ? QuestionType.Written : QuestionType.Mc);
         return new LearnQueueQuestion(qid, card.Id, type, ask, type == QuestionType.Mc ? choices : null,
             canMc ? BuildChoices(pool, card, ask, rng) : null);
     }
 
-    /// <summary>Keeps the batch's unmastered cards and refills it up to roundSize: stage-1 cards first, then stage-0, each in order.</summary>
-    static void FillBatch(LearnState s)
+    /// <summary>The planning state of a round (JS <c>p</c> in planRound): stages and last answers as if every answer were right.</summary>
+    sealed class Plan
     {
-        var inOrder = new HashSet<string>(s.Order, StringComparer.Ordinal);
-        s.Active = s.Active.Where(id => inOrder.Contains(id) && s.Stage.GetValueOrDefault(id) < MasteredStage).ToList();
-        var inBatch = new HashSet<string>(s.Active, StringComparer.Ordinal);
-        foreach (int want in new[] { 1, 0 })
-        {
-            foreach (var id in s.Order)
-            {
-                if (s.Active.Count >= s.Learn.RoundSize) return;
-                if (!inBatch.Contains(id) && s.Stage.TryGetValue(id, out int st) && st == want)
-                {
-                    s.Active.Add(id);
-                    inBatch.Add(id);
-                }
-            }
-        }
+        public required Dictionary<string, int> Stage { get; init; }
+        public required Dictionary<string, int> LastAt { get; init; }
+        public int Repeats { get; set; }
+        public required List<string> ReviewDue { get; set; }
+        public required List<string> RecheckDue { get; set; }
     }
 
-    /// <summary>The round's questions: one per card of the batch in shuffled order, with the repetition questions mixed in.</summary>
-    static List<LearnQueueQuestion> BuildQueue(LearnState s, IReadOnlyList<Card> cards, RNG rng, IReadOnlyList<string> reviews)
+    /// <summary>A card that was asked before (or waits for its recheck): it may come after Min, comes for sure after Max other questions.</summary>
+    sealed record Waiting(string Id, int Kind, int Wait, int Min, int Max);
+
+    /// <summary>Of <paramref name="list"/>, the entry with the highest score; ties go to the one earlier in order.</summary>
+    static Waiting Best(List<Waiting> list, Func<Waiting, int> score, Dictionary<string, int> index)
+    {
+        Waiting? top = null;
+        foreach (var e in list)
+            if (top is null || score(e) > score(top) || (score(e) == score(top) && index[e.Id] < index[top.Id])) top = e;
+        return top!;
+    }
+
+    /// <summary>
+    /// The card asked at question number <paramref name="t"/> in the plan <paramref name="p"/>: (id, kind) or null when no
+    /// card needs a question any more (JS <c>nextPick</c>). Waiting cards may come after their Min other questions
+    /// and come for sure after their Max (the longest overdue first); in between, the one furthest past its Min
+    /// comes with a chance of (wait - min + 1) in (max - min + 1), otherwise a new card comes (learning cards
+    /// not asked yet, stage-1 first, and repetition questions, about every third). After MAX_REPEATS repeats in
+    /// a row a new card comes; while MAX_LEARNING cards are being learned only after twice as many. When no
+    /// card may come yet, the one that has waited longest comes early.
+    /// </summary>
+    static (string Id, int Kind)? NextPick(LearnState s, Plan p, int t, RNG rng, Dictionary<string, int> index)
+    {
+        var learning = s.Order.Where(id => p.Stage.GetValueOrDefault(id) < MasteredStage).ToList();
+        // Cards that can fill a learning card's gap: learning cards and repetition questions (not the rechecks, which wait 30+).
+        int toLearn = learning.Count + p.ReviewDue.Count;
+        int open = toLearn + p.RecheckDue.Count;
+        if (open == 0) return null;
+        var waiting = new List<Waiting>();
+        var fresh = new List<string>();
+        foreach (int want in new[] { 1, 0 })
+        {
+            foreach (var id in learning)
+            {
+                if (p.LastAt.TryGetValue(id, out int last))
+                {
+                    if (want == 1) waiting.Add(new Waiting(id, LEARN, t - last - 1, Math.Min(MIN_GAP, toLearn - 1), MAX_WAIT));
+                }
+                else if (p.Stage.GetValueOrDefault(id) == want) fresh.Add(id);
+            }
+        }
+        int inFlight = waiting.Count;
+        foreach (var id in p.RecheckDue)
+        {
+            // A recheck without a known last answer is overdue.
+            int wait = p.LastAt.TryGetValue(id, out int last) ? t - last - 1 : RECHECK_WAIT;
+            // Fewer open cards bring it closer, but never closer than a learning card's gap.
+            waiting.Add(new Waiting(id, RECHECK, wait, Math.Max(MIN_GAP, Math.Min(RECHECK_GAP, open - 1)), RECHECK_WAIT));
+        }
+        var ready = waiting.Where(c => c.Wait >= c.Min).ToList();
+        bool hasNew = fresh.Count > 0 || p.ReviewDue.Count > 0;
+        (string, int) TakeNew()
+        {
+            if (fresh.Count > 0 && p.ReviewDue.Count > 0)
+                return RandomIndex(rng, 3) == 0 ? (p.ReviewDue[0], REVIEW) : (fresh[0], LEARN);
+            return fresh.Count > 0 ? (fresh[0], LEARN) : (p.ReviewDue[0], REVIEW);
+        }
+        (string, int) Of(Waiting w) => (w.Id, w.Kind);
+        if (ready.Count == 0)
+        {
+            if (hasNew) return TakeNew();
+            // Nothing may come yet: the learning card that has waited longest comes early (a recheck only when nothing is
+            // left to learn – it would check nothing so soon).
+            var learn = waiting.Where(c => c.Kind == LEARN).ToList();
+            return Of(Best(learn.Count > 0 ? learn : waiting, c => c.Wait, index));
+        }
+        if (!hasNew) return Of(Best(ready, c => c.Wait - c.Max, index));
+        bool full = inFlight >= MAX_LEARNING;
+        if (p.Repeats >= (full ? 2 * MAX_REPEATS : MAX_REPEATS)) return TakeNew();
+        var forced = ready.Where(c => c.Wait >= c.Max).ToList();
+        if (forced.Count > 0) return Of(Best(forced, c => c.Wait - c.Max, index));
+        var best = Best(ready, c => c.Wait - c.Min, index);
+        if (full || RandomIndex(rng, best.Max - best.Min + 1) < best.Wait - best.Min + 1) return Of(best);
+        return TakeNew();
+    }
+
+    /// <summary>
+    /// Plans the round's roundSize questions (fewer when the session ends sooner) as if every answer were right
+    /// (JS <c>planRound</c>). Planned repetition questions and rechecks leave review.Due / recheck.Due; cards there
+    /// that are no longer mastered leave too.
+    /// </summary>
+    static List<LearnQueueQuestion> PlanRound(LearnState s, IReadOnlyList<Card> cards, RNG rng)
     {
         var all = CardList(cards);
         var byId = ById(all);
         var pool = all.Where(Askable).ToList();
-        LearnQueueQuestion Make(string id, string qid) => MakeQuestion(s, byId.GetValueOrDefault(id) ?? new Card(id, "", ""), pool, qid, rng);
-        if (reviews.Count == 0) return Shuffled(s.Active, rng).Select(id => Make(id, MainQid(s.Round, id))).ToList();
-        var entries = s.Active.Select(id => (id, isReview: false)).Concat(reviews.Select(id => (id, isReview: true))).ToList();
-        return Shuffled(entries, rng).Select(e => Make(e.id, e.isReview ? ReviewQid(s.Round, e.id) : MainQid(s.Round, e.id))).ToList();
+        var index = new Dictionary<string, int>(StringComparer.Ordinal);
+        for (int i = 0; i < s.Order.Count; i++) index[s.Order[i]] = i;
+        bool Mastered(string id) => index.ContainsKey(id) && s.Stage.GetValueOrDefault(id) >= MasteredStage;
+        var p = new Plan
+        {
+            Stage = new Dictionary<string, int>(s.Stage, StringComparer.Ordinal),
+            LastAt = new Dictionary<string, int>(s.LastAt, StringComparer.Ordinal),
+            Repeats = s.Repeats,
+            ReviewDue = s.Review?.Due.Where(Mastered).ToList() ?? [],
+            RecheckDue = s.Recheck?.Due.Where(Mastered).ToList() ?? [],
+        };
+        var asked = new Dictionary<string, int>(StringComparer.Ordinal);
+        var queue = new List<LearnQueueQuestion>();
+        for (int k = 0; k < s.Learn.RoundSize; k++)
+        {
+            int t = s.Clock + k;
+            if (NextPick(s, p, t, rng, index) is not { } pick) break;
+            var (id, kind) = pick;
+            int n = asked[id] = asked.GetValueOrDefault(id) + 1;
+            var card = byId.GetValueOrDefault(id) ?? new Card(id, "", "");
+            queue.Add(MakeQuestion(s, card, p.Stage.GetValueOrDefault(id), pool, QuestionId(s.Round, kind, id, n), rng));
+            p.Repeats = p.LastAt.ContainsKey(id) ? p.Repeats + 1 : 0;
+            p.LastAt[id] = t;
+            if (kind == REVIEW) p.ReviewDue = p.ReviewDue.Where(x => x != id).ToList();
+            else if (kind == RECHECK) p.RecheckDue = p.RecheckDue.Where(x => x != id).ToList();
+            else p.Stage[id] = Math.Min(p.Stage.GetValueOrDefault(id) + 1, MasteredStage);
+        }
+        if (s.Review is { } review) review.Due = p.ReviewDue;
+        if (s.Recheck is { } recheck) recheck.Due = p.RecheckDue;
+        return queue;
     }
 
     /// <summary>
-    /// Takes the next round's repetition questions off review.Due: a few next to the cards being learned
-    /// (ReviewsPerRound), a whole round once nothing is left to learn. Cards no longer mastered leave the list.
+    /// After an answer (or a correction) the card's later questions in this round follow its stage: learning
+    /// questions of a mastered card go, the others are asked at the new stage (JS <c>followStage</c>).
     /// </summary>
-    static List<string> TakeReviews(LearnState s)
+    static void FollowStage(LearnState s, string id)
     {
-        if (s.Review is not { } review) return [];
-        var inOrder = new HashSet<string>(s.Order, StringComparer.Ordinal);
-        review.Due.RemoveAll(id => !inOrder.Contains(id) || s.Stage.GetValueOrDefault(id) < MasteredStage);
-        int count = s.Active.Count == 0 ? s.Learn.RoundSize : ReviewsPerRound(s.Learn.RoundSize);
-        var picks = review.Due.Take(count).ToList();
-        review.Due.RemoveRange(0, picks.Count);
-        return picks;
+        bool mastered = s.Stage.GetValueOrDefault(id) >= MasteredStage;
+        s.Queue = s.Queue
+            .Where(q => q.CardId != id || !mastered || IsReviewQuestion(q.Qid) || IsRecheckQuestion(q.Qid))
+            .Select(q => q.CardId == id ? Retype(s, q) : q)
+            .ToList();
+    }
+
+    /// <summary>A card mastered by a right answer after it was answered wrong in this session waits for its recheck (JS <c>noteRecheck</c>).</summary>
+    static void NoteRecheck(LearnState s, string id)
+    {
+        if (s.Recheck is not { } recheck || s.Stage.GetValueOrDefault(id) < MasteredStage || s.Misses.GetValueOrDefault(id) <= 0) return;
+        if (recheck.Due.Contains(id) || s.Queue.Any(q => q.CardId == id && IsRecheckQuestion(q.Qid))) return;
+        recheck.Due.Add(id);
     }
 
     /// <summary>Cards by when they were last answered, the longest ago (or never) first; ties keep their order.</summary>
@@ -1105,8 +1276,13 @@ public static class LearnEngine
         s.Review is { } review
         && (s.Queue.Any(q => IsReviewQuestion(q.Qid)) || review.Due.Any(id => s.Stage.GetValueOrDefault(id) >= MasteredStage));
 
-    /// <summary>The session's goal is reached: everything mastered, every repetition question asked.</summary>
-    static bool IsComplete(LearnState s) => AllMastered(s) && !ReviewPending(s);
+    /// <summary>Rechecks are queued or still to come for cards that are still mastered.</summary>
+    static bool RecheckPending(LearnState s) =>
+        s.Recheck is { } recheck
+        && (s.Queue.Any(q => IsRecheckQuestion(q.Qid)) || recheck.Due.Any(id => s.Stage.GetValueOrDefault(id) >= MasteredStage));
+
+    /// <summary>The session's goal is reached: everything mastered, every repetition question and recheck asked.</summary>
+    static bool IsComplete(LearnState s) => AllMastered(s) && !ReviewPending(s) && !RecheckPending(s);
 
     /// <summary>
     /// Adds active time since the last update; gaps longer than IdleGapMs are not counted. The clock stops once
@@ -1120,8 +1296,22 @@ public static class LearnEngine
         s.UpdatedAt = now;
     }
 
+    /// <summary>
+    /// Once nothing but rechecks is left to ask (every card mastered, no repetition question pending, only rechecks
+    /// queued), a waiting recheck that would come fewer than MIN_GAP questions after the answer that mastered its card
+    /// is dropped: asked right away it would check nothing (JS <c>dropLateRechecks</c>).
+    /// </summary>
+    static void DropLateRechecks(LearnState s)
+    {
+        if (s.Recheck is not { Due.Count: > 0 } recheck || !AllMastered(s) || ReviewPending(s)) return;
+        if (s.Queue.Any(q => !IsRecheckQuestion(q.Qid))) return;
+        long ahead = s.Queue.Count;
+        recheck.Due.RemoveAll(id => s.LastAt.TryGetValue(id, out int last) && (long)s.Clock + ahead - last - 1 < MIN_GAP);
+    }
+
     static void MarkFinished(LearnState s, double now)
     {
+        DropLateRechecks(s);
         if (s.FinishedAt is null && IsComplete(s)) s.FinishedAt = double.IsFinite(now) ? now : s.UpdatedAt;
     }
 
@@ -1139,7 +1329,8 @@ public static class LearnEngine
     static bool RoundIsClosed(LearnState s) => s.Rounds.Count > 0 && s.Rounds[^1].Round == s.Round;
 
     static void ArchiveRound(LearnState s) =>
-        s.Rounds.Add(new LearnRoundRecord(s.Round, s.RoundLog.Count, s.RoundLog.Count(e => e.Correct), s.Active.ToList()));
+        s.Rounds.Add(new LearnRoundRecord(s.Round, s.RoundLog.Count, s.RoundLog.Count(e => e.Correct),
+            s.RoundLog.Select(e => e.CardId).Distinct(StringComparer.Ordinal).ToList()));
 
     /// <summary>The set's askable cards without the removed one, and every card by id: the source of replacement options.</summary>
     sealed record Refill(IReadOnlyList<Card> Pool, IReadOnlyDictionary<string, Card> ById);
@@ -1169,15 +1360,15 @@ public static class LearnEngine
         s.Order.RemoveAll(x => x == id);
         s.Stage.Remove(id);
         s.Seen.Remove(id);
-        s.Retried.Remove(id);
+        s.LastAt.Remove(id);
         s.Misses.Remove(id);
         s.InitiallyMastered.RemoveAll(x => x == id);
-        s.Active.RemoveAll(x => x == id);
         if (s.Review is { } review)
         {
             review.Due.RemoveAll(x => x == id);
             review.Results.Remove(id);
         }
+        s.Recheck?.Due.RemoveAll(x => x == id);
         // Its questions go; other questions lose it as an option (refilled when possible; mc needs two options).
         s.Queue = s.Queue.Where(q => q.CardId != id).Select(q =>
         {

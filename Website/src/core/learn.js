@@ -4,10 +4,23 @@
 // multiple choice), 1 = familiar (asked written), 2 = mastered (not asked any more). A correct
 // answer moves the card up one stage, a wrong one sends it back to stage 0.
 //
-// The session works in rounds over an active batch of up to `roundSize` unmastered cards: one
-// question per card in shuffled order, plus one retry at the end of the round for a card answered
-// wrong. The next round drops the mastered cards from the batch and refills it (stage-1 cards
-// first, then stage-0 cards in order) until every card in scope is mastered.
+// Spacing (Abstand, since 1.4): a card comes back only after at least MIN_GAP (10) other
+// questions – fewer only when fewer cards are left – and at the latest after about MAX_WAIT (15);
+// in between, the longer it waits the likelier it is picked, mixed with new cards. So a new card
+// is asked, ~10–15 questions later asked again, and gone once both answers were right. A wrong
+// answer sends it back to stage 0; it too comes back only after the gap (no retry at the end of
+// the round any more). New cards are taken stage-1 cards first, then stage-0 cards, in `order`.
+//
+// A round is the next `roundSize` questions (after it the checkpoint shows the interim result).
+// They are planned when the round starts, as if every answer were right; an actual answer adjusts
+// the card's later questions in the round to its new stage.
+//
+// Rechecks (Nachkontrolle, opt-in via createLearn(…, { recheck: true }), only for sessions with
+// more than 60 cards): a card answered wrong in this session is asked once more RECHECK_GAP to
+// RECHECK_WAIT (30–50) questions after it was mastered; wrong again, it is learned again. They
+// live in `state.recheck = { due }` (mastered cards waiting for their recheck, not yet queued).
+// At the end of a session, when nothing else is left to ask, a recheck that could not come at
+// least MIN_GAP questions after the card was mastered is dropped (dropLateRechecks).
 //
 // Pure and DOM-free (runs under jsc). Every function takes a JSON-serialisable LearnState and
 // returns a NEW state object; inputs are never mutated. Randomness comes from an injected rng.
@@ -16,8 +29,8 @@
 //
 // Repetition questions (Wiederholungsfragen, the Mac app's LearnReview, opt-in via
 // createLearn(…, { review: true })): the cards mastered when the session starts are asked once
-// more, mixed into the rounds. They live in `state.review = { due, results }`, which exists only
-// in such sessions; without it every function behaves (and draws from the rng) exactly as before.
+// more, mixed in among the new cards (about every third). They live in
+// `state.review = { due, results }`, which exists only in such sessions.
 
 import { cardStatus, normalizeProgress, MASTERY_STREAK } from './mastery.js';
 import { answerSide, findSynonymCards } from './synonyms.js';
@@ -29,6 +42,18 @@ export const DEFAULT_LEARN = { roundSize: 7, mc: true, written: true, retype: fa
 const MASTERED = MASTERY_STREAK; // stage of a mastered card (2)
 const IDLE_GAP_MS = 5 * 60 * 1000;
 const MAX_CHOICES = 4;
+// Spacing: other questions at least between two questions of a card, and after how many a waiting
+// card is asked for sure; the same for rechecks, counted from the answer that mastered the card.
+export const MIN_GAP = 10;
+export const MAX_WAIT = 15;
+export const RECHECK_GAP = 30;
+export const RECHECK_WAIT = 50;
+// The mix: at most this many questions in a row of cards asked before while there are new cards,
+// and no new card while this many cards are being learned.
+export const MAX_REPEATS = 3;
+export const MAX_LEARNING = 10;
+// Rechecks only in sessions with more cards than this.
+export const RECHECK_MIN_CARDS = 60;
 const ANSWER_WITH = ['term', 'definition', 'both'];
 const NAMED_SUBSETS = ['all', 'starred', 'learning', 'missed'];
 
@@ -187,13 +212,12 @@ function pickAsk(answerWith, rng) {
 }
 
 // stage 0 → multiple choice, stage 1 → written; a disabled type falls back to the other one, and
-// multiple choice needs at least two options. `retryChoices` (internal) holds the options for a
-// re-queue after a wrong answer, which is always asked at stage 0.
-function makeQuestion(s, card, pool, qid, rng) {
+// multiple choice needs at least two options. `retryChoices` (internal) holds the options for when
+// the question has to be asked at stage 0 after all (a wrong answer earlier in the round).
+function makeQuestion(s, card, stage, pool, qid, rng) {
   const ask = pickAsk(s.answerWith, rng);
   const choices = s.learn.mc ? buildChoices(pool, card, ask, rng) : [];
   const canMc = choices.length >= 2;
-  const stage = s.stage[card.id] || 0;
   let type;
   if (stage === 0) type = canMc ? 'mc' : 'written';
   else type = s.learn.written || !canMc ? 'written' : 'mc';
@@ -203,10 +227,16 @@ function makeQuestion(s, card, pool, qid, rng) {
   return q;
 }
 
-const mainQid = (round, cardId) => `${round}.1:${cardId}`;
-const retryQid = (round, cardId) => `${round}.2:${cardId}`;
-const reviewQid = (round, cardId) => `${round}.3:${cardId}`;
-const REVIEW_QID = /^\d+\.3:/;
+// Question ids: "<round>.<kind>:<cardId>", kind 1 = learning, 3 = repetition question, 4 = recheck;
+// a card's second (third, …) question in the same round gets "<round>.<kind>.<n>:<cardId>".
+const LEARN = 1;
+const REVIEW = 3;
+const RECHECK = 4;
+const questionId = (round, kind, cardId, n) => `${round}.${kind}${n > 1 ? `.${n}` : ''}:${cardId}`;
+const REVIEW_QID = /^\d+\.3(\.\d+)?:/;
+const RECHECK_QID = /^\d+\.4(\.\d+)?:/;
+// A repetition question or recheck asked as an ordinary learning question (its card is learned).
+const asLearnQid = (qid) => qid.replace(/^(\d+)\.[34]/, '$1.1');
 
 function publicQuestion(q) {
   const out = { qid: q.qid, cardId: q.cardId, type: q.type, ask: q.ask };
@@ -214,46 +244,129 @@ function publicQuestion(q) {
   return out;
 }
 
-// Keeps the batch's unmastered cards and refills it up to roundSize: stage-1 cards first, then
-// stage-0 cards, each in `order`.
-function fillBatch(s) {
-  const inOrder = new Set(s.order);
-  s.active = s.active.filter((id) => inOrder.has(id) && s.stage[id] < MASTERED);
-  const inBatch = new Set(s.active);
-  for (const want of [1, 0]) {
-    for (const id of s.order) {
-      if (s.active.length >= s.learn.roundSize) return;
-      if (!inBatch.has(id) && s.stage[id] === want) {
-        s.active.push(id);
-        inBatch.add(id);
-      }
-    }
+// Of `list` ({id, …}), the entry with the highest score; ties go to the one earlier in `order`.
+function best(list, score, index) {
+  let top = null;
+  for (const e of list) {
+    if (top === null || score(e) > score(top) || (score(e) === score(top) && index.get(e.id) < index.get(top.id))) top = e;
   }
+  return top;
 }
 
-// The round's questions: one per batch card in shuffled order, with the repetition questions
-// `reviews` (card ids) mixed in among them. Without reviews the rng is drawn exactly as before.
-function buildQueue(s, cards, rng, reviews = []) {
+// The card asked at question number `t` (the session's answer count when it is asked) in the
+// planning state `p` ({stage, lastAt, reviewDue, recheckDue}): {id, kind} or null when no card
+// needs a question any more.
+//
+// Waiting cards (learning cards asked before, and rechecks) may come once they have waited `min`
+// other questions; once they have waited `max` they come for sure (the longest overdue first).
+// In between, the card that is furthest past its `min` comes with a chance that grows with every
+// question it waits – (wait - min + 1) in (max - min + 1) – otherwise a new card comes. New cards:
+// learning cards not asked yet in this session (stage-1 cards first) and repetition questions
+// (about every third one while there are both).
+//
+// Two limits keep the mix: after MAX_REPEATS questions in a row of cards asked before, a new card
+// comes (even before an overdue one); while MAX_LEARNING cards are being learned (asked, not
+// mastered yet) new cards come only by that rule, after twice as many. Only when no card may come
+// yet, the card that has waited longest comes early.
+function nextPick(s, p, t, rng, index) {
+  const learning = s.order.filter((id) => p.stage[id] < MASTERED);
+  // Cards that can fill a learning card's gap: the learning cards and the repetition questions (rechecks
+  // wait 30 questions and more, so they do not count here).
+  const toLearn = learning.length + p.reviewDue.length;
+  const open = toLearn + p.recheckDue.length;
+  if (open === 0) return null;
+  const waiting = [];
+  const fresh = [];
+  for (const want of [1, 0]) {
+    for (const id of learning) {
+      if (hasOwn(p.lastAt, id)) {
+        if (want === 1) waiting.push({ id, kind: LEARN, wait: t - p.lastAt[id] - 1, min: Math.min(MIN_GAP, toLearn - 1), max: MAX_WAIT });
+      } else if (p.stage[id] === want) fresh.push(id);
+    }
+  }
+  const inFlight = waiting.length;
+  for (const id of p.recheckDue) {
+    // A recheck without a known last answer is overdue.
+    const wait = hasOwn(p.lastAt, id) ? t - p.lastAt[id] - 1 : RECHECK_WAIT;
+    // Fewer open cards bring it closer, but never closer than a learning card's gap.
+    waiting.push({ id, kind: RECHECK, wait, min: Math.max(MIN_GAP, Math.min(RECHECK_GAP, open - 1)), max: RECHECK_WAIT });
+  }
+  const ready = waiting.filter((c) => c.wait >= c.min);
+  const hasNew = fresh.length > 0 || p.reviewDue.length > 0;
+  const takeNew = () => {
+    if (fresh.length && p.reviewDue.length) {
+      return randomIndex(rng, 3) === 0 ? { id: p.reviewDue[0], kind: REVIEW } : { id: fresh[0], kind: LEARN };
+    }
+    return fresh.length ? { id: fresh[0], kind: LEARN } : { id: p.reviewDue[0], kind: REVIEW };
+  };
+  if (!ready.length) {
+    if (hasNew) return takeNew();
+    // Nothing may come yet: the learning card that has waited longest comes early (a recheck only
+    // when nothing is left to learn – it would check nothing so soon).
+    const learn = waiting.filter((c) => c.kind === LEARN);
+    return best(learn.length ? learn : waiting, (c) => c.wait, index);
+  }
+  if (!hasNew) return best(ready, (c) => c.wait - c.max, index);
+  const full = inFlight >= MAX_LEARNING;
+  if (p.repeats >= (full ? 2 * MAX_REPEATS : MAX_REPEATS)) return takeNew();
+  const forced = ready.filter((c) => c.wait >= c.max);
+  if (forced.length) return best(forced, (c) => c.wait - c.max, index);
+  const c = best(ready, (e) => e.wait - e.min, index);
+  if (full || randomIndex(rng, c.max - c.min + 1) < c.wait - c.min + 1) return c;
+  return takeNew();
+}
+
+// Plans the round's `roundSize` questions (fewer when the session ends sooner), as if every answer
+// were right. Planned repetition questions and rechecks leave `review.due` / `recheck.due`; cards
+// there that are no longer mastered (answered wrong elsewhere) are learned instead and leave too.
+function planRound(s, cards, rng) {
   const all = cardList(cards);
   const byId = new Map(all.map((c) => [c.id, c]));
   const pool = all.filter(askable);
-  const question = (id, qid) => makeQuestion(s, byId.get(id) || { id, term: '', definition: '' }, pool, qid, rng);
-  if (!reviews.length) return shuffled(s.active, rng).map((id) => question(id, mainQid(s.round, id)));
-  const entries = [...s.active.map((id) => ({ id, review: false })), ...reviews.map((id) => ({ id, review: true }))];
-  return shuffled(entries, rng).map((e) => question(e.id, e.review ? reviewQid(s.round, e.id) : mainQid(s.round, e.id)));
+  const index = new Map(s.order.map((id, i) => [id, i]));
+  const mastered = (id) => index.has(id) && s.stage[id] >= MASTERED;
+  const p = {
+    stage: { ...s.stage },
+    lastAt: { ...s.lastAt },
+    repeats: s.repeats,
+    reviewDue: s.review ? s.review.due.filter(mastered) : [],
+    recheckDue: s.recheck ? s.recheck.due.filter(mastered) : [],
+  };
+  const asked = {};
+  const queue = [];
+  for (let k = 0; k < s.learn.roundSize; k++) {
+    const t = s.clock + k;
+    const pick = nextPick(s, p, t, rng, index);
+    if (!pick) break;
+    const { id, kind } = pick;
+    asked[id] = (asked[id] || 0) + 1;
+    const card = byId.get(id) || { id, term: '', definition: '' };
+    queue.push(makeQuestion(s, card, p.stage[id], pool, questionId(s.round, kind, id, asked[id]), rng));
+    p.repeats = hasOwn(p.lastAt, id) ? p.repeats + 1 : 0;
+    p.lastAt[id] = t;
+    if (kind === REVIEW) p.reviewDue = p.reviewDue.filter((x) => x !== id);
+    else if (kind === RECHECK) p.recheckDue = p.recheckDue.filter((x) => x !== id);
+    else p.stage[id] = Math.min(p.stage[id] + 1, MASTERED);
+  }
+  if (s.review) s.review = { due: p.reviewDue, results: s.review.results };
+  if (s.recheck) s.recheck = { due: p.recheckDue };
+  return queue;
 }
 
-// Takes the next round's repetition questions off `review.due`: a few next to the cards being
-// learned (reviewsPerRound), a whole round once nothing is left to learn. Cards that are no
-// longer mastered (answered wrong elsewhere) are learned instead and leave the list.
-function takeReviews(s) {
-  if (!s.review) return [];
-  const inOrder = new Set(s.order);
-  const due = s.review.due.filter((id) => inOrder.has(id) && s.stage[id] >= MASTERED);
-  const count = s.active.length === 0 ? s.learn.roundSize : reviewsPerRound(s.learn.roundSize);
-  const picks = due.slice(0, count);
-  s.review = { due: due.slice(picks.length), results: s.review.results };
-  return picks;
+// After an answer (or a correction) the card's later questions in this round follow its stage:
+// learning questions of a mastered card go, the others are asked at the new stage.
+function followStage(s, id) {
+  s.queue = s.queue
+    .filter((q) => q.cardId !== id || s.stage[id] < MASTERED || REVIEW_QID.test(q.qid) || RECHECK_QID.test(q.qid))
+    .map((q) => (q.cardId === id ? retype(s, q) : q));
+}
+
+// A card mastered by a right answer after it was answered wrong in this session waits for its
+// recheck (unless one is queued already).
+function noteRecheck(s, id) {
+  if (!s.recheck || s.stage[id] < MASTERED || !((s.misses[id] || 0) > 0)) return;
+  if (s.recheck.due.includes(id) || s.queue.some((q) => q.cardId === id && RECHECK_QID.test(q.qid))) return;
+  s.recheck = { due: [...s.recheck.due, id] };
 }
 
 // Card ids by when they were last answered, the longest ago (or never) first; ties keep their order.
@@ -367,6 +480,15 @@ function copyState(state) {
 
   const answered = Math.max(0, finite(src.answered, 0));
   const startedAt = finite(src.startedAt, 0);
+  // Sessions stored before spacing (1.4) have no clock: their answer count stands in for it.
+  const clock = Number.isInteger(src.clock) && src.clock >= 0 ? src.clock : Math.floor(answered);
+  const lastAt = {};
+  if (isObj(src.lastAt)) {
+    for (const k of Object.keys(src.lastAt)) {
+      const v = src.lastAt[k];
+      if (known.has(k) && Number.isInteger(v) && v >= 0) lastAt[k] = v;
+    }
+  }
   const out = {
     v: 1,
     subset: normalizeSubset(src.subset),
@@ -376,10 +498,11 @@ function copyState(state) {
     stage,
     initiallyMastered: ids(src.initiallyMastered),
     seen: trueMap(src.seen),
-    active: ids(src.active),
     round,
     queue,
-    retried: trueMap(src.retried),
+    clock,
+    lastAt,
+    repeats: Number.isInteger(src.repeats) && src.repeats >= 0 ? src.repeats : 0,
     roundLog,
     rounds,
     answered,
@@ -401,6 +524,8 @@ function copyState(state) {
     }
     out.review = { due: ids(src.review.due), results };
   }
+  // Only sessions with rechecks carry the key.
+  if (isObj(src.recheck)) out.recheck = { due: ids(src.recheck.due) };
   return out;
 }
 
@@ -415,8 +540,14 @@ function reviewPending(s) {
   return s.queue.some((q) => REVIEW_QID.test(q.qid)) || s.review.due.some((id) => s.stage[id] >= MASTERED);
 }
 
-// The session's goal is reached: everything mastered and every repetition question asked.
-const isComplete = (s) => allMastered(s) && !reviewPending(s);
+// Rechecks are queued, or still to come for cards that are still mastered.
+function recheckPending(s) {
+  if (!s.recheck) return false;
+  return s.queue.some((q) => RECHECK_QID.test(q.qid)) || s.recheck.due.some((id) => s.stage[id] >= MASTERED);
+}
+
+// The session's goal is reached: everything mastered, every repetition question and recheck asked.
+const isComplete = (s) => allMastered(s) && !reviewPending(s) && !recheckPending(s);
 
 // Adds active time since the last update; gaps longer than IDLE_GAP_MS (pause, sleeping laptop,
 // resuming another day) are not counted. The clock stops once the session is finished.
@@ -427,7 +558,19 @@ function advanceClock(s, now) {
   s.updatedAt = now;
 }
 
+// Once nothing but rechecks is left to ask (every card mastered, no repetition question pending,
+// only rechecks queued), a waiting recheck that would come fewer than MIN_GAP questions after the
+// answer that mastered its card is dropped: asked right away it would check nothing.
+function dropLateRechecks(s) {
+  if (!s.recheck || !s.recheck.due.length || !allMastered(s) || reviewPending(s)) return;
+  if (s.queue.some((q) => !RECHECK_QID.test(q.qid))) return;
+  const ahead = s.queue.length;
+  const due = s.recheck.due.filter((id) => !hasOwn(s.lastAt, id) || s.clock + ahead - s.lastAt[id] - 1 >= MIN_GAP);
+  if (due.length !== s.recheck.due.length) s.recheck = { due };
+}
+
 function markFinished(s, now) {
+  dropLateRechecks(s);
   if (s.finishedAt == null && isComplete(s)) s.finishedAt = finite(now, s.updatedAt);
 }
 
@@ -445,12 +588,13 @@ function roundIsClosed(s) {
   return !!last && last.round === s.round;
 }
 
+// The round's tally; cardIds = the cards answered in it, in the order of their first answer.
 function archiveRound(s) {
   s.rounds.push({
     round: s.round,
     answered: s.roundLog.length,
     correct: s.roundLog.filter((e) => e.correct).length,
-    cardIds: s.active.slice(),
+    cardIds: [...new Set(s.roundLog.map((e) => e.cardId))],
   });
 }
 
@@ -480,15 +624,15 @@ function dropCard(s, id, refill = null) {
   s.order = s.order.filter((x) => x !== id);
   delete s.stage[id];
   delete s.seen[id];
-  delete s.retried[id];
+  delete s.lastAt[id];
   delete s.misses[id];
   s.initiallyMastered = s.initiallyMastered.filter((x) => x !== id);
-  s.active = s.active.filter((x) => x !== id);
   if (s.review) {
     const results = { ...s.review.results };
     delete results[id];
     s.review = { due: s.review.due.filter((x) => x !== id), results };
   }
+  if (s.recheck) s.recheck = { due: s.recheck.due.filter((x) => x !== id) };
   // Its questions go; other questions lose it as an option (refilled when possible; mc needs two
   // options to stay mc).
   s.queue = s.queue
@@ -518,9 +662,9 @@ export function stageFromProgress(progress) {
   return Math.min(normalizeProgress(progress).streak, MASTERED);
 }
 
-// `review: true` adds repetition questions for the cards that are mastered already (see the top
-// of this file); without it the session is built exactly as before, rng draw for rng draw.
-export function createLearn(cards, options, { subset = 'all', progress = {}, rng = Math.random, now = Date.now(), review = false } = {}) {
+// `review: true` adds repetition questions for the cards that are mastered already, `recheck: true`
+// rechecks (in sessions with more than RECHECK_MIN_CARDS cards; see the top of this file).
+export function createLearn(cards, options, { subset = 'all', progress = {}, rng = Math.random, now = Date.now(), review = false, recheck = false } = {}) {
   const opts = isObj(options) ? options : {};
   const answerWith = ANSWER_WITH.includes(opts.answerWith) ? opts.answerWith : 'term';
   const sub = normalizeSubset(subset);
@@ -549,10 +693,11 @@ export function createLearn(cards, options, { subset = 'all', progress = {}, rng
     stage,
     initiallyMastered: order.filter((id) => stage[id] >= MASTERED),
     seen,
-    active: [],
     round: 1,
     queue: [],
-    retried: {},
+    clock: 0,
+    lastAt: {},
+    repeats: 0,
     roundLog: [],
     rounds: [],
     answered: 0,
@@ -566,8 +711,8 @@ export function createLearn(cards, options, { subset = 'all', progress = {}, rng
   };
   // The most overdue mastered cards are asked again first.
   if (review === true) s.review = { due: mostOverdueFirst(s.initiallyMastered, prog), results: {} };
-  fillBatch(s);
-  s.queue = buildQueue(s, cards, rng, takeReviews(s));
+  if (recheck === true && order.length > RECHECK_MIN_CARDS) s.recheck = { due: [] };
+  s.queue = planRound(s, cards, rng);
   markFinished(s, at);
   return s;
 }
@@ -592,19 +737,15 @@ export function answer(state, correct, now = Date.now()) {
   if (ok) s.correct += 1;
   else s.misses[id] = (s.misses[id] || 0) + 1;
   s.queue.shift();
+  s.repeats = hasOwn(s.lastAt, id) ? s.repeats + 1 : 0;
+  s.lastAt[id] = s.clock;
+  s.clock += 1;
   s.roundLog.push({ qid: q.qid, cardId: id, type: q.type, ask: q.ask, correct: ok, stageAfter });
   s.last = { qid: q.qid, cardId: id, type: q.type, ask: q.ask, correct: ok, stageBefore };
 
-  // A miss is asked once more at the end of the round, at its new stage (multiple choice).
-  if (!ok && !s.retried[id]) {
-    s.retried[id] = true;
-    const retry = { qid: retryQid(s.round, id), cardId: id, type: 'written', ask: q.ask };
-    if (s.learn.mc && q.retryChoices) {
-      retry.type = 'mc';
-      retry.choices = q.retryChoices;
-    }
-    s.queue.push(retry);
-  }
+  // A miss comes back like any card, after the gap (planned in a later round).
+  followStage(s, id);
+  if (stageBefore < MASTERED) noteRecheck(s, id);
   if (s.review && REVIEW_QID.test(q.qid)) {
     // The first answer to a mastered card's repetition question counts; a miss means it is
     // learned again (stage 0), so it no longer counts as mastered before the session.
@@ -616,7 +757,8 @@ export function answer(state, correct, now = Date.now()) {
 }
 
 // "Ich hatte recht": the last answer (if it was wrong) becomes correct: the card's stage is
-// stageBefore + 1 and its retry in this round is dropped. Idempotent; a no-op after nextRound().
+// stageBefore + 1 and its later questions in this round follow that stage. Idempotent; a no-op
+// after nextRound().
 export function override(state, now = Date.now()) {
   const s = copyState(state);
   const l = s.last;
@@ -634,9 +776,8 @@ export function override(state, now = Date.now()) {
       break;
     }
   }
-  const before = s.queue.length;
-  s.queue = s.queue.filter((q) => q.cardId !== id);
-  if (s.queue.length < before) delete s.retried[id];
+  followStage(s, id);
+  if (l.stageBefore < MASTERED) noteRecheck(s, id);
   s.last = { ...l, correct: true };
   if (s.review && REVIEW_QID.test(l.qid)) {
     // The repetition question was right after all: the card is still mastered.
@@ -687,9 +828,8 @@ export function checkpoint(state) {
   };
 }
 
-// Closes the finished round into `rounds`, drops mastered cards from the batch, refills it and
-// builds the next round's questions (with the next repetition questions, if any). When every
-// card is mastered (and every repetition question asked) the final round is closed and the
+// Closes the finished round into `rounds` and plans the next round's questions (planRound). When
+// every card is mastered (and every repetition question and recheck asked) the final round is closed and the
 // session stays finished (its roundLog is kept for the checkpoint). No-op mid-round.
 // Scope cards missing from `cards` (deleted) are removed from the session.
 export function nextRound(state, cards, rng = Math.random, now = Date.now()) {
@@ -699,6 +839,7 @@ export function nextRound(state, cards, rng = Math.random, now = Date.now()) {
     const present = new Set(cardList(cards).map((c) => c.id));
     for (const id of s.order.slice()) if (!present.has(id)) dropCard(s, id);
   }
+  dropLateRechecks(s);
   if (isComplete(s)) {
     if (s.roundLog.length > 0 && !roundIsClosed(s)) archiveRound(s);
     markFinished(s, now);
@@ -712,10 +853,8 @@ export function nextRound(state, cards, rng = Math.random, now = Date.now()) {
     s.round += 1;
   }
   s.roundLog = [];
-  s.retried = {};
   s.last = null;
-  fillBatch(s);
-  s.queue = buildQueue(s, cards, rng, takeReviews(s));
+  s.queue = planRound(s, cards, rng);
   return s;
 }
 
@@ -757,12 +896,6 @@ export function isReviewQuestion(qid) {
   return typeof qid === 'string' && REVIEW_QID.test(qid);
 }
 
-// How many repetition questions a round asks next to the cards being learned.
-export function reviewsPerRound(roundSize) {
-  const n = typeof roundSize === 'number' && Number.isFinite(roundSize) ? Math.floor(roundSize) : 0;
-  return Math.max(1, Math.floor(n / 3));
-}
-
 // The repetition questions so far: { asked, kept, left } (mastered cards asked again, how many
 // of them were still known, how many are still to come); null for a session without them.
 export function reviewStats(state) {
@@ -774,7 +907,7 @@ export function reviewStats(state) {
   return { asked: results.length, kept: results.filter((ok) => ok === true).length, left: queued.size + due.length };
 }
 
-// Removes a card from the session (e.g. it was deleted mid-session): its stage, batch slot,
+// Removes a card from the session (e.g. it was deleted mid-session): its stage, spacing,
 // questions, current-round answers and misses, and its options in other questions. With `cards`
 // (the set's current cards) each lost option is replaced by another wrong option from the set
 // where one is left, in the same place.
@@ -833,12 +966,12 @@ function retype(s, q) {
 }
 
 // Brings the session in line with `progress`: every stage becomes min(streak, 2) and `seen`
-// follows whether the card was ever answered. A card that is mastered now leaves the batch and
-// this round's queue; a card whose stage changed otherwise keeps its queued questions, switched
-// to the type of its new stage; a card no longer mastered is studied again from the next round
-// on. A queued repetition question of a card that is no longer mastered (missed elsewhere)
-// becomes an ordinary question: the card is learned instead of repeated, so it neither shows as
-// a repetition nor counts in reviewStats. A finished session is left as it is.
+// follows whether the card was ever answered. A card that is mastered now leaves this round's
+// queue; a card whose stage changed otherwise keeps its queued questions, switched to the type of
+// its new stage; a card no longer mastered is studied again. A queued repetition question or
+// recheck of a card that is no longer mastered (missed elsewhere) becomes an ordinary question:
+// the card is learned instead, so it neither shows as a repetition nor counts in reviewStats,
+// and it leaves the cards waiting for a recheck. A finished session is left as it is.
 export function syncProgress(state, progress, now = Date.now()) {
   const s = copyState(state);
   if (s.finishedAt != null) return s;
@@ -855,11 +988,11 @@ export function syncProgress(state, progress, now = Date.now()) {
   }
   for (const id of changed) {
     if (s.stage[id] >= MASTERED) {
-      s.active = s.active.filter((x) => x !== id);
       s.queue = s.queue.filter((q) => q.cardId !== id);
     } else {
       s.initiallyMastered = s.initiallyMastered.filter((x) => x !== id);
-      s.queue = s.queue.map((q) => (q.cardId === id ? retype(s, REVIEW_QID.test(q.qid) ? { ...q, qid: q.qid.replace(/^(\d+)\.3:/, '$1.1:') } : q) : q));
+      if (s.recheck) s.recheck = { due: s.recheck.due.filter((x) => x !== id) };
+      s.queue = s.queue.map((q) => (q.cardId === id ? retype(s, { ...q, qid: asLearnQid(q.qid) }) : q));
     }
   }
   finishEarly(s, now);

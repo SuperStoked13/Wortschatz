@@ -654,7 +654,10 @@ struct LearnFlowTests {
         #expect(d.announced("Noch nicht ganz – tippe die richtige Antwort genau ab."))
         d.type("le chemin")
         d.press(.returnKey)
-        // The retry of the miss comes next (multiple choice).
+        // No retry at the end of the round any more: the only card comes back in the next round
+        // (multiple choice).
+        #expect(d.state.phase == .checkpoint)
+        d.press(.returnKey)
         #expect(d.state.phase == .question(.mc))
     }
 
@@ -693,7 +696,8 @@ struct LearnFlowTests {
 
     @Test func aCheckpointFollowsEachRound() throws {
         let cards = Self.makeCards(3)
-        let d = Driver(Self.makeSet(cards))
+        // A round is roundSize questions (3 here: each card once, then the checkpoint).
+        let d = Driver(Self.makeSet(cards), options: Self.options(roundSize: 3))
         for _ in 0..<3 {
             d.answerByKeys(correct: true)
             if d.state.phase == .feedback(.correct) && d.state.session.map(LearnEngine.isRoundOver) == false {
@@ -732,7 +736,7 @@ struct LearnFlowTests {
 
     @Test func theFinishScreenCelebratesAndReturnIsFertig() throws {
         let cards = Self.makeCards(2)
-        let d = Driver(Self.makeSet(cards))
+        let d = Driver(Self.makeSet(cards), options: Self.options(roundSize: 2))
         var guardCount = 0
         while d.state.phase != .finished && guardCount < 40 {
             guardCount += 1
@@ -812,8 +816,9 @@ struct LearnFlowTests {
                  transitions: 1, after: { $0.state.phase == .question(.mc) }),
             Case(name: "written correct", make: { let d = written(); d.answerByKeys(correct: true); return d },
                  label: "Weiter", transitions: 1, after: { $0.state.phase == .finished || $0.state.phase == .checkpoint }),
+            // The only card of the subset: a miss comes back in the next round, after the checkpoint.
             Case(name: "written wrong", make: { let d = written(); d.answerByKeys(correct: false); return d },
-                 label: "Weiter", transitions: 1, after: { $0.state.phase == .question(.mc) }),
+                 label: "Weiter", transitions: 1, after: { $0.state.phase == .checkpoint }),
             Case(name: "copy, empty", make: { let d = written(retype: true); d.answerByKeys(correct: false); return d },
                  label: "Weiter", transitions: 0, after: { $0.state.phase == .copy && $0.state.rejections == 1 }),
             Case(name: "copy, typed", make: {
@@ -821,9 +826,9 @@ struct LearnFlowTests {
                     d.answerByKeys(correct: false)
                     d.type("le chemin")
                     return d
-                 }, label: "Weiter", transitions: 1, after: { $0.state.phase == .question(.mc) }),
+                 }, label: "Weiter", transitions: 1, after: { $0.state.phase == .checkpoint }),
             Case(name: "checkpoint", make: {
-                    let d = Driver(Self.makeSet(Self.makeCards(2)))
+                    let d = Driver(Self.makeSet(Self.makeCards(2)), options: Self.options(roundSize: 2))
                     Self.play(d) { $0 == .checkpoint }
                     return d
                  }, label: "Weiter zu Runde 2", transitions: 1, after: { $0.state.phase == .question(.written) }),
@@ -1078,7 +1083,7 @@ struct LearnFlowTests {
         let transitions = d.state.transitions
         d.send(.promptAnswered(confirmed: true))
         #expect(d.state.session?.learn.roundSize == 3)
-        #expect(d.state.session?.active.count == 3)
+        #expect(d.state.session?.queue.count == 3)
         #expect(d.state.transitions == transitions + 1)
 
         // Direction and question types need a restart too.
@@ -1145,7 +1150,9 @@ struct LearnFlowTests {
         #expect(d.scheduled.count == 1)
         d.send(.restart)
         d.send(.promptAnswered(confirmed: true))
-        #expect(d.state.phase == .question(.mc))
+        // The card answered right before (stage 1) comes first, written; the new ones follow as
+        // multiple choice.
+        #expect(d.state.phase == .question(.written))
         #expect(d.state.session?.answered == 0)
         #expect(d.state.session?.startedAt == d.now)
         #expect(d.progress.count == 1)  // the progress stays

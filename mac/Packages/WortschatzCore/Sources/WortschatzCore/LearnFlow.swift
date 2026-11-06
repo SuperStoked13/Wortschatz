@@ -294,6 +294,9 @@ public enum LearnFlow {
         /// New sessions ask repetition questions (Wiederholungsfragen, `LearnReview`); a running
         /// session keeps what it was started with.
         public var review: Bool
+        /// New sessions have rechecks (Nachkontrolle, `LearnRecheck`); a running session keeps
+        /// what it was started with.
+        public var recheck: Bool
         /// The scope (the session's subset, or the requested one on the message screens).
         public var subset: StudySubset
         /// `.allMastered`: the scope's cards (reset by "Fortschritt zurücksetzen und neu lernen").
@@ -314,6 +317,7 @@ public enum LearnFlow {
         public var overlay: Overlay?
         public var optionsBeforeOverlay: StudyOptions?
         public var reviewBeforeOverlay: Bool?
+        public var recheckBeforeOverlay: Bool?
         /// The running auto-advance timer (`.scheduleAutoAdvance`), nil = none.
         public var autoAdvanceToken: Int?
         public var lastToken: Int
@@ -329,7 +333,7 @@ public enum LearnFlow {
 
         public init(
             phase: Phase, session: LearnState?, setId: String, setTitle: String, termLang: Lang, defLang: Lang,
-            cards: [Card], options: StudyOptions, subset: StudySubset, review: Bool = false
+            cards: [Card], options: StudyOptions, subset: StudySubset, review: Bool = false, recheck: Bool = false
         ) {
             self.phase = phase
             self.session = session
@@ -341,6 +345,7 @@ public enum LearnFlow {
             self.options = options
             self.subset = subset
             self.review = review
+            self.recheck = recheck
             scopeCardIds = []
             typed = ""
             draft = ""
@@ -426,6 +431,8 @@ public enum LearnFlow {
         case optionsChanged(StudyOptions)
         /// "Wiederholungsfragen" was switched (applies to new sessions; see `State.review`).
         case reviewChanged(Bool)
+        /// "Nachkontrolle" was switched (applies to new sessions; see `State.recheck`).
+        case recheckChanged(Bool)
         /// "Alle wiederholen" on the everything-mastered screen: a session of repetition
         /// questions over the scope.
         case startReview
@@ -509,12 +516,13 @@ public enum LearnFlow {
     /// whole set). A requested subset never silently ends a session with answers: it asks first.
     public static func start(
         set: VocabSet, progress: ProgressMap, options: StudyOptions, saved: SavedLearn? = nil,
-        subset: StudySubset? = nil, forceNew: Bool = false, review: Bool = false, rng: @escaping RNG = systemRNG(),
-        now: Double = TimeUtil.nowMs()
+        subset: StudySubset? = nil, forceNew: Bool = false, review: Bool = false, recheck: Bool = false,
+        rng: @escaping RNG = systemRNG(), now: Double = TimeUtil.nowMs()
     ) -> (State, [Effect]) {
         let state = State(
             phase: .empty, session: nil, setId: set.id, setTitle: set.title, termLang: set.termLang,
-            defLang: set.defLang, cards: set.cards, options: options, subset: subset ?? .all, review: review)
+            defLang: set.defLang, cards: set.cards, options: options, subset: subset ?? .all, review: review,
+            recheck: recheck)
         var m = Machine(state, env: Env(rng: rng, now: now, progress: progress))
         m.boot(saved: saved, wanted: subset, forceNew: forceNew)
         return m.result()

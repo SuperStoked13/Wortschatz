@@ -13,10 +13,10 @@ namespace Wortschatz.App.Features;
 public abstract class Screen
 {
     protected readonly AppModel Model;
-    protected readonly MainWindow Window;
+    protected readonly MainView Window;
     readonly ContentControl _host = new();
 
-    protected Screen(AppModel model, MainWindow window)
+    protected Screen(AppModel model, MainView window)
     {
         Model = model;
         Window = window;
@@ -24,6 +24,9 @@ public abstract class Screen
 
     /// <summary>The library sidebar is shown next to the screen (overview, set, editor, settings).</summary>
     public virtual bool UsesSidebar => true;
+
+    /// <summary>How far the toasts stay above the window's bottom edge: above a study screen's or the editor's bottom bar.</summary>
+    public virtual double ToastClearance => UsesSidebar ? 24 : 84;
 
     /// <summary>The screen's root (its content is replaced by Render).</summary>
     public Control View => _host;
@@ -70,7 +73,7 @@ public abstract class Screen
     /// <summary>Text typed outside a text field as the flows' key: a digit (also Arabic-Indic) or a character.</summary>
     public static KeyInput TextKey(string text) => LearnFlow.DigitValue(text) is { } d ? KeyInput.DigitKey(d) : KeyInput.Character(text);
 
-    public static Screen For(Route route, AppModel model, MainWindow window) => route switch
+    public static Screen For(Route route, AppModel model, MainView window) => route switch
     {
         Route.SetDetail d => model.Set(d.SetId) is not null ? new SetDetail.SetDetailScreen(model, window, d.SetId) : new Overview.OverviewScreen(model, window),
         Route.Study s => s.Request.Mode switch

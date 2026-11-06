@@ -50,6 +50,26 @@ enum SettingsCopy {
         return langs.count == 1 ? langs.first ?? .other : .other
     }
 
+    /// " Eigene Optionen haben: «Unité 3», «Unité 4»." – the sets whose options differ from the
+    /// standard (they keep their own when the standard changes; the set's options show what
+    /// differs and can reset it). Empty when there are none.
+    static func ownOptionsText(_ sets: [SetSummary], standard: StudyOptions) -> String {
+        let own = sets.filter { summary in
+            summary.set.studyOptions != nil
+                && !LearnOptionsCopy.deviations(
+                    summary.options, standard: standard,
+                    names: LearnOptionsCopy.sideNames(termLang: summary.set.termLang, defLang: summary.set.defLang),
+                    termLang: summary.set.termLang
+                ).isEmpty
+        }
+        .map { "«\(AppModel.shortTitle($0.set.title))»" }
+        if own.isEmpty { return "" }
+        let list =
+            own.count <= 3
+            ? own.joined(separator: ", ") : "\(own.prefix(3).joined(separator: ", ")) und \(own.count - 3) weitere"
+        return " Eigene Optionen haben: \(list)."
+    }
+
     /// `directionText(…, 'all')`: what the learner sees and answers with this direction.
     static func directionText(_ answerWith: AnswerWith, names: (term: LearnOptionsCopy.Side, definition: LearnOptionsCopy.Side)) -> String {
         switch answerWith {

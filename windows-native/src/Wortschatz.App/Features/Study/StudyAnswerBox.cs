@@ -35,7 +35,21 @@ public static class StudyAnswerBox
             VerticalContentAlignment = VerticalAlignment.Center,
         };
         box.Classes.Add("bare");
+        ForAnswers(box, null);
         return box;
+    }
+
+    /// <summary>
+    /// An answer field for the on-screen keyboard (phone): no autocorrect, no suggestions, no capital at the start (a
+    /// keyboard that "helps" would type the answer for the learner or change it), and the answer's language as a hint,
+    /// so a keyboard with several languages (Gboard) switches to it – French, Chinese, Arabic.
+    /// </summary>
+    public static void ForAnswers(TextBox box, Lang? lang)
+    {
+        Avalonia.Input.TextInput.TextInputOptions.SetShowSuggestions(box, false);
+        Avalonia.Input.TextInput.TextInputOptions.SetAutoCapitalization(box, false);
+        Avalonia.Input.TextInput.TextInputOptions.SetLocaleHints(box,
+            lang is { } l && SpeechText.LanguageTag(l) is { } tag ? [tag] : null);
     }
 
     /// <param name="field">The answer or copy field (null after a correct answer).</param>

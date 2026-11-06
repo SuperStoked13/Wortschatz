@@ -14,7 +14,7 @@ for a in "$@"; do
   esac
 done
 out="dist/publish-$arch"
-dotnet publish src/Wortschatz.App -c Release -r "win-$arch" --self-contained true \
+dotnet publish src/Wortschatz.App -c Release -f net10.0-windows10.0.19041.0 -r "win-$arch" --self-contained true \
   -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:EnableCompressionInSingleFile=true \
   -p:DebugType=none -p:PublishReadyToRun=true -o "$out"
 name="Wortschatz.exe"

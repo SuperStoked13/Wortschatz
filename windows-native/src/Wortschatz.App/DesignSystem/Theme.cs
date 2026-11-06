@@ -12,7 +12,7 @@ namespace Wortschatz.App.DesignSystem;
 /// <summary>Colours of one status: Fill for bars/dots, Text for labels, Soft for chip backgrounds.</summary>
 public sealed record StatusPalette(Color Fill, Color Text, Color Soft);
 
-public sealed class Palette
+public sealed partial record Palette
 {
     public bool Dark { get; init; }
 
@@ -140,12 +140,22 @@ public sealed class Palette
 }
 
 /// <summary>The active palette and the fonts.</summary>
-public static class WsTheme
+public static partial class WsTheme
 {
     /// <summary>The palette of the current appearance (MainWindow sets it from the theme setting / system).</summary>
     public static Palette P { get; private set; } = Palette.Light;
 
-    public static void Use(bool dark) => P = dark ? Palette.DarkPalette : Palette.Light;
+    /// <summary>
+    /// The palette for light or dark mode, adapted to Windows' accessibility settings like the Mac adapts to "Kontrast
+    /// erhöhen" and "Transparenz reduzieren" (Theme.swift, GlassSurfaces.swift, AppBackdrop.swift).
+    /// </summary>
+    public static void Use(bool dark)
+    {
+        var palette = dark ? Palette.DarkPalette : Palette.Light;
+        if (HighContrast) palette = palette.WithIncreasedContrast();
+        if (ReduceTransparency || HighContrast) palette = palette.Opaque();
+        P = palette;
+    }
 
     /// <summary>Onest (UI) with Windows fallbacks for Arabic and Chinese (Segoe UI, Microsoft YaHei).</summary>
     public static readonly FontFamily UI = new("avares://Wortschatz/Assets/Fonts#Onest, Segoe UI, Microsoft YaHei UI, Arial");

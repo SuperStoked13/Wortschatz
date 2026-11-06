@@ -158,6 +158,7 @@ public sealed class FlashcardsController
     {
         if (Phase != DeckPhase.Card || CurrentCard is null) return;
         Deck.Flip(TimeUtil.NowMs());
+        if (CurrentCard is { } card && SideOf(card, Deck.IsFlipped) is { } side) Announcer.Announce($"{side.Label}: {side.Text}");
         Changed?.Invoke();
     }
 
@@ -168,6 +169,7 @@ public sealed class FlashcardsController
     public void Sort(FlashcardVerdict verdict, bool flung = false)
     {
         if (Phase != DeckPhase.Card || CurrentCard is not { } card) return;
+        Announcer.Announce(verdict == FlashcardVerdict.Know ? "Weiss ich" : "Lerne ich noch");
         Depart(card, Deck.IsFlipped, new FlashcardDepartureKind.Sorted(verdict), flung, Swipe.OffsetFor(card.Id));
         Arrival = new FlashcardArrival.FromStack();
         // The stack the swipe uncovered goes back under the next card as it rises.
@@ -176,6 +178,7 @@ public sealed class FlashcardsController
         StopSpeaking();
         Persist();
         // The round's fanfare replaces the card's own sound, as in Lernen (Mac: FlashcardsController.sort).
+        if (_isLive) Services.Haptics.Selection();
         if (_isLive)
             _model.Sounds.Play(Phase switch
             {
@@ -347,7 +350,13 @@ public sealed class FlashcardsController
     /// <summary>✎ (Ctrl+E): the card editor saved.</summary>
     public void SaveEdit(Card card, string term, string definition)
     {
-        _model.Store.UpdateCard(SetId, card.Id, new CardChanges(term, definition));
+        try { _model.Store.UpdateCard(SetId, card.Id, new CardChanges(term, definition)); }
+        catch (Exception e)
+        {
+            // Mac: model.report(error, fallback:) – the store's own message (an empty card, a card that is gone), else the fallback.
+            _model.ShowToast(new ToastMessage(e is LibraryStoreError ? e.Message : "Die Karte konnte nicht gespeichert werden.", ToastTone.Danger, DurationMs: 6000));
+            return;
+        }
         _model.SaveSoon();
     }
 

@@ -56,10 +56,14 @@ struct LearnReviewTests {
         #expect(!LearnEngine.isReviewQuestion("x.3:c1"))
         #expect(!LearnEngine.isReviewQuestion("1.q3:c1"))
         #expect(!LearnEngine.isReviewQuestion("13"))
-        #expect(LearnEngine.reviewsPerRound(7) == 2)
-        #expect(LearnEngine.reviewsPerRound(5) == 1)
-        #expect(LearnEngine.reviewsPerRound(1) == 1)
-        #expect(LearnEngine.reviewsPerRound(15) == 5)
+        #expect(!LearnEngine.isReviewQuestion("1.33:c1"))
+        #expect(!LearnEngine.isReviewQuestion("1.4:c1"))
+        #expect(!LearnEngine.isReviewQuestion("1.3.x:c1"))
+        #expect(LearnEngine.isReviewQuestion("2.3.2:c1"))
+        #expect(LearnEngine.isRecheckQuestion("1.4:c1"))
+        #expect(LearnEngine.isRecheckQuestion("3.4.2:a:b"))
+        #expect(!LearnEngine.isRecheckQuestion("1.3:c1"))
+        #expect(!LearnEngine.isRecheckQuestion("1.4."))
     }
 
     // MARK: - Without the option
@@ -89,22 +93,43 @@ struct LearnReviewTests {
 
     // MARK: - Rounds
 
-    @Test func aFewRepetitionQuestionsJoinEachRoundMostOverdueFirst() {
+    @Test func repetitionQuestionsAreMixedInAmongTheNewCardsMostOverdueFirst() {
         let cards = Self.makeCards(10)
         // c1…c6 mastered (c1 answered longest ago), c7…c10 new.
-        let s = Self.create(cards, progress: Self.mastered(Array(cards.prefix(6))))
-        #expect(s.review?.due == ["c3", "c4", "c5", "c6"])
-        let reviews = s.queue.filter { LearnEngine.isReviewQuestion($0.qid) }
-        #expect(Set(reviews.map(\.cardId)) == ["c1", "c2"])
-        #expect(s.queue.count == 4 + 2)
-        // Mastered cards are asked written, with options ready for a retry.
+        var s = Self.create(cards, progress: Self.mastered(Array(cards.prefix(6))))
+        #expect(s.queue.count == 7)
+        #expect(!LearnEngine.isFinished(s))
+        #expect(LearnEngine.reviewStats(s) == LearnEngine.ReviewStats(asked: 0, kept: 0, left: 6))
+        // Planned repetition questions leave the due list; the rest waits, the most overdue first.
+        let planned = Set(s.queue.filter { LearnEngine.isReviewQuestion($0.qid) }.map(\.cardId))
+        #expect(s.review?.due == ["c1", "c2", "c3", "c4", "c5", "c6"].filter { !planned.contains($0) })
+        // The whole session: every mastered card is asked once more, in that order, written, with
+        // options ready should it have to be asked as multiple choice; the new cards come in between.
+        var asked: [LearnQueueQuestion] = []
+        var t = Self.T0
+        var round = 0
+        while !LearnEngine.isFinished(s) && round < 20 {
+            while let q = s.queue.first {
+                asked.append(q)
+                t += 1000
+                s = LearnEngine.answer(s, correct: true, now: t)
+            }
+            t += 1000
+            s = LearnEngine.nextRound(s, cards: cards, rng: mulberry32(seed: round + 10), now: t)
+            round += 1
+        }
+        #expect(LearnEngine.isFinished(s))
+        let reviews = asked.filter { LearnEngine.isReviewQuestion($0.qid) }
+        #expect(reviews.map(\.cardId) == ["c1", "c2", "c3", "c4", "c5", "c6"])
         for q in reviews {
             #expect(q.type == .written)
             #expect(q.retryChoices != nil)
-            #expect(q.qid == "1.3:\(q.cardId)")
+            #expect(q.qid.hasSuffix(".3:\(q.cardId)") && q.qid.split(separator: ".").count == 2)
         }
-        #expect(!LearnEngine.isFinished(s))
-        #expect(LearnEngine.reviewStats(s) == LearnEngine.ReviewStats(asked: 0, kept: 0, left: 6))
+        let firstNew = asked.firstIndex { !LearnEngine.isReviewQuestion($0.qid) } ?? .max
+        let lastReview = asked.lastIndex { LearnEngine.isReviewQuestion($0.qid) } ?? -1
+        #expect(firstNew < lastReview, "the repetition questions are mixed in among the new cards")
+        #expect(LearnEngine.reviewStats(s) == LearnEngine.ReviewStats(asked: 6, kept: 6, left: 0))
     }
 
     @Test func aWholeRoundOfRepetitionWhenEverythingIsMastered() {
@@ -148,12 +173,8 @@ struct LearnReviewTests {
         #expect(s.stage[first.cardId] == 0)
         #expect(!s.initiallyMastered.contains(first.cardId))
         #expect(s.review?.results[first.cardId] == false)
-        // Asked once more at the end of the round, as multiple choice.
-        let retry = s.queue.last!
-        #expect(retry.cardId == first.cardId)
-        #expect(retry.qid == "1.2:\(first.cardId)")
-        #expect(!LearnEngine.isReviewQuestion(retry.qid))
-        #expect(retry.type == .mc)
+        // No retry at the end of the round any more: it comes back later, as a card being learned.
+        #expect(!s.queue.contains { $0.cardId == first.cardId })
         #expect(LearnEngine.counts(s).mastered == 5)
         // What the store records for it: no longer mastered.
         let recorded = Mastery.applyAnswer(progress[first.cardId], correct: false, at: Self.T0 + 1000)
@@ -170,13 +191,13 @@ struct LearnReviewTests {
             defer { first = false }
             return !first
         }
-        // The retry was right: stage 1, so the card comes back in the next round, written.
-        #expect(s.stage[missed] == 1)
+        // The miss sent it to stage 0; the next round learns it again: multiple choice, then
+        // written (the only card left, so it may come right after itself).
+        #expect(s.stage[missed] == 0)
         #expect(!LearnEngine.isFinished(s))
         s = LearnEngine.nextRound(s, cards: cards, rng: mulberry32(seed: 9), now: Self.T0 + 60_000)
-        #expect(s.active == [missed])
-        #expect(s.queue.map(\.cardId) == [missed])
-        #expect(!LearnEngine.isReviewQuestion(s.queue[0].qid))
+        #expect(s.queue.map(\.qid) == ["2.1:\(missed)", "2.1.2:\(missed)"])
+        #expect(s.queue.map(\.type) == [.mc, .written])
         s = Self.play(s, at: Self.T0 + 60_000) { _ in true }
         #expect(LearnEngine.isFinished(s))
         let stats = LearnEngine.finalStats(s)
@@ -213,7 +234,8 @@ struct LearnReviewTests {
         let cards = Self.makeCards(10)
         var s = Self.create(cards, progress: Self.mastered(Array(cards.prefix(6))))
         s = LearnEngine.removeCard(s, cardId: "c3", now: Self.T0 + 1000, cards: cards.filter { $0.id != "c3" })
-        #expect(s.review?.due == ["c4", "c5", "c6"])
+        #expect(!(s.review?.due.contains("c3") ?? true))
+        #expect(!s.queue.contains { $0.cardId == "c3" })
         s = LearnEngine.removeCard(s, cardId: "c1", now: Self.T0 + 2000)
         #expect(!s.queue.contains { $0.cardId == "c1" })
         #expect(LearnEngine.reviewStats(s)?.left == 4)
@@ -226,11 +248,25 @@ struct LearnReviewTests {
         // c5 is answered wrong in Schreiben: no longer mastered.
         progress["c5"] = Mastery.applyAnswer(progress["c5"], correct: false, at: Self.T0 + 500)
         s = LearnEngine.syncProgress(s, progress: progress, now: Self.T0 + 600)
-        s = Self.play(s, at: Self.T0 + 600) { _ in true }
-        s = LearnEngine.nextRound(s, cards: cards, rng: mulberry32(seed: 5), now: Self.T0 + 60_000)
-        #expect(s.active.contains("c5"))
-        #expect(!(s.review?.due.contains("c5") ?? true))
         #expect(!s.queue.contains { $0.cardId == "c5" && LearnEngine.isReviewQuestion($0.qid) })
+        var asked: [String] = []
+        var t = Self.T0 + 600
+        var round = 0
+        while !LearnEngine.isFinished(s) && round < 20 {
+            while let q = s.queue.first {
+                asked.append(q.qid)
+                t += 1000
+                s = LearnEngine.answer(s, correct: true, now: t)
+            }
+            t += 1000
+            s = LearnEngine.nextRound(s, cards: cards, rng: mulberry32(seed: round + 5), now: t)
+            #expect(!(s.review?.due.contains("c5") ?? true))
+            round += 1
+        }
+        // Learned (multiple choice, then written) instead of repeated.
+        #expect(asked.count { $0.hasSuffix(":c5") } == 2)
+        #expect(!asked.contains { $0.hasSuffix(":c5") && LearnEngine.isReviewQuestion($0) })
+        #expect(LearnEngine.isFinished(s))
     }
 
     @Test func theRepetitionSurvivesStorage() throws {

@@ -13,7 +13,7 @@ the app automatically.
 | `LearnActionBar.swift` | The floating glass bar: status pill (key hints morphing into the feedback, `glassEffectID`) and the buttons; it always ends with `LearnFlow.returnAction` and its ↩ keycap. |
 | `LearnCheckpointView.swift` | "Runde N geschafft", segmented progress bar, the round's cards (`LearnTermList`). |
 | `LearnFinishView.swift` | Finish screen (trophy, confetti, stat tiles, "Am häufigsten falsch") and the message screens (all mastered, empty). |
-| `LearnOptionsPanel.swift` | The options form (Abfrage, Fragetypen, Begriffe pro Runde, Abtippen, Vorlesen, Wiederholungsfragen, Toleranz). |
+| `LearnOptionsPanel.swift` | The options form (Abfrage, Fragetypen, Fragen pro Runde, Abtippen, Vorlesen, Wiederholungsfragen und Nachkontrolle, Toleranz; oben die eigenen Optionen des Sets mit «Auf Standard zurücksetzen»). |
 | `LearnCardEditor.swift` | "Karte bearbeiten" sheet. |
 | `LearnSnapshots.swift` | DEBUG snapshot scenes `learn-*` (scripted `LearnFlow` on the sample library). |
 

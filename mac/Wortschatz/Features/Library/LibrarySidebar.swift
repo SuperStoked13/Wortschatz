@@ -2,7 +2,8 @@ import SwiftUI
 import WortschatzCore
 
 /// The sidebar (spec §4.1): "Übersicht", then the section "Lernsets" with a row per set
-/// (mastery gauge, title, "52 Begriffe"), and the daily streak (Lernserie) at its foot.
+/// (mastery gauge, title, "52 Begriffe"), and the daily streak (Lernserie) and "Einstellungen"
+/// at its foot.
 /// Searchable by title, description and terms; Return in the search field opens the first
 /// match. ↑↓ move the selection; Return then triggers the detail's primary action (Lernen).
 struct LibrarySidebar: View {
@@ -45,8 +46,11 @@ struct LibrarySidebar: View {
             }
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
-            if !model.library.isEmpty {
-                SidebarStreakFooter(streak: model.library.stats.streak)
+            VStack(alignment: .leading, spacing: 0) {
+                if !model.library.isEmpty {
+                    SidebarStreakFooter(streak: model.library.stats.streak)
+                }
+                SidebarSettingsLink()
             }
         }
         .searchable(text: $model.sidebarSearch, placement: .sidebar, prompt: "Lernsets durchsuchen")
@@ -132,6 +136,26 @@ private struct SidebarStreakFooter: View {
 
     private var title: String {
         streak.current > 0 ? "\(Labels.plural(streak.current, "Tag", "Tage")) Lernserie" : "Noch keine Lernserie"
+    }
+}
+
+/// "Einstellungen" at the very foot of the sidebar, an entry of its own with symbol and text
+/// below the streak: opens the Settings window (⌘,).
+private struct SidebarSettingsLink: View {
+    var body: some View {
+        SettingsLink {
+            Label("Einstellungen", systemImage: "gearshape")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, Spacing.s + 2)
+                .padding(.vertical, Spacing.xs + 2)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .padding(.horizontal, Spacing.s)
+        .padding(.bottom, Spacing.s)
+        .help("Einstellungen (⌘,)")
     }
 }
 

@@ -111,25 +111,31 @@ public static partial class LearnFlow
     // MARK: - Options that need a restart
 
     /// <summary>A setting that shapes a running session: it only applies to a new one.</summary>
-    public enum SettingsChange { Direction, Types, RoundSize, Review }
+    public enum SettingsChange { Direction, Types, RoundSize, Review, Recheck }
 
-    /// <summary>The options a session was built with (<c>sessionSettings</c>); Review: with repetition questions.</summary>
-    public sealed record SessionSettings(AnswerWith AnswerWith, int RoundSize, bool Mc, bool Written, bool Review = false);
+    /// <summary>
+    /// The options a session was built with (<c>sessionSettings</c>); Review: with repetition questions; Recheck: with
+    /// rechecks (Nachkontrolle; only sessions with more than RECHECK_MIN_CARDS cards have them).
+    /// </summary>
+    public sealed record SessionSettings(AnswerWith AnswerWith, int RoundSize, bool Mc, bool Written, bool Review = false, bool Recheck = false);
 
     public static SessionSettings SessionSettingsOf(LearnState state) =>
-        MakeSettings(state.AnswerWith, state.Learn.RoundSize, state.Learn.Mc, state.Learn.Written, state.Review is not null);
+        MakeSettings(state.AnswerWith, state.Learn.RoundSize, state.Learn.Mc, state.Learn.Written, state.Review is not null, state.Recheck is not null);
 
-    /// <summary>The settings a new session would get (review: the repetition questions are on).</summary>
-    public static SessionSettings SessionSettingsOf(StudyOptions options, bool review = false) =>
-        MakeSettings(options.AnswerWith, options.Learn.RoundSize, options.Learn.Mc, options.Learn.Written, review);
+    /// <summary>
+    /// The settings a new session would get (review: the repetition questions are on; recheck: rechecks would apply,
+    /// i.e. the option is on and the session has more than RECHECK_MIN_CARDS cards).
+    /// </summary>
+    public static SessionSettings SessionSettingsOf(StudyOptions options, bool review = false, bool recheck = false) =>
+        MakeSettings(options.AnswerWith, options.Learn.RoundSize, options.Learn.Mc, options.Learn.Written, review, recheck);
 
-    static SessionSettings MakeSettings(AnswerWith answerWith, int roundSize, bool mc, bool written, bool review)
+    static SessionSettings MakeSettings(AnswerWith answerWith, int roundSize, bool mc, bool written, bool review, bool recheck)
     {
         bool both = mc || written;
-        return new SessionSettings(answerWith, roundSize >= 1 ? roundSize : DefaultRoundSize, both ? mc : true, both ? written : true, review);
+        return new SessionSettings(answerWith, roundSize >= 1 ? roundSize : DefaultRoundSize, both ? mc : true, both ? written : true, review, recheck);
     }
 
-    /// <summary>Which session-shaping settings differ: direction, question types, round size, repetition questions (in this order).</summary>
+    /// <summary>Which session-shaping settings differ: direction, question types, round size, repetition questions, rechecks (in this order).</summary>
     public static List<SettingsChange> SettingsChanges(SessionSettings a, SessionSettings b)
     {
         var output = new List<SettingsChange>();
@@ -137,6 +143,7 @@ public static partial class LearnFlow
         if (a.Mc != b.Mc || a.Written != b.Written) output.Add(SettingsChange.Types);
         if (a.RoundSize != b.RoundSize) output.Add(SettingsChange.RoundSize);
         if (a.Review != b.Review) output.Add(SettingsChange.Review);
+        if (a.Recheck != b.Recheck) output.Add(SettingsChange.Recheck);
         return output;
     }
 
@@ -149,6 +156,7 @@ public static partial class LearnFlow
                 SettingsChange.Direction => "Die neue Abfragerichtung gilt",
                 SettingsChange.Types => "Die neuen Fragetypen gelten",
                 SettingsChange.RoundSize => "Die neue Rundengrösse gilt",
+                SettingsChange.Recheck => "Die Einstellung für die Nachkontrolle gilt",
                 _ => "Die Einstellung für Wiederholungsfragen gilt",
             }
             : "Die neuen Einstellungen gelten";

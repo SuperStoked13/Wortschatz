@@ -22,14 +22,14 @@
     <h2>Was der Server verarbeitet</h2>
     <p>Bei jedem Aufruf erhält der Server deine IP-Adresse, die aufgerufene Adresse, die Uhrzeit und die Angaben deines Browsers, die bei jeder Anfrage mitgehen. Damit wird die Seite ausgeliefert und vor Missbrauch geschützt:</p>
     <ul>
-      <li>Der Server zählt, wie viele Anfragen und Downloads von einer Adresse kommen, und sperrt Adressen vorübergehend, die die Website angreifen oder überlasten. Diese Zähler liegen nur im Arbeitsspeicher, kommen nie auf die Festplatte und verschwinden nach spätestens zwei Tagen.</li>
+      <li>Der Server zählt, wie viele Anfragen und Daten von einer Adresse kommen, und bremst Adressen vorübergehend, die die Website überlasten. Diese Zähler liegen nur im Arbeitsspeicher, kommen nie auf die Festplatte und verschwinden nach spätestens zwei Tagen.</li>
       <li>Im Protokoll des Servers steht deine IP-Adresse nur gekürzt (zum Beispiel 203.0.113.0), sodass sie nicht mehr auf einen einzelnen Anschluss zeigt. Das Protokoll dient der Fehlersuche und wird regelmässig gelöscht.</li>
       <li>Für Downloads zählt der Server, wie oft jede Version pro Tag geladen wurde. Diese Zahl enthält nichts über die Personen, die geladen haben.</li>
       {{#site.login}}<li>Die Website ist passwortgeschützt. Nach der Anmeldung speichert dein Browser ein Cookie, damit du das Passwort nicht bei jedem Aufruf eingeben musst. Es enthält nur sein Ablaufdatum und eine Prüfsumme, nichts über dich, und läuft nach {{site.loginDays}} Tagen ab.</li>{{/site.login}}
     </ul>
 
     <h2>Verschlüsselung und Name</h2>
-    <p>Die Verbindung ist mit HTTPS verschlüsselt (Zertifikat von Let’s Encrypt). Der Name wortschatz.duckdns.org wird über den Dienst DuckDNS auf diesen Server geleitet. DuckDNS sieht dabei nur, welche Adresse der Server hat, aber nicht, wer die Website besucht.</p>
+    <p>Die Verbindung ist mit HTTPS verschlüsselt (Zertifikat von Let’s Encrypt). Der Name wortschatz.duckdns.org wird über den Dienst DuckDNS auf diesen Server geleitet. DuckDNS sieht dabei nur, welche Adresse der Server hat, aber nicht, wer die Website besucht. Wer die Seite über die Ausweichadresse bei Cloudflare öffnet (zum Beispiel in einem Netz, das DuckDNS sperrt): Dort endet die Verschlüsselung, und Cloudflare leitet die Anfragen an diesen Server weiter. Cloudflare kann dabei alles sehen, was über diese Adresse läuft: die Internetadresse, die aufgerufenen Seiten und die Download-Links{{#site.login}}, auch das Passwort und das Anmelde-Cookie{{/site.login}}.</p>
 
     <h2>Die App</h2>
     <p>Wortschatz selbst sendet keine Daten. Lernsets, Fortschritt und Einstellungen bleiben auf deinem Computer: in der Mac-App in ihrem eigenen Ordner, in der Windows-App unter %LOCALAPPDATA%\Wortschatz. Beide Apps funktionieren ohne Internet.</p>
@@ -37,7 +37,7 @@
     <h2>Deine Rechte</h2>
     <p>Du kannst Auskunft darüber verlangen, welche Daten über dich bearbeitet werden, und ihre Berichtigung oder Löschung verlangen. Da der Server keine Daten speichert, die auf dich zurückführen, gibt es in der Regel nichts zu löschen.{{#site.contactEmail}} Schreib dafür an <a href="{{site.mailto}}">{{site.contactEmail}}</a>.{{/site.contactEmail}}</p>
 
-    <p class="prose-meta">Stand: Oktober 2026</p>
+    <p class="prose-meta">Stand: November 2026</p>
   </main>
 {{> footer}}
 </body>

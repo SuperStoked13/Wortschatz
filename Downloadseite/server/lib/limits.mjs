@@ -1,6 +1,5 @@
-// In-memory limits: request rates, download counts, temporary blocks, parallel
-// downloads and a daily traffic budget. Every map is bounded, so a flood of new
-// addresses cannot exhaust the memory.
+// In-memory limits: request and byte rates, parallel downloads and daily traffic.
+// Every map is bounded, so a flood of new addresses cannot exhaust the memory.
 
 /** A Map that forgets its oldest entry once it holds `maxSize` keys. */
 export class LruMap extends Map {
@@ -39,6 +38,23 @@ export class TokenBucket {
     }
     this.buckets.set(key, bucket);
     return result;
+  }
+
+  /** What take() would answer right now, without taking anything. */
+  peek(key, cost = 1) {
+    const bucket = this.buckets.get(key);
+    const tokens = bucket ? Math.min(this.capacity, bucket.tokens + ((this.clock() - bucket.at) / 1000) * this.perSecond) : this.capacity;
+    if (tokens >= cost) return { ok: true, retryAfter: 0 };
+    return { ok: false, retryAfter: Math.max(1, Math.ceil((cost - tokens) / this.perSecond)) };
+  }
+
+  /** Takes `amount` whatever is left, for costs known only afterwards: the bucket may go into debt. */
+  spend(key, amount) {
+    const now = this.clock();
+    const bucket = this.buckets.get(key) ?? { tokens: this.capacity, at: now };
+    bucket.tokens = Math.min(this.capacity, bucket.tokens + ((now - bucket.at) / 1000) * this.perSecond) - amount;
+    bucket.at = now;
+    this.buckets.set(key, bucket);
   }
 
   /** Drops buckets that have refilled completely (they behave like new ones). */
@@ -140,60 +156,6 @@ export class DailyQuota {
   }
 }
 
-/**
- * Penalty points per key that fade away over `decayMs` (a full threshold per window).
- * Reaching the threshold blocks the key for `banMs`.
- */
-export class PenaltyBox {
-  constructor({ threshold, decayMs, banMs, maxKeys = 50_000, clock = Date.now }) {
-    this.threshold = threshold;
-    this.decayMs = decayMs;
-    this.banMs = banMs;
-    this.clock = clock;
-    this.scores = new LruMap(maxKeys);
-    this.bans = new LruMap(maxKeys);
-  }
-
-  /** Adds points; returns true when this blocked the key. */
-  add(key, points) {
-    const now = this.clock();
-    const entry = this.scores.get(key) ?? { score: 0, at: now };
-    entry.score = Math.max(0, entry.score - ((now - entry.at) / this.decayMs) * this.threshold) + points;
-    entry.at = now;
-    if (entry.score >= this.threshold) {
-      this.scores.delete(key);
-      this.bans.set(key, now + this.banMs);
-      return true;
-    }
-    this.scores.set(key, entry);
-    return false;
-  }
-
-  /** Milliseconds the key stays blocked (0 = not blocked). */
-  blockedFor(key) {
-    const until = this.bans.get(key);
-    if (until === undefined) return 0;
-    const left = until - this.clock();
-    if (left <= 0) {
-      this.bans.delete(key);
-      return 0;
-    }
-    return left;
-  }
-
-  get blockedCount() {
-    return this.bans.size;
-  }
-
-  sweep() {
-    const now = this.clock();
-    for (const [key, until] of this.bans) if (until <= now) this.bans.delete(key);
-    for (const [key, entry] of this.scores) {
-      if (entry.score - ((now - entry.at) / this.decayMs) * this.threshold <= 0) this.scores.delete(key);
-    }
-  }
-}
-
 /** Parallel downloads: at most `perKey` per address and `total` overall. */
 export class ConcurrencyGate {
   constructor({ perKey, total }) {
@@ -238,17 +200,6 @@ export function dayKey(time = Date.now()) {
   return dayFormat.format(time);
 }
 
-/** Seconds until midnight in Zurich (rounded up, at least 60). */
-export function secondsUntilTomorrow(time = Date.now()) {
-  const today = dayKey(time);
-  let probe = time;
-  // Step forward in 10-minute steps until the date changes, then refine to the minute.
-  while (dayKey(probe) === today) probe += 10 * 60_000;
-  probe -= 10 * 60_000;
-  while (dayKey(probe) === today) probe += 60_000;
-  return Math.max(60, Math.ceil((probe - time) / 1000));
-}
-
 /** Bytes sent per day (Swiss time); 0 = no budget. */
 export class DailyBudget {
   constructor({ bytesPerDay, clock = Date.now }) {
@@ -276,4 +227,19 @@ export class DailyBudget {
     this.#roll();
     this.used += bytes;
   }
+}
+
+/**
+ * The slowest a running download may get before it is cut off (bytes per second, 0 = no check).
+ * Normally `floor`, or half a fair share of the bandwidth if that is less. When the slots run
+ * short, half a fair share counts even if that is more: holding a slot then costs real bandwidth.
+ */
+export function downloadFloor({ floor, laneRate, perDownload, active, slots }) {
+  if (!floor) return 0;
+  let minimum = floor;
+  if (laneRate) {
+    const halfShare = (laneRate / Math.max(1, active)) * 0.5;
+    minimum = active >= slots * 0.75 ? halfShare : Math.min(floor, halfShare);
+  }
+  return perDownload ? Math.min(minimum, perDownload * 0.5) : minimum;
 }

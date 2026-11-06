@@ -8,11 +8,13 @@ using Wortschatz.Core;
 
 // Renders the app's screens to PNG with Avalonia headless (Skia) – the Windows app's design checks without
 // Windows (Mac: the snapshot harness, DebugSnapshot.swift). Usage:
-//   dotnet run --project tools/Wortschatz.Snapshots -- <out-dir> [dark] [reduce] [--only=learn|write|flashcards]
+//   dotnet run --project tools/Wortschatz.Snapshots -- <out-dir> [phone] [dark] [reduce] [contrast] [solid] [--only=learn|write|flashcards|editor|exam|settings|shell]
 var outDir = args.Length > 0 ? args[0] : "snapshots";
 bool dark = args.Contains("dark");
 // "reduce": as with Windows' animation effects switched off (Mac: Reduce Motion).
 if (args.Contains("reduce")) Wortschatz.App.DesignSystem.Motion.ReduceMotion = true;
+// "contrast": a Windows contrast theme (Mac: increased contrast); "solid": transparency effects off (Reduce Transparency).
+if (args.Contains("contrast") || args.Contains("solid")) WsTheme.ForceAccessibility(args.Contains("contrast"), args.Contains("solid"));
 Directory.CreateDirectory(outDir);
 // A clock that moves on by a second per reading: the flows' input locks (280 ms) never block the scripted steps.
 double fakeNow = 1_762_100_000_000;
@@ -28,9 +30,24 @@ AppBuilder.Configure<App>()
     .UseHeadless(new AvaloniaHeadlessPlatformOptions { UseHeadlessDrawing = false })
     .SetupWithoutStarting();
 
+// "phone": the Android app's layout on a phone screen (390 × 844 like a common Android phone, without the system bars).
+bool phone = args.Contains("phone");
+AppDevice.IsPhone = phone;
 var model = Samples.Model(dark);
-var window = new MainWindow(model) { Width = 1280, Height = 800 };
-window.Show();
+Avalonia.Controls.Window host;
+MainView window;
+if (phone)
+{
+    window = new MainView(model);
+    host = new Avalonia.Controls.Window { Width = 390, Height = 844, Content = window };
+}
+else
+{
+    var main = new MainWindow(model) { Width = 1280, Height = 800 };
+    host = main;
+    window = main.View;
+}
+host.Show();
 
 void Advance(double seconds)
 {
@@ -56,16 +73,16 @@ void Shot(string name, bool settle = true)
         Console.Error.WriteLine($"{name}: anims={Motion.ActiveAnimations} now={motionNow} screen={scr.GetType().Name} content={(v as Avalonia.Controls.ContentControl)?.Content?.GetType().Name} bounds={v.Bounds} opacity={(((v as Avalonia.Controls.ContentControl)?.Content as Avalonia.Controls.Control)?.Opacity)}");
         foreach (var d in Avalonia.VisualTree.VisualExtensions.GetVisualDescendants(v).Take(12)) Console.Error.WriteLine($"   {d.GetType().Name} {d.Bounds} op={d.Opacity} vis={d.IsVisible}");
     }
-    var frame = window.CaptureRenderedFrame();
+    var frame = host.CaptureRenderedFrame();
     var path = Path.Combine(outDir, name + ".png");
     frame?.Save(path);
     Console.WriteLine(path);
 }
 
 
-var main = model.Sets.First(s => s.Title.StartsWith("Unité 3"));
+var set = model.Sets.First(s => s.Title.StartsWith("Unité 3"));
 Shot("01-overview");
-model.OpenSet(main.Id);
+model.OpenSet(set.Id);
 Shot("02-set");
 // Toasts: one rising, then all of them at rest (a success, one with an action, one that stays until closed).
 model.ShowToast(new ToastMessage("Backup gespeichert", ToastTone.Success));
@@ -76,7 +93,7 @@ model.ShowToast(new ToastMessage("Die Datei ist kein Wortschatz-Backup.", ToastT
 Shot("02c-toasts");
 foreach (var t in model.Toasts.ToList()) model.DismissToast(t.Id);
 var only = args.FirstOrDefault(a => a.StartsWith("--only="))?[7..];
-foreach (var step in Samples.Steps(model, window, main.Id, only))
+foreach (var step in Samples.Steps(model, window, host, set.Id, only))
 {
     // "name@0.25": a frozen moment, 0.25 s after the step's action (no settling).
     var parts = step.Split('@');
@@ -135,9 +152,56 @@ static class Samples
     }
 
     /// <summary>The study screens, step by step (names of the PNGs).</summary>
-    public static IEnumerable<string> Steps(AppModel model, MainWindow window, string setId, string? only = null)
+    public static IEnumerable<string> Steps(AppModel model, MainView window, Avalonia.Controls.Window host, string setId, string? only = null)
     {
         bool Wants(string part) => only is null || only == part;
+        if (only == "settings")
+        {
+            foreach (var step in SettingsSteps(model, window, setId)) yield return step;
+            yield break;
+        }
+        if (only == "shell")
+        {
+            // The window's own sheets and actions: delete with undo, Tastenkürzel, text export, backup import, sidebar.
+            model.DeleteSet(setId);
+            yield return "s1-deleted-toast";
+            model.Undo();
+            yield return "s2-restored";
+            foreach (var t in model.Toasts.ToList()) model.DismissToast(t.Id);
+            ShortcutsSheet.Show(model);
+            yield return "s3-shortcuts";
+            model.ClosePrompt();
+            window.ToggleSidebar();
+            yield return "s7-sidebar-hidden";
+            window.ToggleSidebar();
+            yield return "s8-sidebar-back@0.2";
+            model.Study(setId, StudyMode.Learn);
+            yield return "s9-into-learn@0.15";
+            model.OpenSet(setId);
+            yield return "s10-out-of-learn@0.15";
+            yield break;
+        }
+        if (only == "editor")
+        {
+            // The editor alone: an existing set and a new one with the import panel (drop zone).
+            model.Navigate(new Route.Editor(setId));
+            yield return "08-editor";
+            model.Navigate(new Route.Editor(null));
+            yield return "08b-editor-new";
+            // A pasted list with a heading, a doubled term and an unsure line: the detection with its preview, then the
+            // cards it makes (doubled term marked) and a save attempt without a title (the errors stay on screen).
+            if (window.CurrentScreen is Wortschatz.App.Features.Editor.SetEditorScreen editor)
+            {
+                editor.SnapshotImportText("Vocabulaire – Unité 3\nla maison - das Haus\nle chat - die Katze\nle chien - der Hund\nla maison - das Gebäude\n"
+                    + "la fenêtre - das Fenster\nla porte - die Tür\nle jardin - der Garten\nla cuisine - die Küche\nle salon - das Wohnzimmer\nla chambre");
+                yield return "08c-editor-detection";
+                editor.SnapshotApplyImport();
+                yield return "08d-editor-cards";
+                editor.SnapshotValidate();
+                yield return "08e-editor-errors";
+            }
+            yield break;
+        }
         if (Wants("learn")) model.Study(setId, StudyMode.Learn);
         if (Wants("learn")) yield return "03-learn-mc";
         if (Wants("learn") && window.CurrentScreen is Wortschatz.App.Features.Learn.LearnScreen learn)
@@ -269,19 +333,63 @@ static class Samples
             yield return "07p-flashcards-empty";
             model.Store.DeleteSet(empty.Id);
         }
-        if (only is not null) yield break;
+        if (only is not null && only != "exam") yield break;
         model.Study(setId, StudyMode.Exam);
         yield return "10-exam-setup";
         if (window.CurrentScreen is Wortschatz.App.Features.Exam.ExamScreen exam)
         {
+            // The sheet with a few answers (filled number circles, the pill).
+            exam.FillForSnapshot(q => q.Number <= 3 ? q.Expected : null);
+            yield return "10a-exam-sheet";
+            // Right, left open, a typo (small mistake), wrong.
             int n = 0;
-            exam.RunForSnapshot(q => n++ % 7 == 3 ? "" : q.Expected);
+            exam.RunForSnapshot(q => (n++ % 7) switch { 3 => "", 5 => q.Expected.Length > 3 ? q.Expected[..^1] + "x" : q.Expected, 6 => "faux", _ => q.Expected });
             yield return "10b-exam-grade@0.25";
             yield return "10c-exam-results";
+            // The marked answers further down.
+            double height = host.Height;
+            host.Height = 2000;
+            yield return "10c2-exam-answers";
+            host.Height = height;
         }
+        if (only is not null) yield break;
         model.Navigate(new Route.Editor(setId));
         yield return "08-editor";
         model.Navigate(new Route.Settings());
         yield return "09-settings";
+    }
+
+    /// <summary>Einstellungen and the set page's sheets (--only=settings): every tab, backup import, wipe, text export.</summary>
+    static IEnumerable<string> SettingsSteps(AppModel model, MainView window, string setId)
+    {
+        model.OpenSet(setId);
+        if (window.CurrentScreen is { } screen && Avalonia.VisualTree.VisualExtensions.GetVisualDescendants(screen.View)
+                .OfType<Wortschatz.App.DesignSystem.WsButton>().FirstOrDefault(b => Avalonia.Automation.AutomationProperties.GetName(b) == "Begriff") is { } header)
+            header.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Avalonia.Controls.Button.ClickEvent));
+        yield return "11-set-sorted";
+        Wortschatz.App.Features.Settings.SettingsScreen.ExportText(model, window, model.Set(setId)!);
+        yield return "11b-text-export";
+        model.ClosePrompt();
+        model.Navigate(new Route.Settings());
+        for (int tab = 0; tab < 5; tab++)
+        {
+            model.Preferences.SettingsTab = tab;
+            window.CurrentScreen?.Refresh();
+            yield return $"12-settings-tab{tab}";
+        }
+        var data = Wortschatz.Core.Backup.JsonData(model.Store.ExportAll());
+        var preview = Wortschatz.Core.BackupImportPreview.Read("wortschatz-backup-2026-11-03.json", data, model.Store.ListSets().Skip(1).ToList());
+        Wortschatz.App.Features.Settings.BackupImportSheet.Show(model, window, preview);
+        yield return "12b-import-merge";
+        Wortschatz.App.Features.Settings.BackupImportSheet.Show(model, window, preview, ImportMode.Replace);
+        yield return "12c-import-replace";
+        Wortschatz.App.Features.Settings.BackupImportSheet.Show(model, window, preview with { Existing = [] });
+        yield return "12d-import-empty";
+        model.ClosePrompt();
+        Wortschatz.App.Features.Settings.SettingsWipeSheet.Show(model, window);
+        yield return "12e-wipe";
+        if (model.Prompt?.Buttons.FirstOrDefault(b => b.Label == "Weiter") is { } next) model.Answer(next);
+        yield return "12f-wipe-confirm";
+        model.ClosePrompt();
     }
 }

@@ -45,6 +45,14 @@ final class LearnController {
     static let clockInterval: Duration = .seconds(15)
     /// `UserDefaults` key of "Wiederholungsfragen" (Optionen, the same for every set).
     static let reviewKey = "learn.review"
+    /// `UserDefaults` key of "Nachkontrolle nach Fehlern" (Optionen, the same for every set; on
+    /// until switched off).
+    static let recheckKey = "learn.recheck"
+
+    /// Whether "Nachkontrolle nach Fehlern" is on (the default when it was never switched).
+    static var recheckIsOn: Bool {
+        UserDefaults.standard.object(forKey: recheckKey) as? Bool ?? true
+    }
 
     private var store: LibraryStore { model.store }
 
@@ -68,8 +76,8 @@ final class LearnController {
         let (state, effects) = LearnFlow.start(
             set: set, progress: store.getProgress(request.setID), options: store.getStudyOptions(request.setID),
             saved: saved, subset: request.subset, forceNew: request.forceNew,
-            review: request.reviewMastered || UserDefaults.standard.bool(forKey: Self.reviewKey), rng: rng,
-            now: clock())
+            review: request.reviewMastered || UserDefaults.standard.bool(forKey: Self.reviewKey),
+            recheck: Self.recheckIsOn, rng: rng, now: clock())
         self.state = state
         pendingStartEffects = effects
     }
@@ -350,6 +358,21 @@ final class LearnController {
     func setReview(_ review: Bool) {
         UserDefaults.standard.set(review, forKey: Self.reviewKey)
         send(.reviewChanged(review))
+    }
+
+    /// "Nachkontrolle nach Fehlern" (Optionen): kept for every set, like `setReview`.
+    func setRecheck(_ recheck: Bool) {
+        UserDefaults.standard.set(recheck, forKey: Self.recheckKey)
+        send(.recheckChanged(recheck))
+    }
+
+    /// The standard of every set (Einstellungen), for the note at the top of the options.
+    var standardOptions: StudyOptions { model.settings.study }
+
+    /// "Auf Standard zurücksetzen" (Optionen): this set follows the standard again; a running
+    /// session asks to restart when the popover closes, like after any other change.
+    func resetOptionsToStandard() {
+        if let options = model.resetStudyOptions(setID: setID) { send(.optionsChanged(options)) }
     }
 
     /// The card of the question on screen (for the card editor).

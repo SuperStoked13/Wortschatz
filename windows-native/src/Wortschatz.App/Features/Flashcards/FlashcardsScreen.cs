@@ -36,7 +36,7 @@ public sealed class FlashcardsScreen : Screen
     Action? _editorSave;
     Action<bool>? _confirm;
 
-    public FlashcardsScreen(AppModel model, MainWindow window, StudyRequest request) : base(model, window)
+    public FlashcardsScreen(AppModel model, MainView window, StudyRequest request) : base(model, window)
     {
         _c = new FlashcardsController(model, request);
         _c.Changed += OnChanged;
@@ -213,19 +213,23 @@ public sealed class FlashcardsScreen : Screen
                 CloseOverlay();
                 return true;
         }
-        if (mods == KeyModifiers.Control)
+        // A held shortcut acts once (Mac: the menu commands ignore key repeats): the star must not blink, the side must
+        // not be read again and again.
+        if (mods == KeyModifiers.Control && e.Key is Key.K or Key.R or Key.D or Key.E)
         {
+            if (isRepeat) return true;
             switch (e.Key)
             {
-                case Key.K: ShowOptions(); return true;
-                case Key.R: _c.SpeakVisibleSide(); return true;
-                case Key.D: _c.ToggleStar(); return true;
-                case Key.E: EditCurrentCard(); return true;
+                case Key.K: ShowOptions(); break;
+                case Key.R: _c.SpeakVisibleSide(); break;
+                case Key.D: _c.ToggleStar(); break;
+                default: EditCurrentCard(); break;
             }
+            return true;
         }
         if (mods == (KeyModifiers.Control | KeyModifiers.Shift) && e.Key == Key.R)
         {
-            _c.RequestRestart();
+            if (!isRepeat) _c.RequestRestart();
             return true;
         }
         // Space turns the card over here (before a focused button could take it); its text input is then ignored.

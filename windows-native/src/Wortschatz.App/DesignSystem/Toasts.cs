@@ -37,12 +37,31 @@ public sealed class ToastOverlay : StackPanel
         model.ToastShown += Show;
         model.ToastDismissed += Remove;
         foreach (var t in model.Toasts) Show(t);
+        if (AppDevice.IsPhone) LayoutUpdated += (_, _) => { if (Children.Count > 0) FitAboveBar(); };
     }
+
+    double _clearance = 24;
 
     /// <summary>Room at the bottom for a floating bar (the study screens' action bar).</summary>
     public double BottomClearance
     {
-        set => Margin = new Thickness(20, 0, 20, Math.Max(24, value));
+        set
+        {
+            _clearance = Math.Max(24, value);
+            Margin = new Thickness(20, 0, 20, _clearance);
+        }
+    }
+
+    /// <summary>
+    /// Phone: right above the study screen's action bar, however many lines it has now (one button, or the feedback
+    /// over two) – a fixed room lay over the fourth answer when the bar was low, and on the bar when it was high.
+    /// </summary>
+    void FitAboveBar()
+    {
+        double bottom = _clearance;
+        if (Parent is Visual host && Features.Study.StudyActionBarView.ShownPhoneBar() is { } bar && bar.TranslatePoint(default, host) is { } top)
+            bottom = Math.Max(24, host.Bounds.Height - top.Y + 10);
+        if (Math.Abs(Margin.Bottom - bottom) > 1) Margin = new Thickness(20, 0, 20, bottom);
     }
 
     /// <summary>Stops following the model (the window rebuilt its chrome).</summary>
@@ -124,10 +143,18 @@ public sealed class ToastOverlay : StackPanel
             ToastTone.Streak => (IconName.Flame, p.Flame),
             _ => (IconName.Info, p.Accent),
         };
+        if (toast.Icon is { } own) icon = own;
         var text = Ui.Text(toast.Text, 14, FontWeight.Medium, wrap: TextWrapping.Wrap);
-        text.MaxLines = 2;
-        text.MaxWidth = 420;
-        var row = Ui.H(12, Icons.Icon(icon, 17, color, 2.2), text);
+        text.MaxLines = AppDevice.IsPhone ? 3 : 2;
+        text.TextTrimming = TextTrimming.CharacterEllipsis;
+        if (!AppDevice.IsPhone) text.MaxWidth = 420;
+        // Phone: the text takes what the screen leaves (a stack would let it run off the edge).
+        Panel row = AppDevice.IsPhone ? new ToastRow { Spacing = 12 } : Ui.H(12);
+        var symbol = Icons.Icon(icon, 17, color, 2.2);
+        symbol.VerticalAlignment = VerticalAlignment.Center;
+        text.VerticalAlignment = VerticalAlignment.Center;
+        row.Children.Add(symbol);
+        row.Children.Add(text);
         if (toast.ActionLabel is { } label && toast.Action is { } action)
         {
             var button = Ui.PlainButton(label, () =>
@@ -149,8 +176,58 @@ public sealed class ToastOverlay : StackPanel
         capsule.Background = WsTheme.B(p.Dark ? Palette.Hex(0x2E3142, 0.95) : Palette.Hex(0xFFFFFF, 0.93));
         capsule.MaxWidth = 520;
         capsule.HorizontalAlignment = HorizontalAlignment.Center;
+        if (AppDevice.IsPhone)
+        {
+            capsule.Margin = new Thickness(12, 0);
+            capsule.CornerRadius = new CornerRadius(22);
+        }
         AutomationProperties.SetName(capsule, toast.ActionLabel is { } a ? $"{toast.Text}. {a} möglich." : toast.Text);
         AutomationProperties.SetLiveSetting(capsule, toast.Tone == ToastTone.Danger ? AutomationLiveSetting.Assertive : AutomationLiveSetting.Polite);
         return capsule;
+    }
+}
+
+/// <summary>
+/// A toast's row on a phone: symbol, text, then any buttons, left to right; the text gets the width the others leave and
+/// wraps there (a horizontal stack would give it all it wants and push the rest off the screen).
+/// </summary>
+sealed class ToastRow : Panel
+{
+    public double Spacing { get; set; }
+
+    protected override Size MeasureOverride(Size availableSize)
+    {
+        double fixedWidth = 0, height = 0;
+        TextBlock? text = null;
+        foreach (var child in Children)
+        {
+            if (child is TextBlock t && text is null) { text = t; continue; }
+            child.Measure(new Size(double.PositiveInfinity, availableSize.Height));
+            fixedWidth += child.DesiredSize.Width;
+            height = Math.Max(height, child.DesiredSize.Height);
+        }
+        double spacing = Spacing * Math.Max(0, Children.Count - 1);
+        double room = double.IsInfinity(availableSize.Width) ? double.PositiveInfinity : Math.Max(0, availableSize.Width - fixedWidth - spacing);
+        if (text is not null)
+        {
+            text.Measure(new Size(room, availableSize.Height));
+            height = Math.Max(height, text.DesiredSize.Height);
+            fixedWidth += text.DesiredSize.Width;
+        }
+        return new Size(fixedWidth + spacing, height);
+    }
+
+    protected override Size ArrangeOverride(Size finalSize)
+    {
+        double x = 0;
+        double others = Children.Where(c => c is not TextBlock).Sum(c => c.DesiredSize.Width) + Spacing * Math.Max(0, Children.Count - 1);
+        foreach (var child in Children)
+        {
+            double width = child is TextBlock ? Math.Max(0, finalSize.Width - others) : child.DesiredSize.Width;
+            double y = (finalSize.Height - child.DesiredSize.Height) / 2;
+            child.Arrange(new Rect(x, Math.Max(0, y), width, child.DesiredSize.Height));
+            x += width + Spacing;
+        }
+        return finalSize;
     }
 }

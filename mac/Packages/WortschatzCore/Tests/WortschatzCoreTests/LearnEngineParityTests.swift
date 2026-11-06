@@ -182,6 +182,8 @@ struct LearnEngineParityTests {
         }
     }
 
+    /// `create` = {seed, now, subset?, progress?, review?, recheck?}: only `true` switches the
+    /// repetition questions / rechecks on (like the JS).
     static func scenario(_ c: ParityCase) throws -> JSONValue {
         let options = c.arg(1).objectValue ?? [:]
         let create = c.arg(2)
@@ -191,7 +193,8 @@ struct LearnEngineParityTests {
         let s = LearnEngine.createLearn(
             cards ?? [], answerWith: options["answerWith"]?.stringValue.flatMap(AnswerWith.init(rawValue:)) ?? .term,
             learn: LearnOptions(json: options["learn"] ?? .null), subset: StudySubset(json: create["subset"] ?? .null),
-            progress: progress, rng: rng, now: time(create["now"]))
+            progress: progress, rng: rng, now: time(create["now"]), review: create["review"] == .bool(true),
+            recheck: create["recheck"] == .bool(true))
         var run = Run(s: s, cards: cards, progress: progress, rng: rng, caseID: c.id)
         var out = [try snapshot(s, progress)]
         for action in c.arg(3).arrayValue ?? [] { out.append(try run.apply(action)) }

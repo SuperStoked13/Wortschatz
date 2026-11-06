@@ -149,6 +149,8 @@ public static class AppStyles
         {
             Setters = { new Setter(TemplatedControl.FontFamilyProperty, WsTheme.UI) },
         });
+        // Phone: thin scroll bars over the content that only show while scrolling (PhoneLayout).
+        if (AppDevice.IsPhone) styles.Add(PhoneLayout.ScrollBarStyles());
         return styles;
     }
 }

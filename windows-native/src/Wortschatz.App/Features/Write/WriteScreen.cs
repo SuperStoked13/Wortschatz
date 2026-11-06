@@ -32,12 +32,21 @@ public sealed class WriteScreen : Screen
     bool _rendered;
     int _shownSerial = -1, _shownRejections, _shownStreak;
     Phase? _shownPhase;
+    bool? _shownStarred;
     Action? _editorSave;
+    readonly SpeakingIndicator _speaking;
+    /// <summary>The key down that typed the next text is an auto-repeat (TextInput carries no repeat flag).</summary>
+    bool _textKeyRepeats;
+    /// <summary>Narrow window: the counters in the top row get compact (Mac: width below 1120).</summary>
+    bool _compact;
+    const double CompactWidth = 1120;
 
-    public WriteScreen(AppModel model, MainWindow window, StudyRequest request) : base(model, window)
+    public WriteScreen(AppModel model, MainView window, StudyRequest request) : base(model, window)
     {
         _c = new WriteController(model, request);
         _c.Changed += Render;
+        _speaking = new SpeakingIndicator(model.Speech);
+        _c.Spoke += _speaking.Started;
         _field = StudyAnswerBox.Field("Antwort eingeben");
         _field.TextChanged += (_, _) =>
         {
@@ -52,14 +61,37 @@ public sealed class WriteScreen : Screen
 
     public override void Activate()
     {
-        _c.Activate();
+        _compact = Window.Bounds.Width is > 0 and < CompactWidth;
+        Window.SizeChanged += OnWindowSize;
+        _c.Activate(holdingToasts: true);
         Render();
         StudyEntrance.RevealScreen(View);
+        // Toasts ("Willkommen zurück") once the screen has come in (Mac: StudyEntrance.toastDelay).
+        DispatcherTimer.RunOnce(_c.ReleaseToasts, TimeSpan.FromMilliseconds(580));
     }
 
-    public override void Deactivate() => _c.Deactivate();
+    public override void Deactivate()
+    {
+        Window.SizeChanged -= OnWindowSize;
+        Window.Title = "Wortschatz";
+        _c.Deactivate();
+    }
+
     public override void WindowActivityChanged(bool active) => _c.WindowActivityChanged(active);
+
+    void OnWindowSize(object? sender, SizeChangedEventArgs e)
+    {
+        bool compact = e.NewSize.Width < CompactWidth;
+        if (compact == _compact) return;
+        _compact = compact;
+        Render();
+    }
+
+    /// <summary>Our own effects re-render through the controller; the store notification only forwards outside changes.</summary>
     public override void Refresh() { }
+
+    /// <summary>The library changed (also from elsewhere): what differs reaches the flow (Mac: onChange(of: model.revision)).</summary>
+    public override void LibraryChanged() => _c.StoreDidChange();
     protected override Control Build() => new Border();
 
     static void Detach(Control c)
@@ -77,10 +109,13 @@ public sealed class WriteScreen : Screen
         public readonly bool PhaseChanged = s._shownPhase != s.S.Phase;
         public readonly bool Rejected = s.S.Rejections > s._shownRejections;
         public readonly bool StreakGrew = s._c.Streak.Current > s._shownStreak;
+        /// <summary>The card on screen was just starred or unstarred (the star bounces).</summary>
+        public readonly bool StarToggled = s.S.Question is { } q && s.S.QuestionSerial == s._shownSerial && s._shownStarred is { } was && was != q.Starred;
 
         public void Remember()
         {
             s._rendered = true;
+            s._shownStarred = s.S.Question?.Starred;
             s._shownSerial = s.S.QuestionSerial;
             s._shownPhase = s.S.Phase;
             s._shownRejections = s.S.Rejections;
@@ -121,10 +156,23 @@ public sealed class WriteScreen : Screen
             Grid.SetRowSpan(overlay, 2);
             root.Children.Add(overlay);
         }
+        // A click beside the answer field while typing: the keys stay in the field (Mac: onChange(of: focus)).
+        root.AddHandler(InputElement.PointerReleasedEvent, (_, _) => KeepFieldFocus(), Avalonia.Interactivity.RoutingStrategies.Bubble, handledEventsToo: true);
         ((ContentControl)View).Content = root;
+        // The window's name in the taskbar (Mac: navigationTitle "Schreiben", subtitle the set).
+        Window.Title = S.Set?.Title is { Length: > 0 } title ? $"Schreiben – {title}" : "Schreiben";
         bool newStep = motion.NewQuestion || motion.PhaseChanged;
         motion.Remember();
         FocusAfterRender(newStep);
+    }
+
+    void KeepFieldFocus()
+    {
+        if (S.IsBlocked || !S.IsInputEditable || Window.TextFieldFocused) return;
+        Dispatcher.UIThread.Post(() =>
+        {
+            if (!Window.TextFieldFocused && S.IsInputEditable && _field.IsEffectivelyVisible) _field.Focus();
+        }, DispatcherPriority.Input);
     }
 
     void FocusAfterRender(bool newStep)
@@ -154,14 +202,16 @@ public sealed class WriteScreen : Screen
         if (WriteFlow.CountersOf(S) is { } c)
         {
             _line.SetValue(c.Progress, Motion.Snappy);
+            // Compact (narrow window): bare numbers with their coloured dots and a shorter line (Mac: WriteToolbarProgress).
             Control Counter(int value, string label, Color color) => Ui.H(5,
                 new Border { Width = 7, Height = 7, CornerRadius = new CornerRadius(3.5), Background = WsTheme.B(color), VerticalAlignment = VerticalAlignment.Center },
-                Ui.Text($"{value}", 13.5, FontWeight.Bold), Ui.Text(label, 13.5, color: P.TextSecondary));
-            var row = Ui.H(16, Ui.Text($"Runde {c.Round}", 14, FontWeight.SemiBold, P.TextSecondary),
-                Ui.H(12, Counter(c.Remaining, "Verbleibend", P.New.Fill), Counter(c.Incorrect, "Falsch", P.Failure.Fill), Counter(c.Correct, "Richtig", P.Success.Fill)),
+                Ui.Text($"{value}", 13.5, FontWeight.Bold), _compact ? null : Ui.Text(label, 13.5, color: P.TextSecondary));
+            _line.Width = _compact ? 56 : 88;
+            var row = Ui.H(_compact ? 10 : 16, Ui.Text($"Runde {c.Round}", 14, FontWeight.SemiBold, P.TextSecondary),
+                Ui.H(_compact ? 8 : 12, Counter(c.Remaining, "Verbleibend", P.New.Fill), Counter(c.Incorrect, "Falsch", P.Failure.Fill), Counter(c.Correct, "Richtig", P.Success.Fill)),
                 _line, Ui.Text($"{c.Correct}/{c.Total}", 14, FontWeight.Medium, P.TextSecondary));
             _line.VerticalAlignment = VerticalAlignment.Center;
-            var capsule = Ui.Glass(row, 999, new Thickness(18, 0), strong: true, shadow: false);
+            var capsule = Ui.Glass(row, 999, new Thickness(_compact ? 14 : 18, 0), strong: true, shadow: false);
             capsule.Height = 40;
             AutomationProperties.SetName(capsule, WriteFlow.CountersAccessibilityLabel(c));
             ToolTip.SetTip(capsule, WriteFlow.CountersAccessibilityLabel(c));
@@ -169,16 +219,22 @@ public sealed class WriteScreen : Screen
         }
         bool results = S.Phase == Phase.Results;
         var options = Ui.IconButton(IconName.Sliders, "Optionen (Ctrl+K)", () => _c.Send(new Event.RequestOptions()));
-        options.IsEnabled = S.Phase.IsCard;
+        options.IsEnabled = CanShowOptions;
         var restart = Ui.IconButton(IconName.RotateCcw, results ? "Nochmal von vorne (Ctrl+Shift+R)" : "Neu starten (Ctrl+Shift+R)", () => _c.Send(new Event.Restart()));
-        restart.IsEnabled = S.Session is not null;
+        restart.IsEnabled = CanRestart;
         foreach (var b in new[] { options, restart }) b.Focusable = false;
         return StudyChrome.TopRow(StudyChrome.BackPill(S.Set?.Title ?? "Zurück", () => _c.Send(new Event.Leave())), center, Ui.H(8, options, restart));
     }
 
+    /// <summary>The options apply to sessions: on the card, the round summary and the results (Mac: canShowOptions).</summary>
+    bool CanShowOptions => !S.IsBlocked && (S.Phase.IsCard || S.Phase == Phase.Summary || S.Phase == Phase.Results);
+
+    /// <summary>"Neu starten" (Mac: enabledCommands .restart): on the card, the summary and the results.</summary>
+    bool CanRestart => S.Phase.Kind is PhaseKind.Question or PhaseKind.Feedback or PhaseKind.Copy or PhaseKind.Summary or PhaseKind.Results;
+
     // MARK: Question
 
-    double TopInset => Math.Max(20, Math.Min(112, (Window.Bounds.Height - 40 - 52 - 560) / 2));
+    double TopInset => AppDevice.IsPhone ? 14 : Math.Max(20, Math.Min(112, (Window.Bounds.Height - 40 - 52 - 560) / 2));
 
     Control Column(Moves motion)
     {
@@ -205,9 +261,17 @@ public sealed class WriteScreen : Screen
     {
         var tools = Ui.H(4);
         if (q.PromptLang != Lang.Other)
-            tools.Children.Add(Ui.IconButton(IconName.Speaker, "Vorlesen (Ctrl+R)", () => _c.Send(new Event.Speak(WriteFlow.SpeechTarget.Prompt)), 32, ButtonKind.Plain));
-        tools.Children.Add(Ui.IconButton(q.Starred ? IconName.StarFilled : IconName.Star, q.Starred ? "Markierung entfernen (Ctrl+D)" : "Markieren (Ctrl+D)",
-            () => _c.Send(new Event.ToggleStar()), 32, ButtonKind.Plain, q.Starred ? P.Star : null));
+        {
+            // Moves while something is read aloud (Mac: symbolEffect .variableColor.iterative).
+            var speak = Ui.IconButton(IconName.Speaker, "Vorlesen (Ctrl+R)", () => _c.Speak(WriteFlow.SpeechTarget.Prompt), 32, ButtonKind.Plain);
+            if (speak.Chrome.Child is { } speakerIcon) _speaking.Attach(speakerIcon);
+            tools.Children.Add(speak);
+        }
+        var star = Ui.IconButton(q.Starred ? IconName.StarFilled : IconName.Star, q.Starred ? "Markierung entfernen (Ctrl+D)" : "Markieren (Ctrl+D)",
+            () => _c.Send(new Event.ToggleStar()), 32, ButtonKind.Plain, q.Starred ? P.Star : null);
+        // The star bounces when it is toggled (Mac: symbolEffect .bounce).
+        if (motion.StarToggled && star.Chrome.Child is { } starIcon) Effects.Pop(starIcon, 1.3);
+        tools.Children.Add(star);
         tools.Children.Add(Ui.IconButton(IconName.Pencil, "Karte bearbeiten (Ctrl+E)", () => _c.Send(new Event.RequestEdit()), 32, ButtonKind.Plain));
         foreach (var b in tools.Children.OfType<Button>()) b.Focusable = false;
         var header = Ui.Row(Ui.Eyebrow(q.PromptLabel, P.TextSecondary), tools, 12);
@@ -232,19 +296,22 @@ public sealed class WriteScreen : Screen
     Control AnswerArea(WriteFlow.Question q, Moves motion)
     {
         _field.FlowDirection = q.AnswerLang.IsRTL() ? FlowDirection.RightToLeft : FlowDirection.LeftToRight;
-        _field.PlaceholderText = WriteFlow.FieldPlaceholder(S);
+        _field.PlaceholderText = WriteFlow.FieldPlaceholder(S, @short: AppDevice.IsPhone);
+        StudyAnswerBox.ForAnswers(_field, q.AnswerLang);
         var f = S.Feedback;
         if (S.Phase == Phase.Question || (S.Phase == Phase.FeedbackOf(FK.Correct) && f is not null))
         {
             bool correct = S.Phase != Phase.Question;
             var box = StudyAnswerBox.Create(correct ? null : _field, correct ? f!.Given : null, q.AnswerLang, isActive: !correct, isInvalid: false,
                 shake: motion.Rejected && !correct, accepted: correct && motion.PhaseChanged);
-            if (!correct) return box;
+            // While asking: the accent buttons of the answer language below the box (Mac: SpecialCharacterBar).
+            if (!correct) return SpecialCharacterBar.Create(q.AnswerLang, _field) is { } accents ? Ui.V(10, box, accents) : box;
             var details = Ui.V(8);
             if (f!.ShowsExact && f.Result is { } r)
                 details.Children.Add(Ui.H(6, Ui.Text(f.ExactLabel, 17, color: P.TextSecondary), StudyText.InLang(r.ExpectedDisplay, q.AnswerLang, 17, FontWeight.SemiBold)));
             var notes = new WrapPanel { ItemSpacing = 6, LineSpacing = 6 };
-            foreach (var n in f.Notes) notes.Children.Add(Ui.Chip(n.Label, n.IsSynonym ? null : P.Warning));
+            // A synonym from the set in the accent colours with "=", the tolerance notes in the info colours (Mac: WriteCorrectDetails).
+            foreach (var n in f.Notes) notes.Children.Add(n.IsSynonym && n.Note != GradeNote.ExtendedSynonym ? StudyChrome.SynonymChip(n.Label) : StudyChrome.NoteChip(n.Label));
             if (notes.Children.Count > 0) details.Children.Add(notes);
             if (details.Children.Count == 0) return box;
             if (motion.PhaseChanged) Effects.AnswerSwapIn(details);
@@ -255,14 +322,20 @@ public sealed class WriteScreen : Screen
         if (f.ShowsGiven)
             parts.Children.Add(Ui.V(6, Ui.H(8, Ui.Eyebrow("Deine Antwort", P.TextSecondary), f.ShowsHint ? Ui.Chip(f.HintLabel!, P.Warning, IconName.Lightbulb) : null),
                 StudyText.Diff(f.Given, q.Expected, q.AnswerLang, 22)));
-        var speak = Ui.IconButton(IconName.Speaker, "Antwort vorlesen", () => _c.Send(new Event.Speak(WriteFlow.SpeechTarget.Answer)), 32, ButtonKind.Plain);
-        speak.Focusable = false;
+        // 🔊 only for a language with a voice ("Andere" has none; Mac: answerLang != .other).
+        WsButton? speak = null;
+        if (q.AnswerLang != Lang.Other)
+        {
+            speak = Ui.IconButton(IconName.Speaker, "Antwort vorlesen", () => _c.Speak(WriteFlow.SpeechTarget.Answer), 32, ButtonKind.Plain);
+            speak.Focusable = false;
+        }
         parts.Children.Add(Ui.V(6, Ui.Eyebrow("Richtige Antwort", P.TextSecondary), Ui.H(8, StudyText.InLang(q.Expected, q.AnswerLang, 22, FontWeight.Medium, P.Success.Text), speak)));
         if (f.EditedNote is { } edited)
             parts.Children.Add(Ui.H(8, StudyStatusPill.FeedbackSymbol(StudyStatus.Kinds.Correct, P.Success.Fill, 16), Ui.Text(edited, 14, FontWeight.Medium, P.Success.Text)));
         if (S.Phase == Phase.Copy)
             parts.Children.Add(Ui.V(8, Ui.Eyebrow(WriteFlow.FieldLabel(S), P.TextSecondary),
-                StudyAnswerBox.Create(_field, null, q.AnswerLang, isActive: true, isInvalid: S.InputInvalid, shake: motion.Rejected, accepted: false)));
+                StudyAnswerBox.Create(_field, null, q.AnswerLang, isActive: true, isInvalid: S.InputInvalid, shake: motion.Rejected, accepted: false),
+                SpecialCharacterBar.Create(q.AnswerLang, _field)));
         var edit = Ui.Secondary("Bearbeiten", () => _c.Send(new Event.RequestEdit()), IconName.Pencil, "Ctrl E", 34);
         edit.Focusable = false;
         parts.Children.Add(edit);
@@ -282,6 +355,7 @@ public sealed class WriteScreen : Screen
         var text = Ui.Text(WriteFlow.SummaryText(sum), 18, color: P.TextSecondary, wrap: TextWrapping.Wrap, align: TextAlignment.Center);
         foreach (var t in new Control[] { eyebrow, title, text }) t.HorizontalAlignment = HorizontalAlignment.Center;
         var ring = new RatioRing(ratio, ratio >= 0.8 ? P.Success.Fill : P.Accent, WriteFlow.PercentText(ratio), animate: appeared);
+        AutomationProperties.SetName(ring, $"Richtig in dieser Runde: {WriteFlow.PercentText(ratio)}");
         var details = Ui.V(12, Ui.Text($"{sum.Correct} von {sum.Total} richtig", 17, FontWeight.Bold, font: WsTheme.Prompt),
             Ui.H(8, Ui.Chip($"{sum.Correct} richtig", P.Success, IconName.Check), Ui.Chip($"{sum.Incorrect} falsch", P.Failure, IconName.X)));
         if (WriteFlow.CountersOf(S) is { } c)
@@ -299,8 +373,9 @@ public sealed class WriteScreen : Screen
         var rows = WriteFlow.SummaryRows(S);
         var missed = rows.Where(r => r.Correct != true).ToList();
         var hit = rows.Where(r => r.Correct == true).ToList();
-        if (missed.Count > 0) stack.Children.Add(StudyChrome.TermList("Noch üben", missed.Select(r => (r.Term, r.Definition, (Control?)ResultMark(false)))));
-        if (hit.Count > 0) stack.Children.Add(StudyChrome.TermList("Richtig", hit.Select(r => (r.Term, r.Definition, (Control?)ResultMark(true)))));
+        // ✓/✗ in front of each row, the texts in their card's language (Mac: WriteTermList, marker .result).
+        if (missed.Count > 0) stack.Children.Add(StudyChrome.TermList("Noch üben", missed.Select(r => new StudyChrome.TermRow(r.Term, r.Definition, r.TermLang, r.DefLang, Leading: ResultMark(false)))));
+        if (hit.Count > 0) stack.Children.Add(StudyChrome.TermList("Richtig", hit.Select(r => new StudyChrome.TermRow(r.Term, r.Definition, r.TermLang, r.DefLang, Leading: ResultMark(true)))));
         stack.Width = 760;
         stack.Margin = new Thickness(0, 24, 0, 24);
         stack.HorizontalAlignment = HorizontalAlignment.Center;
@@ -343,7 +418,7 @@ public sealed class WriteScreen : Screen
             StatTile.Create(res.CardCount == 1 ? "Begriff" : "Begriffe", $"{res.CardCount}", IconName.Stack, P.Accent, caption: res.BothDirections ? "in beide Richtungen" : "geschrieben"),
             StatTile.Create("Treffer", WriteFlow.PercentText(stats.Accuracy), IconName.Target, P.Success.Fill, caption: "beim ersten Versuch"),
             StatTile.Create(stats.Rounds == 1 ? "Runde" : "Runden", $"{stats.Rounds}", IconName.Repeat, P.Info.Fill, caption: "bis alles sass"),
-            StatTile.Create(time.Label, time.Value, IconName.Clock, P.Flame, caption: "aktive Lernzeit"));
+            LearnScreen.TimeTile(time.Label, time.Value, stats.ElapsedMs, "aktive Lernzeit"));
         var stack = Ui.V(24, Ui.V(12, circle, title, subtitle), tiles);
         if (S.Set is { } set)
         {
@@ -366,7 +441,8 @@ public sealed class WriteScreen : Screen
             none.HorizontalAlignment = HorizontalAlignment.Center;
             stack.Children.Add(none);
         }
-        else stack.Children.Add(StudyChrome.TermList("Am häufigsten falsch", hardest.Select(r => (r.Term, r.Definition, (Control?)Ui.Chip(r.MissesLabel ?? "", P.Failure)))));
+        else stack.Children.Add(StudyChrome.TermList("Am häufigsten falsch", hardest.Select(r =>
+            new StudyChrome.TermRow(r.Term, r.Definition, r.TermLang, r.DefLang, Trailing: Ui.Chip(r.MissesLabel ?? "", P.Failure)))));
         stack.Width = 760;
         stack.Margin = new Thickness(0, 24, 0, 24);
         var layer = new Grid { HorizontalAlignment = HorizontalAlignment.Center };
@@ -448,11 +524,12 @@ public sealed class WriteScreen : Screen
             return StudyChrome.Overlay(StudyChrome.OptionsPanel(Model, _c.SetId, StudyMode.Write,
                 options => _c.Send(new Event.OptionsChanged(options)),
                 () => _c.Send(new Event.OverlayDismissed()),
-                () => _c.Send(new Event.OverlayDismissed(RestartRequested: true))), () => _c.Send(new Event.OverlayDismissed()));
-        if (S.Overlay is WriteFlow.Overlay.Editor && WriteFlow.EditorCard(S) is { } card && S.Set is { } set)
+                () => _c.Send(new Event.OverlayDismissed(RestartRequested: true)), doneKey: "↵"), () => _c.Send(new Event.OverlayDismissed()));
+        if (S.Overlay is WriteFlow.Overlay.Editor editing && WriteFlow.EditorCard(S) is { } card && S.Set is { } set)
         {
+            // The side the learner had to type gets the focus (Mac: WriteCardEditor focus).
             var editor = StudyChrome.CardEditor(set, card, (term, definition) => _c.Send(new Event.EditCard(card with { Term = term, Definition = definition })),
-                () => _c.Send(new Event.OverlayDismissed()), out var save);
+                () => _c.Send(new Event.OverlayDismissed()), out var save, editing.Focus);
             _editorSave = save;
             return StudyChrome.Overlay(editor, () => _c.Send(new Event.OverlayDismissed()));
         }
@@ -465,6 +542,9 @@ public sealed class WriteScreen : Screen
     public override bool HandleKey(KeyEventArgs e, bool isRepeat)
     {
         var mods = e.KeyModifiers;
+        _textKeyRepeats = isRepeat;
+        // Enter/Esc that pick or cancel a Pinyin candidate, a dead key: the composition's, not the screen's.
+        if (StudyInput.IsComposing(e, TopLevel.GetTopLevel(Window))) return false;
         if (S.Prompt is not null)
         {
             if (isRepeat) return true;
@@ -484,21 +564,30 @@ public sealed class WriteScreen : Screen
                 save();
                 return true;
             }
+            // Enter is "Fertig" in the options (Mac: keyboardShortcut(.defaultAction)).
+            if (S.Overlay is WriteFlow.Overlay.Options && e.Key is Key.Enter or Key.Return && mods == KeyModifiers.None && !Window.TextFieldFocused)
+            {
+                if (!isRepeat) _c.Send(new Event.OverlayDismissed());
+                return true;
+            }
             return false;
         }
-        if (mods == KeyModifiers.Control)
+        // A held shortcut acts once (Mac: WriteController.handle ignores repeats of ⌘K, ⌘R, ⌘D, ⇧⌘R).
+        if (mods == KeyModifiers.Control && e.Key is Key.R or Key.D or Key.K or Key.E)
         {
+            if (isRepeat) return true;
             switch (e.Key)
             {
-                case Key.R: _c.Send(new Event.Speak(WriteFlow.SpeechTarget.Prompt)); return true;
-                case Key.D: _c.Send(new Event.ToggleStar()); return true;
-                case Key.K: _c.Send(new Event.RequestOptions()); return true;
-                case Key.E: _c.Send(new Event.RequestEdit()); return true;
+                case Key.R: _c.Speak(WriteFlow.SpeechTarget.Prompt); break;
+                case Key.D: _c.Send(new Event.ToggleStar()); break;
+                case Key.K: _c.Send(new Event.RequestOptions()); break;
+                default: _c.Send(new Event.RequestEdit()); break;
             }
+            return true;
         }
         if (mods == (KeyModifiers.Control | KeyModifiers.Shift) && e.Key == Key.R)
         {
-            _c.Send(new Event.Restart());
+            if (!isRepeat && CanRestart) _c.Send(new Event.Restart());
             return true;
         }
         if (Translate(e) is not { } key) return false;
@@ -509,7 +598,7 @@ public sealed class WriteScreen : Screen
             _c.Send(new Event.Submit(_field.Text ?? ""));
             return true;
         }
-        _c.Send(new Event.Key(key, isRepeat));
+        _c.Press(key, isRepeat);
         return true;
     }
 
@@ -523,7 +612,10 @@ public sealed class WriteScreen : Screen
             _field.Focus();
             return true;
         }
-        _c.Send(new Event.Key(TextKey(text)));
+        // A held key continues once (the flow drops repeats); the repeat flag comes from its key down.
+        bool repeat = _textKeyRepeats;
+        _textKeyRepeats = false;
+        _c.Press(TextKey(text), repeat);
         return true;
     }
 }

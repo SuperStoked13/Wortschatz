@@ -196,8 +196,15 @@ public static class Ui
     }
 
     /// <summary>A row with a flexible middle: left items, a stretching spacer, right items.</summary>
-    public static Grid Row(Control left, Control? right = null, double spacing = 12)
+    public static Panel Row(Control left, Control? right = null, double spacing = 12)
     {
+        // Phone: a wide control (a list, a choice, a field, a row of options) goes under its label; switches, icon
+        // buttons and short texts stay beside it.
+        if (AppDevice.IsPhone && right is not null && !FitsBeside(right))
+        {
+            right.HorizontalAlignment = right is WsSegmented ? HorizontalAlignment.Stretch : HorizontalAlignment.Left;
+            return V(8, left, right);
+        }
         var g = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto"), ColumnSpacing = spacing };
         g.Children.Add(left);
         if (right is not null)
@@ -207,6 +214,17 @@ public static class Ui
         }
         return g;
     }
+
+    /// <summary>Whether a control is small enough to stay beside its label on a phone.</summary>
+    static bool FitsBeside(Control control) => control switch
+    {
+        WsSwitch or ToggleSwitch or CheckBox => true,
+        TextBlock t => (t.Text?.Length ?? 0) <= 14,
+        Border { Child: TextBlock } => true,
+        // A few icon buttons (speaker, star, pencil).
+        Panel panel => panel.Children.Count <= 4 && panel.Children.All(c => c.Width <= 48 || c is Border { Width: <= 48 } || c is TextBlock { Text.Length: <= 6 }),
+        _ => control.Width <= 90,
+    };
 
     public static Control Spacer(double height) => new Border { Height = height };
 
@@ -264,7 +282,8 @@ public static class Ui
         var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, VerticalAlignment = VerticalAlignment.Center };
         if (icon is { } i) row.Children.Add(Icons.Icon(i, 17, color, 2));
         row.Children.Add(Text(label, size, FontWeight.SemiBold, color));
-        if (keyHint is not null) row.Children.Add(KeyCap(keyHint, onAccent));
+        // Phone: no keyboard, no key hints (the button gets shorter, so bars fit the narrow screen).
+        if (keyHint is not null && AppDevice.ShowsKeyHints) row.Children.Add(KeyCap(keyHint, onAccent));
         return row;
     }
 
@@ -273,6 +292,7 @@ public static class Ui
         var b = new WsButton(Label(label, icon, P.OnAccent, keyHint, true, 15), ButtonKind.Primary, height, padding: new Thickness(20, 0));
         b.Click += (_, _) => onClick();
         AutomationProperties.SetName(b, label);
+        ShortcutHint(b, keyHint);
         return b;
     }
 
@@ -281,6 +301,7 @@ public static class Ui
         var b = new WsButton(Label(label, icon, P.Text, keyHint, false), ButtonKind.Glass, height);
         b.Click += (_, _) => onClick();
         AutomationProperties.SetName(b, label);
+        ShortcutHint(b, keyHint);
         return b;
     }
 
@@ -315,21 +336,66 @@ public static class Ui
     // MARK: Chips and key caps
 
     /// <summary>A key hint ("↵", "Alt ↵", "1").</summary>
-    public static Border KeyCap(string text, bool onAccent = false) => new()
+    public static Border KeyCap(string text, bool onAccent = false)
     {
-        Child = Text(text, 11.5, FontWeight.SemiBold, onAccent ? P.OnAccent : P.TextSecondary),
-        Background = WsTheme.B(onAccent ? Palette.Hex(0xFFFFFF, 0.22) : P.KeyCap),
-        CornerRadius = new CornerRadius(6),
-        Padding = new Thickness(6, 2),
-        VerticalAlignment = VerticalAlignment.Center,
-    };
+        var cap = new Border
+        {
+            Child = Text(text, 11.5, FontWeight.SemiBold, onAccent ? P.OnAccent : P.TextSecondary),
+            Background = WsTheme.B(onAccent ? Palette.Hex(0xFFFFFF, 0.22) : P.KeyCap),
+            CornerRadius = new CornerRadius(6),
+            Padding = new Thickness(6, 2),
+            VerticalAlignment = VerticalAlignment.Center,
+            // Phone: no keyboard to press it on.
+            IsVisible = AppDevice.ShowsKeyHints,
+        };
+        // Screen readers say the key's name, not the glyph (Mac: KeyHint's accessibilityLabel).
+        AutomationProperties.SetName(cap, KeyName(text));
+        return cap;
+    }
+
+    /// <summary>
+    /// Tells screen readers which key triggers a control whose key is handled elsewhere (Mac:
+    /// shortcutAccessibilityHint, "Kurzbefehl: Eingabetaste"): Narrator reads it as the button's shortcut and help text.
+    /// </summary>
+    public static void ShortcutHint(Control control, string? keyHint)
+    {
+        if (string.IsNullOrWhiteSpace(keyHint)) return;
+        AutomationProperties.SetAcceleratorKey(control, keyHint.Replace("↵", "Enter").Replace(' ', '+'));
+        AutomationProperties.SetHelpText(control, $"Kurzbefehl: {KeyName(keyHint)}");
+    }
+
+    /// <summary>
+    /// The German name of a key hint for screen readers ("↵" → "Eingabetaste", "Alt ↵" → "Alt-Eingabetaste", "Ctrl E" →
+    /// "Steuerung-E", "1" → "Taste 1"; Mac: KeyGlyph.accessibilityName).
+    /// </summary>
+    public static string KeyName(string hint)
+    {
+        var parts = hint.Split([' ', '+'], StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length == 1 && parts[0].Length == 1 && char.IsDigit(parts[0][0])) return $"Taste {parts[0]}";
+        return string.Join("-", parts.Select(part => part switch
+        {
+            "↵" or "Enter" => "Eingabetaste",
+            "Esc" => "Escape-Taste",
+            "Ctrl" or "Strg" => "Steuerung",
+            "Shift" or "⇧" => "Umschalt",
+            "Alt" => "Alt",
+            "Tab" or "⇥" => "Tabulatortaste",
+            "⌫" => "Rückschritttaste",
+            "␣" => "Leertaste",
+            "←" => "Pfeil nach links",
+            "→" => "Pfeil nach rechts",
+            "↑↓←→" or "↑↓" => "Pfeiltasten",
+            "Entf" => "Entfernen",
+            _ => part.ToUpperInvariant(),
+        }));
+    }
 
     /// <summary>A small status chip ("FR → DE", "Gemeistert").</summary>
     public static Border Chip(string text, StatusPalette? palette = null, IconName? icon = null)
     {
         var fg = palette?.Text ?? P.AccentText;
         var content = H(5, icon is { } i ? Icons.Icon(i, 13, fg, 2.2) : null, Text(text, 11.5, FontWeight.Bold, fg));
-        return new Border
+        var chip = new Border
         {
             Child = content,
             Background = WsTheme.B(palette?.Soft ?? P.AccentSoft),
@@ -338,6 +404,23 @@ public static class Ui
             HorizontalAlignment = HorizontalAlignment.Left,
             VerticalAlignment = VerticalAlignment.Center,
         };
+        AutomationProperties.SetName(chip, ChipName(text, icon));
+        return chip;
+    }
+
+    /// <summary>
+    /// What a screen reader says for a chip (Mac: Chips.swift): "Status: Gemeistert", "Französisch nach Deutsch" for a
+    /// language pair, "Hinweis: …" for a hint, else the text.
+    /// </summary>
+    public static string ChipName(string text, IconName? icon = null)
+    {
+        if (Labels.STATUS.Values.Contains(text)) return $"Status: {text}";
+        foreach (var a in Enum.GetValues<Lang>())
+            foreach (var b in Enum.GetValues<Lang>())
+                if (text == Labels.LangPair(a, b) || text == $"{Labels.LangName(a)} → {Labels.LangName(b)}")
+                    return $"{Labels.LangName(a)} nach {Labels.LangName(b)}";
+        if (icon == IconName.Lightbulb) return $"Hinweis: {text}";
+        return text;
     }
 
     // MARK: Progress
@@ -516,6 +599,9 @@ public sealed class WsSegmented : Grid
     readonly Border _thumb;
     readonly AnimatedValue _position;
     readonly List<TextBlock> _labels = [];
+    readonly List<Border> _hits = [];
+    readonly double _naturalSegment;
+    double _segment;
     int _selected;
 
     public event Action<int>? SelectionChanged;
@@ -526,7 +612,10 @@ public sealed class WsSegmented : Grid
         _selected = selected;
         _position = new AnimatedValue(selected);
         Height = 32;
-        Width = segmentWidth * items.Count + 4;
+        _naturalSegment = _segment = segmentWidth;
+        // Phone: the segments shrink to the width there is (MeasureOverride); the natural width is the most.
+        if (AppDevice.IsPhone) MaxWidth = segmentWidth * items.Count + 4;
+        else Width = segmentWidth * items.Count + 4;
         var track = new Border { CornerRadius = new CornerRadius(9), Background = WsTheme.B(p.Dark ? Palette.Hex(0xFFFFFF, 0.08) : Palette.Hex(0x101828, 0.06)) };
         Children.Add(track);
         _thumb = new Border
@@ -545,9 +634,18 @@ public sealed class WsSegmented : Grid
             int index = i;
             var label = Ui.Text(items[i], 13, FontWeight.Medium, align: TextAlignment.Center);
             label.HorizontalAlignment = HorizontalAlignment.Center;
+            if (AppDevice.IsPhone) label.TextTrimming = TextTrimming.CharacterEllipsis;
             _labels.Add(label);
             var hit = new Border { Width = segmentWidth, Background = Brushes.Transparent, Child = label, Cursor = new Cursor(StandardCursorType.Hand) };
-            hit.PointerPressed += (_, e) =>
+            _hits.Add(hit);
+            // Phone: on a tap (finger lifted without moving) – on touch-down a swipe to scroll that began on the bar
+            // switched it (the sort order of the overview).
+            if (AppDevice.IsPhone) hit.Tapped += (_, e) =>
+            {
+                e.Handled = true;
+                Select(index);
+            };
+            else hit.PointerPressed += (_, e) =>
             {
                 e.Handled = true;
                 Select(index);
@@ -556,10 +654,26 @@ public sealed class WsSegmented : Grid
             row.Children.Add(hit);
         }
         Children.Add(row);
-        _position.Changed += () => _thumb.RenderTransform = new TranslateTransform(_position.Value * segmentWidth, 0);
-        _thumb.RenderTransform = new TranslateTransform(selected * segmentWidth, 0);
+        _position.Changed += () => _thumb.RenderTransform = new TranslateTransform(_position.Value * _segment, 0);
+        _thumb.RenderTransform = new TranslateTransform(selected * _segment, 0);
         HorizontalAlignment = HorizontalAlignment.Right;
         VerticalAlignment = VerticalAlignment.Center;
+    }
+
+    protected override Size MeasureOverride(Size availableSize)
+    {
+        if (AppDevice.IsPhone && !double.IsInfinity(availableSize.Width) && _hits.Count > 0)
+        {
+            double segment = Math.Max(36, Math.Min(_naturalSegment, Math.Floor((availableSize.Width - 4) / _hits.Count)));
+            if (Math.Abs(segment - _segment) > 0.5)
+            {
+                _segment = segment;
+                foreach (var hit in _hits) hit.Width = segment;
+                _thumb.Width = segment;
+                _thumb.RenderTransform = new TranslateTransform(_position.Value * segment, 0);
+            }
+        }
+        return base.MeasureOverride(availableSize);
     }
 
     public void Select(int index)
@@ -584,6 +698,14 @@ public static class Form
         var left = Ui.V(2, Ui.Text(title, 14, FontWeight.Medium, wrap: TextWrapping.Wrap),
             subtitle is null ? null : Ui.Text(subtitle, 12.5, color: p.TextSecondary, wrap: TextWrapping.Wrap));
         left.VerticalAlignment = VerticalAlignment.Center;
+        // Phone: a wide control (a list, a segmented choice, a field) goes under its title; a switch stays beside it.
+        if (AppDevice.IsPhone && control is not null and not WsSwitch and not ToggleSwitch && !(control.Width <= 120))
+        {
+            control.HorizontalAlignment = HorizontalAlignment.Left;
+            var stacked = Ui.V(8, left, control);
+            stacked.Margin = new Thickness(14, 10);
+            return stacked;
+        }
         var row = Ui.Row(left, control, 16);
         row.MinHeight = 40;
         row.Margin = new Thickness(14, 8);

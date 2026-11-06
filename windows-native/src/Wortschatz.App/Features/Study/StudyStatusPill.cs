@@ -43,6 +43,9 @@ public static class StudyStatusPill
     /// </summary>
     public static Control Create(StudyStatus status, StudyCountdown? countdown, bool play, bool streakGrew)
     {
+        // Phone: the key hints (1–4 wählen, Antwort schreiben) belong to a keyboard; the answer's feedback stays.
+        if (AppDevice.IsPhone && status.Kind is StudyStatus.Kinds.Keys or StudyStatus.Kinds.Typing && status.Streak < AnswerStreak.VisibleFrom)
+            return new Border();
         var palette = PaletteOf(status.Kind);
         var row = Ui.H(16, Content(status, palette, play));
         if (status.Streak >= AnswerStreak.VisibleFrom) row.Children.Add(StreakBadge(status.Streak, status.IsStreakMilestone, streakGrew));
@@ -78,7 +81,11 @@ public static class StudyStatusPill
                 var symbol = FeedbackSymbol(status.Kind, palette!.Fill);
                 if (play) Effects.Pop(symbol, 1.22);
                 string title = status.IsStreakMilestone ? $"{status.Streak} richtig in Folge!" : status.Title;
-                var texts = Ui.V(1, Ui.Text(title, 17, FontWeight.SemiBold, palette.Text, TextWrapping.Wrap, WsTheme.UI),
+                // The title takes at most two lines (Mac: lineLimit(2)).
+                var titleText = Ui.Text(title, 17, FontWeight.SemiBold, palette.Text, TextWrapping.Wrap, WsTheme.UI);
+                titleText.MaxLines = 2;
+                titleText.TextTrimming = TextTrimming.CharacterEllipsis;
+                var texts = Ui.V(1, titleText,
                     status.Message is { } m ? Ui.Text(m, 13.5, color: P.TextSecondary, wrap: TextWrapping.Wrap) : null);
                 texts.MaxWidth = 380;
                 texts.VerticalAlignment = VerticalAlignment.Center;
@@ -177,6 +184,7 @@ public static class StudyActionBarView
 {
     public static Control Create(Control? status, IEnumerable<Control?> trailing, double width = 760)
     {
+        if (AppDevice.IsPhone) return PhoneBar(status, trailing);
         var bar = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*,Auto"), MaxWidth = width, Margin = new Thickness(32, 12, 32, 20), ColumnSpacing = 12 };
         if (status is not null) bar.Children.Add(status);
         var right = Ui.H(12, trailing.ToArray());
@@ -190,5 +198,80 @@ public static class StudyActionBarView
         }
         bar.VerticalAlignment = VerticalAlignment.Bottom;
         return bar;
+    }
+
+    static readonly List<WeakReference<Control>> s_phoneBars = [];
+
+    /// <summary>
+    /// Phone: a study screen's action bar, for the toasts to stand right above it (<see cref="ShownPhoneBar"/>). Bars
+    /// made but never shown (a ViewThatFits variant) are dropped as newer ones come.
+    /// </summary>
+    public static void RegisterPhoneBar(Control bar)
+    {
+        s_phoneBars.RemoveAll(r => !r.TryGetTarget(out _));
+        if (s_phoneBars.Count >= 8) s_phoneBars.RemoveAt(0);
+        s_phoneBars.Add(new WeakReference<Control>(bar));
+    }
+
+    /// <summary>The action bar on screen (phone), null when the screen has none.</summary>
+    public static Control? ShownPhoneBar()
+    {
+        for (int i = s_phoneBars.Count - 1; i >= 0; i--)
+            if (s_phoneBars[i].TryGetTarget(out var bar) && bar.IsEffectivelyVisible && TopLevel.GetTopLevel(bar) is not null) return bar;
+        return null;
+    }
+
+    /// <summary>
+    /// Phone: the pill on its own line above the buttons, which share the width (the Enter action, the widest, on the
+    /// right); a single button takes the whole width.
+    /// </summary>
+    static Control PhoneBar(Control? status, IEnumerable<Control?> trailing)
+    {
+        var buttons = trailing.OfType<Control>().ToList();
+        var stack = new StackPanel { Spacing = 8, Margin = new Thickness(12, 8, 12, 12), VerticalAlignment = VerticalAlignment.Bottom };
+        RegisterPhoneBar(stack);
+        if (status is not null)
+        {
+            status.HorizontalAlignment = HorizontalAlignment.Stretch;
+            stack.Children.Add(status);
+        }
+        // Three or more: the last (the Enter action) gets a line of its own under the others.
+        Control? last = null;
+        if (buttons.Count >= 3)
+        {
+            last = buttons[^1];
+            buttons.RemoveAt(buttons.Count - 1);
+        }
+        if (buttons.Count > 0)
+        {
+            var row = new Grid { ColumnSpacing = 8 };
+            for (int i = 0; i < buttons.Count; i++)
+            {
+                row.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Star));
+                var b = buttons[i];
+                b.HorizontalAlignment = HorizontalAlignment.Stretch;
+                if (b is WsButton wb)
+                {
+                    StudyChrome.Floating(wb);
+                    wb.Focusable = false;
+                    if (wb.Chrome.Child is { } inner) inner.HorizontalAlignment = HorizontalAlignment.Center;
+                }
+                Grid.SetColumn(b, i);
+                row.Children.Add(b);
+            }
+            stack.Children.Add(row);
+        }
+        if (last is not null)
+        {
+            last.HorizontalAlignment = HorizontalAlignment.Stretch;
+            if (last is WsButton lb)
+            {
+                StudyChrome.Floating(lb);
+                lb.Focusable = false;
+                if (lb.Chrome.Child is { } inner) inner.HorizontalAlignment = HorizontalAlignment.Center;
+            }
+            stack.Children.Add(last);
+        }
+        return stack;
     }
 }

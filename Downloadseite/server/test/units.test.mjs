@@ -3,11 +3,11 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { loadConfig } from '../lib/config.mjs';
-import { anonymizeIp, buildTrust, clientIp, expandIpv6, ipKey, isLoopback, normalizeIp } from '../lib/net.mjs';
+import { anonymizeIp, buildTrust, clientIp, expandIpv6, ipKey, isLoopback, networkKey, normalizeIp } from '../lib/net.mjs';
 import { LinkSigner } from '../lib/tokens.mjs';
-import { ConcurrencyGate, DailyBudget, DailyQuota, PenaltyBox, TokenBucket, WindowCounter, dayKey, secondsUntilTomorrow } from '../lib/limits.mjs';
+import { ConcurrencyGate, DailyBudget, DailyQuota, TokenBucket, WindowCounter, dayKey, downloadFloor } from '../lib/limits.mjs';
 import { compile, escapeHtml, render } from '../lib/templates.mjs';
-import { humanWait, notModified, parseRange, pickEncoding } from '../lib/http.mjs';
+import { notModified, parseRange, pickEncoding } from '../lib/http.mjs';
 import { formatSize } from '../lib/releases.mjs';
 import { ByteRate } from '../lib/throttle.mjs';
 import { changelogView, compareVersions, parseChangelog } from '../lib/changelog.mjs';
@@ -60,6 +60,14 @@ describe('addresses', () => {
     assert.ok(isLoopback('127.0.0.1') && isLoopback('::1') && !isLoopback('10.0.0.1') && !isLoopback(''));
     assert.equal(anonymizeIp('203.0.113.4'), '203.0.113.0');
     assert.equal(anonymizeIp('2001:db8:1:2::9'), '2001:db8:1::');
+  });
+
+  it('counts a whole /48 as one for password guesses', () => {
+    assert.equal(networkKey('2001:db8:1:100::1'), '2001:0db8:0001::/48');
+    assert.equal(networkKey('2001:db8:1:100::1'), networkKey('2001:db8:1:ff00::2'));
+    assert.notEqual(networkKey('2001:db8:1::1'), networkKey('2001:db8:2::1'));
+    assert.equal(networkKey('203.0.113.4'), '203.0.113.4');
+    assert.equal(networkKey(''), 'unknown');
   });
 
   const fake = (remoteAddress, xff) => ({ socket: { remoteAddress }, headers: xff ? { 'x-forwarded-for': xff } : {} });
@@ -126,6 +134,36 @@ describe('limits', () => {
     assert.ok(bucket.take('a').ok);
   });
 
+  it('token bucket: peek answers like take, but takes nothing', () => {
+    let now = 0;
+    const bucket = new TokenBucket({ capacity: 2, perSecond: 1, clock: () => now });
+    assert.ok(bucket.peek('a').ok, 'unknown key');
+    assert.equal(bucket.buckets.size, 0, 'peeking stores nothing');
+    bucket.take('a');
+    bucket.take('a');
+    assert.deepEqual(bucket.peek('a'), { ok: false, retryAfter: 1 });
+    assert.deepEqual(bucket.peek('a'), bucket.take('a'));
+    now = 1000;
+    assert.ok(bucket.peek('a').ok, 'refilled');
+    assert.ok(bucket.take('a').ok);
+    assert.equal(bucket.peek('a').ok, false, 'the token was there only once');
+  });
+
+  it('token bucket: spending may run into debt, which peek sees until it is paid off', () => {
+    let now = 0;
+    const bucket = new TokenBucket({ capacity: 10, perSecond: 5, clock: () => now });
+    bucket.spend('a', 30);
+    assert.deepEqual(bucket.peek('a'), { ok: false, retryAfter: 5 }, '-20 tokens: 21 to go to the next whole one');
+    now = 4000;
+    assert.equal(bucket.peek('a').ok, false, 'the debt is paid off, but no token is there yet');
+    now = 5000;
+    assert.equal(bucket.peek('a').ok, true);
+    const none = new TokenBucket({ capacity: Infinity, perSecond: 0, clock: () => now });
+    none.spend('a', 1e12);
+    assert.equal(none.peek('a').ok, true, 'without a limit nothing ever runs out');
+    assert.equal(none.peek('a', none.capacity - 100).ok, true, 'and everybody counts as having used little');
+  });
+
   it('window counter: limit per window, carried over by the overlap', () => {
     let now = 0;
     const counter = new WindowCounter({ limit: 2, windowMs: 10_000, clock: () => now });
@@ -168,22 +206,16 @@ describe('limits', () => {
     assert.ok(new DailyQuota({ limit: 0 }).allows('x'), '0 = unlimited');
   });
 
-  it('penalties block and expire', () => {
-    let now = 0;
-    const box = new PenaltyBox({ threshold: 10, decayMs: 1000, banMs: 5000, clock: () => now });
-    assert.equal(box.add('a', 6), false);
-    assert.equal(box.add('a', 6), true);
-    assert.equal(box.blockedFor('a'), 5000);
-    now = 5001;
-    assert.equal(box.blockedFor('a'), 0);
-  });
-
-  it('penalties fade away', () => {
-    let now = 0;
-    const box = new PenaltyBox({ threshold: 10, decayMs: 1000, banMs: 5000, clock: () => now });
-    box.add('a', 9);
-    now = 1000;
-    assert.equal(box.add('a', 9), false);
+  it('download floor: half a fair share when slots run short, otherwise the configured floor', () => {
+    const base = { floor: 16_000, laneRate: 6_250_000, perDownload: 0, slots: 200 };
+    assert.equal(downloadFloor({ ...base, active: 10 }), 16_000, 'plenty of room');
+    assert.equal(downloadFloor({ ...base, floor: 0, active: 200 }), 0, 'no check configured');
+    assert.equal(downloadFloor({ ...base, active: 149 }), 16_000);
+    assert.equal(downloadFloor({ ...base, active: 150 }), 6_250_000 / 150 / 2, 'three quarters full: real bandwidth for a slot');
+    assert.equal(downloadFloor({ ...base, slots: 40, active: 40 }), 6_250_000 / 40 / 2);
+    assert.equal(downloadFloor({ ...base, laneRate: 100_000, active: 10 }), 5_000, 'never more than half a share');
+    assert.equal(downloadFloor({ ...base, active: 150, perDownload: 10_000 }), 5_000, 'a download limit lowers it');
+    assert.equal(downloadFloor({ ...base, laneRate: 0, active: 200 }), 16_000, 'no bandwidth limit');
   });
 
   it('concurrency gate', () => {
@@ -209,8 +241,6 @@ describe('limits', () => {
     now = Date.parse('2026-10-14T22:00:30Z'); // 00:00:30
     assert.equal(budget.allows(), true);
     assert.equal(dayKey(Date.parse('2026-10-14T22:30:00Z')), '2026-10-15');
-    const left = secondsUntilTomorrow(Date.parse('2026-10-14T21:50:00Z'));
-    assert.ok(left >= 600 && left <= 660, String(left));
   });
 
   it('bandwidth limit waits', async () => {
@@ -364,18 +394,17 @@ describe('http helpers', () => {
     assert.equal(pickEncoding('gzip, br;q=0', entry), 'gzip');
     assert.equal(pickEncoding('identity', entry), '');
     assert.equal(pickEncoding('br', { gzip: Buffer.alloc(1) }), '');
+    assert.equal(pickEncoding(`br${','.repeat(300)}`, entry), '', 'a long list is not taken apart');
   });
 
   it('compares ETags', () => {
     assert.ok(notModified({ headers: { 'if-none-match': '"a", W/"b"' } }, '"b"'));
     assert.ok(!notModified({ headers: {} }, '"b"'));
+    assert.ok(!notModified({ headers: { 'if-none-match': `"b"${','.repeat(2000)}` } }, '"b"'), 'a long list is not taken apart');
   });
 
   it('formats in Swiss German', () => {
     assert.equal(formatSize(9_437_184), '9.4 MB');
     assert.equal(formatSize(800), '1 KB');
-    assert.equal(humanWait(30), 'einer Minute');
-    assert.equal(humanWait(600), '10 Minuten');
-    assert.equal(humanWait(3600 * 5), '5 Stunden');
   });
 });

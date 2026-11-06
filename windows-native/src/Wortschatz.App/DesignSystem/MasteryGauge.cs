@@ -19,6 +19,19 @@ public sealed class MasteryGauge : Grid
     readonly int _mastered, _learning, _total;
     readonly Size _size;
 
+    /// <summary>
+    /// The ring's percentage like the Mac and JS (Math.round = floor(x + 0.5)): never 100 % before every term is mastered
+    /// (199/200 shows 99 %), never 0 % once one is (1/300 shows 1 %).
+    /// </summary>
+    public static int MasteryPercent(int mastered, int total)
+    {
+        if (total <= 0) return 0;
+        int percent = (int)Math.Floor(100.0 * mastered / total + 0.5);
+        if (mastered < total) percent = Math.Min(percent, 99);
+        if (mastered > 0) percent = Math.Max(percent, 1);
+        return percent;
+    }
+
     public MasteryGauge(int mastered, int learning, int total, Size size = Size.Small, double scale = 1)
     {
         _mastered = mastered;
@@ -30,7 +43,7 @@ public sealed class MasteryGauge : Grid
         Children.Add(new Arcs(this, LineWidth(size) * scale));
         var p = WsTheme.P;
         bool complete = total > 0 && mastered == total;
-        int percent = total > 0 ? (int)Math.Round(100.0 * mastered / total) : 0;
+        int percent = MasteryPercent(mastered, total);
         Control? center = size switch
         {
             Size.Small when complete => Icons.Icon(IconName.Check, 9 * scale, p.Mastered.Fill, 3.4),

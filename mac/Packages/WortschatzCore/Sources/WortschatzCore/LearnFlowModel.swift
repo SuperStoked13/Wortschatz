@@ -113,7 +113,7 @@ extension LearnFlow {
 
     /// A setting that shapes a running session: it only applies to a new one.
     public enum SettingsChange: String, Codable, Sendable, Equatable, Hashable, CaseIterable {
-        case direction, types, roundSize, review
+        case direction, types, roundSize, review, recheck
     }
 
     /// The options a session was built with (`sessionSettings`).
@@ -124,44 +124,55 @@ extension LearnFlow {
         public var written: Bool
         /// With repetition questions (`LearnReview`).
         public var review: Bool
+        /// With rechecks (Nachkontrolle, `LearnRecheck`; only sessions with more than
+        /// `LearnEngine.RECHECK_MIN_CARDS` cards have them).
+        public var recheck: Bool
 
-        public init(answerWith: AnswerWith, roundSize: Int, mc: Bool, written: Bool, review: Bool = false) {
+        public init(
+            answerWith: AnswerWith, roundSize: Int, mc: Bool, written: Bool, review: Bool = false, recheck: Bool = false
+        ) {
             self.answerWith = answerWith
             self.roundSize = roundSize
             self.mc = mc
             self.written = written
             self.review = review
+            self.recheck = recheck
         }
     }
 
     public static func sessionSettings(_ state: LearnState) -> SessionSettings {
         sessionSettings(answerWith: state.answerWith, roundSize: state.learn.roundSize, mc: state.learn.mc,
-                        written: state.learn.written, review: state.review != nil)
+                        written: state.learn.written, review: state.review != nil, recheck: state.recheck != nil)
     }
 
-    /// The settings a new session would get (`review`: the repetition questions are on).
-    public static func sessionSettings(_ options: StudyOptions, review: Bool = false) -> SessionSettings {
-        sessionSettings(answerWith: options.answerWith, roundSize: options.learn.roundSize, mc: options.learn.mc,
-                        written: options.learn.written, review: review)
-    }
-
-    private static func sessionSettings(answerWith: AnswerWith, roundSize: Int, mc: Bool, written: Bool, review: Bool)
+    /// The settings a new session would get (`review`: the repetition questions are on;
+    /// `recheck`: rechecks would apply, i.e. the option is on and the session has more than
+    /// `LearnEngine.RECHECK_MIN_CARDS` cards).
+    public static func sessionSettings(_ options: StudyOptions, review: Bool = false, recheck: Bool = false)
         -> SessionSettings
     {
+        sessionSettings(answerWith: options.answerWith, roundSize: options.learn.roundSize, mc: options.learn.mc,
+                        written: options.learn.written, review: review, recheck: recheck)
+    }
+
+    private static func sessionSettings(
+        answerWith: AnswerWith, roundSize: Int, mc: Bool, written: Bool, review: Bool, recheck: Bool
+    ) -> SessionSettings {
         let both = mc || written
         return SessionSettings(
             answerWith: answerWith, roundSize: roundSize >= 1 ? roundSize : defaultRoundSize, mc: both ? mc : true,
-            written: both ? written : true, review: review)
+            written: both ? written : true, review: review, recheck: recheck)
     }
 
     /// Which session-shaping settings differ: direction, question types, round size, repetition
-    /// questions (in this order). Tolerance, audio and the copy step apply at once.
+    /// questions, rechecks (in this order). Tolerance, audio and the copy step apply at once.
     public static func settingsChanges(_ a: SessionSettings, _ b: SessionSettings) -> [SettingsChange] {
         var out: [SettingsChange] = []
         if a.answerWith != b.answerWith { out.append(.direction) }
         if a.mc != b.mc || a.written != b.written { out.append(.types) }
         if a.roundSize != b.roundSize { out.append(.roundSize) }
         if a.review != b.review { out.append(.review) }
+        if a.recheck != b.recheck { out.append(.recheck) }
         return out
     }
 
@@ -173,6 +184,7 @@ extension LearnFlow {
             case .types?: "Die neuen Fragetypen gelten"
             case .roundSize?: "Die neue Rundengrösse gilt"
             case .review?: "Die Einstellung für Wiederholungsfragen gilt"
+            case .recheck?: "Die Einstellung für die Nachkontrolle gilt"
             case nil: "Die neuen Einstellungen gelten"
             }
         return "\(lead) ab einem Neustart. Jetzt neu beginnen? Dein Lernfortschritt bleibt gespeichert."

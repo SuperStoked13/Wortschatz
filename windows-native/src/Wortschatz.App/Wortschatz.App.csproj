@@ -1,12 +1,17 @@
 <Project Sdk="Microsoft.NET.Sdk">
-  <!-- The native Windows app (Avalonia, Glas design). Built for Windows with build.sh; runs on Linux too (dev/tests). -->
+  <!-- The native Windows app (Avalonia, Glas design). Built for Windows with build.sh; runs on Linux too (dev/tests).
+       Two targets: net10.0-windows… is the real app (Windows APIs through the WinRT projection: text recognition with
+       Windows.Media.Ocr, PDF rendering with Windows.Data.Pdf, code under #if WINDOWS); plain net10.0 is what the
+       snapshot tool and headless checks on Linux use (those features report that they need Windows). -->
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
-    <TargetFramework>net10.0</TargetFramework>
+    <TargetFrameworks>net10.0;net10.0-windows10.0.19041.0</TargetFrameworks>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <SupportedOSPlatformVersion Condition="$(TargetFramework.Contains('-windows'))">10.0.17763.0</SupportedOSPlatformVersion>
     <RootNamespace>Wortschatz.App</RootNamespace>
     <AssemblyName>Wortschatz</AssemblyName>
     <Product>Wortschatz</Product>
-    <Version>1.2.0</Version>
+    <Version>1.4.0</Version>
     <ApplicationIcon Condition="Exists('Assets\app.ico')">Assets\app.ico</ApplicationIcon>
     <BuiltInComInteropSupport>true</BuiltInComInteropSupport>
     <ApplicationManifest Condition="Exists('app.manifest')">app.manifest</ApplicationManifest>
@@ -18,6 +23,7 @@
     <PackageReference Include="Avalonia" />
     <PackageReference Include="Avalonia.Desktop" />
     <PackageReference Include="Avalonia.Themes.Simple" />
+    <PackageReference Include="PdfPig" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\Wortschatz.Core\Wortschatz.Core.csproj" />

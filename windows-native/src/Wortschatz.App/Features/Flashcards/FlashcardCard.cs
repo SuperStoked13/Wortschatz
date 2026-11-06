@@ -1,6 +1,8 @@
 using System.Globalization;
 using Avalonia;
 using Avalonia.Automation;
+using Avalonia.Automation.Peers;
+using Avalonia.Automation.Provider;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Layout;
@@ -122,7 +124,10 @@ public static class FlashcardMetrics
     public const double CornerRadius = 30;
 
     /// <summary>The card's height for the room the stage has: an index-card shape, between 240 and 440.</summary>
-    public static double CardHeight(double width, double availableHeight) => Math.Max(240, Math.Min(440, Math.Min(width * 0.58, availableHeight)));
+    public static double CardHeight(double width, double availableHeight) => AppDevice.IsPhone
+        // Phone: an upright card down to the thumb (one hand), as high as the screen allows.
+        ? Math.Max(240, Math.Min(availableHeight, width * 1.45))
+        : Math.Max(240, Math.Min(440, Math.Min(width * 0.58, availableHeight)));
 
     /// <summary>The card edge <paramref name="level"/> steps below the card: drop, inset on each side, opacity.</summary>
     public static (double Drop, double Inset, double Opacity) Edge(int level)
@@ -212,8 +217,12 @@ public sealed class FlashcardFace : Grid
         var grid = new Grid { RowDefinitions = new RowDefinitions("Auto,*,Auto"), Margin = new Thickness(28) };
         var label = Ui.Eyebrow(side.Label);
         label.FontSize = 11.5;
-        var top = Ui.Row(label, _toolsHost, 12);
-        top.MinHeight = 32;
+        // Phone too: the buttons stay beside the label (Ui.Row put them under it there).
+        var top = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto"), ColumnSpacing = 12, MinHeight = 32 };
+        label.VerticalAlignment = VerticalAlignment.Center;
+        top.Children.Add(label);
+        Grid.SetColumn(_toolsHost, 1);
+        top.Children.Add(_toolsHost);
         grid.Children.Add(top);
 
         Control text;
@@ -242,7 +251,8 @@ public sealed class FlashcardFace : Grid
         Grid.SetRow(text, 1);
         grid.Children.Add(text);
 
-        var hint = Ui.H(6, Ui.KeyCap("Leertaste"), Ui.Text(side.IsBack ? "Vorderseite" : "Umdrehen", 12, color: P.TextTertiary));
+        // Phone: no space bar; a tap turns the card.
+        var hint = Ui.H(6, Ui.KeyCap("Leertaste"), Ui.Text(AppDevice.IsPhone ? (side.IsBack ? "Antippen: Vorderseite" : "Antippen zum Umdrehen") : side.IsBack ? "Vorderseite" : "Umdrehen", 12, color: P.TextTertiary));
         hint.HorizontalAlignment = HorizontalAlignment.Center;
         hint.Opacity = 0.85;
         Grid.SetRow(hint, 2);
@@ -258,10 +268,11 @@ public sealed class FlashcardFace : Grid
     {
         var (size, weight) = text.Length switch
         {
-            < 24 => (46.0, FontWeight.Bold),
-            < 60 => (36.0, FontWeight.Bold),
-            < 140 => (28.0, FontWeight.Bold),
-            _ => (22.0, FontWeight.SemiBold),
+            // Semibold in the rounded font like the Mac (medium for long sentences).
+            < 24 => (46.0, FontWeight.SemiBold),
+            < 60 => (36.0, FontWeight.SemiBold),
+            < 140 => (28.0, FontWeight.SemiBold),
+            _ => (22.0, FontWeight.Medium),
         };
         var typeface = new Typeface(WsTheme.Prompt, FontStyle.Normal, weight);
         double min = size * 0.55;
@@ -448,6 +459,7 @@ public sealed class FlashcardView : Panel
         Children.Add(_glideLayer);
         Cursor = new Cursor(StandardCursorType.Hand);
         AutomationProperties.SetName(this, "Karteikarte");
+        UpdateAccessibility();
         _angle.Changed += ApplyTurn;
         _crossFade.Changed += ApplyTurn;
         _glide.Changed += ApplyGlide;
@@ -482,8 +494,34 @@ public sealed class FlashcardView : Panel
             Depart(old, leaving, flung, releaseOffset);
         }
         IsHitTestVisible = IsCurrent;
+        UpdateAccessibility();
         BuildTools();
         UpdateVerdict();
+    }
+
+    // MARK: Accessibility
+
+    /// <summary>
+    /// The screen reader's action on the card: "Umdrehen", or "Vorderseite zeigen" on its back (Mac:
+    /// accessibilityAction(named:)); a card that is leaving is hidden from it (Mac: accessibilityHidden).
+    /// </summary>
+    void UpdateAccessibility()
+    {
+        AutomationProperties.SetHelpText(this, _isFlipped ? "Vorderseite zeigen" : "Umdrehen");
+        AutomationProperties.SetAccessibilityView(this, IsCurrent ? AccessibilityView.Default : AccessibilityView.Raw);
+    }
+
+    protected override AutomationPeer OnCreateAutomationPeer() => new FlashcardViewPeer(this);
+
+    /// <summary>The card as a button for the screen reader: invoking it turns the card over.</summary>
+    sealed class FlashcardViewPeer(FlashcardView owner) : ControlAutomationPeer(owner), IInvokeProvider
+    {
+        protected override AutomationControlType GetAutomationControlTypeCore() => AutomationControlType.Button;
+
+        public void Invoke()
+        {
+            if (owner.IsCurrent) owner._c.Flip();
+        }
     }
 
     /// <summary>The swipe moved this (current) card.</summary>
@@ -916,6 +954,8 @@ public sealed class FlashcardDeckView : Panel
 
     void OnArmedChanged()
     {
+        // A tick when the swipe crosses the threshold to a verdict (Mac: FlashcardSwipe.update).
+        if (_c.Swipe.Armed is not null) Services.Haptics.Selection();
         foreach (var view in _views.Values)
             if (view.IsCurrent) view.UpdateVerdict();
     }

@@ -4,6 +4,12 @@ import WortschatzCore
 /// German texts of the set detail (ports of the helpers in src/screens/set.js and
 /// src/ui/study-options.js).
 enum SetDetailCopy {
+    /// "Eigene Optionen: Multiple Choice: aus · 10 Fragen pro Runde" under the study note: what
+    /// this set does differently from the standard (`LearnOptionsCopy.deviations`).
+    static func ownOptionsNote(_ deviations: [String]) -> String {
+        "Eigene Optionen: \(deviations.joined(separator: " · "))"
+    }
+
     /// How a set side is called in sentences ("Du siehst Deutsch und antwortest auf Französisch").
     private struct SideName {
         let seen: String

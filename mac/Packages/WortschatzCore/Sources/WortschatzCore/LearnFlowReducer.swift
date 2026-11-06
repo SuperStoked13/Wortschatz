@@ -120,6 +120,8 @@ extension LearnFlow {
                 optionsChanged(options)
             case let .reviewChanged(review):
                 s.review = review
+            case let .recheckChanged(recheck):
+                s.recheck = recheck
             case .startReview:
                 guard isFree, s.phase == .allMastered else { return }
                 startFresh(s.subset, review: true)
@@ -140,6 +142,7 @@ extension LearnFlow {
                 if kind == .options && s.optionsBeforeOverlay == nil {
                     s.optionsBeforeOverlay = s.options
                     s.reviewBeforeOverlay = s.review
+                    s.recheckBeforeOverlay = s.recheck
                 }
             case .overlayDismissed:
                 overlayDismissed()
@@ -399,7 +402,7 @@ extension LearnFlow {
             freshStarts += 1
             let fresh = LearnEngine.createLearn(
                 s.cards, options: s.options, subset: subset, progress: progress ?? env.progress, rng: env.rng, now: now,
-                review: review ?? s.review)
+                review: review ?? s.review, recheck: s.recheck)
             s.subset = fresh.subset
             if fresh.order.isEmpty || LearnEngine.isFinished(fresh) {
                 // Nothing to study.
@@ -994,15 +997,20 @@ extension LearnFlow {
             guard s.overlay != nil else { return }
             let before = s.optionsBeforeOverlay
             let reviewBefore = s.reviewBeforeOverlay ?? s.review
+            let recheckBefore = s.recheckBeforeOverlay ?? s.recheck
             s.overlay = nil
             s.optionsBeforeOverlay = nil
             s.reviewBeforeOverlay = nil
-            // Direction, question types, round size and the repetition questions shape the
-            // session: they need a restart.
+            s.recheckBeforeOverlay = nil
+            // Direction, question types, round size, the repetition questions and the rechecks
+            // shape the session: they need a restart.
             if let before, let session = s.session, session.finishedAt == nil {
-                let current = sessionSettings(s.options, review: s.review)
+                // Rechecks only exist in sessions with more than RECHECK_MIN_CARDS cards.
+                let large = session.order.count > LearnEngine.RECHECK_MIN_CARDS
+                let current = sessionSettings(s.options, review: s.review, recheck: s.recheck && large)
                 let changes = settingsChanges(sessionSettings(session), current)
-                if !settingsChanges(sessionSettings(before, review: reviewBefore), current).isEmpty && !changes.isEmpty {
+                let beforeSettings = sessionSettings(before, review: reviewBefore, recheck: recheckBefore && large)
+                if !settingsChanges(beforeSettings, current).isEmpty && !changes.isEmpty {
                     s.prompt = .restartForOptions(changes)
                     return
                 }

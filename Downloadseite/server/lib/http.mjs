@@ -1,4 +1,46 @@
-// Response helpers: security headers, content negotiation, caching.
+// The HTTP server and response helpers: security headers, content negotiation, caching.
+
+import http from 'node:http';
+
+/** The HTTP server with its timeouts and limits (`options` only for tests). */
+export function createHttpServer(handler, options = {}) {
+  const server = http.createServer(
+    {
+      headersTimeout: 10_000, // all headers within 10 s (slow-loris)
+      requestTimeout: 10_000, // the whole request within 10 s: the only bodies are tiny forms
+      connectionsCheckingInterval: 2_000, // the default of 30 s would make both up to 30 s late
+      // Longer than Caddy keeps idle upstream connections (30 s, see deploy/Caddyfile), so
+      // Caddy never reuses a connection that Node is just closing.
+      keepAliveTimeout: 65_000,
+      maxHeaderSize: 16 * 1024,
+      requireHostHeader: true,
+      ...options,
+    },
+    handler,
+  );
+  server.maxRequestsPerSocket = 1000;
+  server.maxConnections = 2000;
+  // A connection that does nothing for a minute (also a stalled download) is closed.
+  server.setTimeout(60_000, (socket) => socket.destroy());
+  server.on('clientError', (error, socket) => {
+    // Nothing sent yet means no request to answer, and a proxy could take an answer for its next one.
+    if (error.code === 'ECONNRESET' || !socket.writable || !socket.bytesRead) {
+      socket.destroy();
+      return;
+    }
+    const status = error.code === 'ERR_HTTP_REQUEST_TIMEOUT' ? '408 Request Timeout' : '400 Bad Request';
+    // Then really close: a client that goes on sending must not keep the connection.
+    socket.end(`HTTP/1.1 ${status}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`, () => socket.destroy());
+  });
+  // At the connection limit, make room: idle connections are the cheapest to give up.
+  let lastDrop = 0;
+  server.on('drop', () => {
+    if (Date.now() - lastDrop < 1000) return;
+    lastDrop = Date.now();
+    server.closeIdleConnections();
+  });
+  return server;
+}
 
 const PERMISSIONS = [
   'accelerometer=()',
@@ -59,6 +101,10 @@ export function securityHeaders({ secure }) {
 export function send(req, res, status, headers, body = '') {
   res.statusCode = status;
   for (const [name, value] of Object.entries(headers)) res.setHeader(name, value);
+  // A body nobody read to the end would keep the connection busy for as long as it trickles.
+  if (!req.readableEnded && (Number(req.headers['content-length']) > 0 || req.headers['transfer-encoding'])) {
+    res.setHeader('Connection', 'close');
+  }
   const buffer = typeof body === 'string' ? Buffer.from(body, 'utf8') : body;
   res.setHeader('Content-Length', buffer.length);
   res.end(req.method === 'HEAD' ? undefined : buffer);
@@ -76,7 +122,8 @@ export function wantsJson(req) {
 
 /** The best encoding the client accepts and the entry has: "br", "gzip" or "". */
 export function pickEncoding(header, entry) {
-  if (!header || (!entry.br && !entry.gzip)) return '';
+  // No browser sends a long list; a long one only costs time to take apart.
+  if (!header || header.length > 256 || (!entry.br && !entry.gzip)) return '';
   const accepted = new Map();
   for (const part of String(header).toLowerCase().split(',')) {
     const [name, ...params] = part.trim().split(';');
@@ -91,34 +138,35 @@ export function pickEncoding(header, entry) {
 /** If-None-Match matches the given ETag (weak comparison, as RFC 9110 asks for it). */
 export function notModified(req, etag) {
   const header = req.headers['if-none-match'];
-  if (!header) return false;
+  if (!header || header.length > 1024) return false;
   if (header.trim() === '*') return true;
   const bare = etag.replace(/^W\//, '');
   return header.split(',').some((tag) => tag.trim().replace(/^W\//, '') === bare);
 }
 
-/** Serves an in-memory entry (static file or rendered page). Returns the body bytes sent. */
-export function sendEntry(req, res, entry, { versioned = false } = {}) {
+/**
+ * Serves an in-memory entry (static file or rendered page). `personal`: only for whoever is
+ * signed in, so no shared cache may keep it for others.
+ */
+export function sendEntry(req, res, entry, { versioned = false, personal = false } = {}) {
   const encoding = pickEncoding(req.headers['accept-encoding'], entry);
   const etag = encoding ? entry.etag.replace(/"$/, `-${encoding}"`) : entry.etag;
+  const cacheControl = entry.cacheControl ?? (versioned ? 'public, max-age=31536000, immutable' : 'public, max-age=3600');
   res.setHeader('Content-Type', entry.type);
-  res.setHeader(
-    'Cache-Control',
-    entry.cacheControl ?? (versioned ? 'public, max-age=31536000, immutable' : 'public, max-age=3600'),
-  );
-  if (entry.br || entry.gzip) res.setHeader('Vary', 'Accept-Encoding');
+  res.setHeader('Cache-Control', personal ? `private, ${cacheControl}` : cacheControl);
+  const vary = [...(entry.br || entry.gzip ? ['Accept-Encoding'] : []), ...(personal ? ['Cookie', 'Authorization'] : [])];
+  if (vary.length) res.setHeader('Vary', vary.join(', '));
   res.setHeader('ETag', etag);
   if (notModified(req, etag)) {
     res.statusCode = 304;
     res.end();
-    return 0;
+    return;
   }
   if (encoding) res.setHeader('Content-Encoding', encoding);
   const body = encoding === 'br' ? entry.br : encoding === 'gzip' ? entry.gzip : entry.body;
   res.statusCode = 200;
   res.setHeader('Content-Length', body.length);
   res.end(req.method === 'HEAD' ? undefined : body);
-  return req.method === 'HEAD' ? 0 : body.length;
 }
 
 /**
@@ -146,13 +194,4 @@ export function parseRange(header, size) {
     return 'unsatisfiable';
   }
   return { start, end };
-}
-
-/** "einer Minute", "5 Minuten", "2 Stunden" for waiting times in messages. */
-export function humanWait(seconds) {
-  if (seconds < 90) return 'einer Minute';
-  const minutes = Math.ceil(seconds / 60);
-  if (minutes < 90) return `${minutes} Minuten`;
-  const hours = Math.ceil(minutes / 60);
-  return hours === 1 ? 'einer Stunde' : `${hours} Stunden`;
 }

@@ -55,10 +55,13 @@ public class LearnReviewTests
         Assert.False(LearnEngine.IsReviewQuestion("x.3:c1"));
         Assert.False(LearnEngine.IsReviewQuestion("1.q3:c1"));
         Assert.False(LearnEngine.IsReviewQuestion("13"));
-        Assert.Equal(2, LearnEngine.ReviewsPerRound(7));
-        Assert.Equal(1, LearnEngine.ReviewsPerRound(5));
-        Assert.Equal(1, LearnEngine.ReviewsPerRound(1));
-        Assert.Equal(5, LearnEngine.ReviewsPerRound(15));
+        Assert.False(LearnEngine.IsReviewQuestion("1.33:c1"));
+        Assert.False(LearnEngine.IsReviewQuestion("1.4:c1"));
+        Assert.False(LearnEngine.IsReviewQuestion("1.3.x:c1"));
+        Assert.True(LearnEngine.IsReviewQuestion("2.3.2:c1"));
+        Assert.True(LearnEngine.IsRecheckQuestion("1.4:c1"));
+        Assert.True(LearnEngine.IsRecheckQuestion("3.4.2:a:b"));
+        Assert.False(LearnEngine.IsRecheckQuestion("1.3:c1"));
     }
 
     [Fact]
@@ -86,24 +89,43 @@ public class LearnReviewTests
     }
 
     [Fact]
-    public void AFewRepetitionQuestionsJoinEachRoundMostOverdueFirst()
+    public void RepetitionQuestionsAreMixedInAmongTheNewCardsMostOverdueFirst()
     {
         var cards = MakeCards(10);
         // c1…c6 mastered (c1 answered longest ago), c7…c10 new.
         var s = Create(cards, Mastered(cards.Take(6)));
-        Assert.Equal(["c3", "c4", "c5", "c6"], s.Review!.Due);
-        var reviews = s.Queue.Where(q => LearnEngine.IsReviewQuestion(q.Qid)).ToList();
-        Assert.Equal(new[] { "c1", "c2" }, reviews.Select(q => q.CardId).Order(StringComparer.Ordinal));
-        Assert.Equal(4 + 2, s.Queue.Count);
-        // Mastered cards are asked written, with options ready for a retry.
-        foreach (var q in reviews)
+        Assert.Equal(7, s.Queue.Count);
+        Assert.False(LearnEngine.IsFinished(s));
+        Assert.Equal(new LearnEngine.ReviewStats(0, 0, 6), LearnEngine.ReviewStatsOf(s));
+        // Planned repetition questions leave the due list; the rest waits, the most overdue first.
+        var planned = s.Queue.Where(q => LearnEngine.IsReviewQuestion(q.Qid)).Select(q => q.CardId).ToList();
+        Assert.Equal(new[] { "c1", "c2", "c3", "c4", "c5", "c6" }.Except(planned), s.Review!.Due);
+        // The whole session: every mastered card is asked once more, in that order, written, with options ready
+        // should it have to be asked as multiple choice; the new cards come in between.
+        var asked = new List<LearnQueueQuestion>();
+        double t = T0;
+        for (int round = 0; !LearnEngine.IsFinished(s) && round < 20; round++)
+        {
+            while (s.Queue.Count > 0)
+            {
+                asked.Add(s.Queue[0]);
+                s = LearnEngine.Answer(s, true, t += 1000);
+            }
+            s = LearnEngine.NextRound(s, cards, Rand.Mulberry32((uint)round + 10), t += 1000);
+        }
+        Assert.True(LearnEngine.IsFinished(s));
+        var reviews = asked.Where(q => LearnEngine.IsReviewQuestion(q.Qid)).ToList();
+        Assert.Equal(["c1", "c2", "c3", "c4", "c5", "c6"], reviews.Select(q => q.CardId));
+        Assert.All(reviews, q =>
         {
             Assert.Equal(QuestionType.Written, q.Type);
             Assert.NotNull(q.RetryChoices);
-            Assert.Equal($"1.3:{q.CardId}", q.Qid);
-        }
-        Assert.False(LearnEngine.IsFinished(s));
-        Assert.Equal(new LearnEngine.ReviewStats(0, 0, 6), LearnEngine.ReviewStatsOf(s));
+            Assert.Matches(@"^\d+\.3:c\d+$", q.Qid);
+        });
+        int firstNew = asked.FindIndex(q => !LearnEngine.IsReviewQuestion(q.Qid));
+        int lastReview = asked.FindLastIndex(q => LearnEngine.IsReviewQuestion(q.Qid));
+        Assert.True(firstNew < lastReview, "the repetition questions are mixed in among the new cards");
+        Assert.Equal(new LearnEngine.ReviewStats(6, 6, 0), LearnEngine.ReviewStatsOf(s));
     }
 
     [Fact]
@@ -151,12 +173,8 @@ public class LearnReviewTests
         Assert.Equal(0, s.Stage[first.CardId]);
         Assert.DoesNotContain(first.CardId, s.InitiallyMastered);
         Assert.False(s.Review!.Results[first.CardId]);
-        // Asked once more at the end of the round, as multiple choice.
-        var retry = s.Queue[^1];
-        Assert.Equal(first.CardId, retry.CardId);
-        Assert.Equal($"1.2:{first.CardId}", retry.Qid);
-        Assert.False(LearnEngine.IsReviewQuestion(retry.Qid));
-        Assert.Equal(QuestionType.Mc, retry.Type);
+        // No retry at the end of the round any more: it comes back later, as a card being learned.
+        Assert.DoesNotContain(s.Queue, q => q.CardId == first.CardId);
         Assert.Equal(5, LearnEngine.CountsOf(s).Mastered);
         // What the store records for it: no longer mastered.
         var recorded = Mastery.ApplyAnswer(progress[first.CardId], false, T0 + 1000);
@@ -177,13 +195,13 @@ public class LearnReviewTests
             first = false;
             return result;
         });
-        // The retry was right: stage 1, so the card comes back in the next round, written.
-        Assert.Equal(1, s.Stage[missed]);
+        // The miss sent it to stage 0; the next round learns it again: multiple choice, then written (the only card
+        // left, so it may come right after itself).
+        Assert.Equal(0, s.Stage[missed]);
         Assert.False(LearnEngine.IsFinished(s));
         s = LearnEngine.NextRound(s, cards, Rand.Mulberry32(9u), T0 + 60_000);
-        Assert.Equal([missed], s.Active);
-        Assert.Equal([missed], s.Queue.Select(q => q.CardId));
-        Assert.False(LearnEngine.IsReviewQuestion(s.Queue[0].Qid));
+        Assert.Equal([$"2.1:{missed}", $"2.1.2:{missed}"], s.Queue.Select(q => q.Qid));
+        Assert.Equal([QuestionType.Mc, QuestionType.Written], s.Queue.Select(q => q.Type));
         s = Play(s, _ => true, T0 + 60_000);
         Assert.True(LearnEngine.IsFinished(s));
         Assert.Equal(3, LearnEngine.FinalStatsOf(s).AlreadyMastered);
@@ -223,7 +241,8 @@ public class LearnReviewTests
         var cards = MakeCards(10);
         var s = Create(cards, Mastered(cards.Take(6)));
         s = LearnEngine.RemoveCard(s, "c3", T0 + 1000, cards.Where(c => c.Id != "c3").ToList());
-        Assert.Equal(["c4", "c5", "c6"], s.Review!.Due);
+        Assert.DoesNotContain("c3", s.Review!.Due);
+        Assert.DoesNotContain(s.Queue, q => q.CardId == "c3");
         s = LearnEngine.RemoveCard(s, "c1", T0 + 2000);
         Assert.DoesNotContain(s.Queue, q => q.CardId == "c1");
         Assert.Equal(4, LearnEngine.ReviewStatsOf(s)?.Left);
@@ -238,11 +257,23 @@ public class LearnReviewTests
         // c5 is answered wrong in Schreiben: no longer mastered.
         progress["c5"] = Mastery.ApplyAnswer(progress["c5"], false, T0 + 500);
         s = LearnEngine.SyncProgress(s, progress, T0 + 600);
-        s = Play(s, _ => true, T0 + 600);
-        s = LearnEngine.NextRound(s, cards, Rand.Mulberry32(5u), T0 + 60_000);
-        Assert.Contains("c5", s.Active);
-        Assert.DoesNotContain("c5", s.Review!.Due);
         Assert.DoesNotContain(s.Queue, q => q.CardId == "c5" && LearnEngine.IsReviewQuestion(q.Qid));
+        var asked = new List<string>();
+        double t = T0 + 600;
+        for (int round = 0; !LearnEngine.IsFinished(s) && round < 20; round++)
+        {
+            while (s.Queue.Count > 0)
+            {
+                asked.Add(s.Queue[0].Qid);
+                s = LearnEngine.Answer(s, true, t += 1000);
+            }
+            s = LearnEngine.NextRound(s, cards, Rand.Mulberry32((uint)round + 5), t += 1000);
+            Assert.DoesNotContain("c5", s.Review!.Due);
+        }
+        // Learned (multiple choice, then written) instead of repeated.
+        Assert.Equal(2, asked.Count(qid => qid.EndsWith(":c5", StringComparison.Ordinal)));
+        Assert.DoesNotContain(asked, qid => qid.EndsWith(":c5", StringComparison.Ordinal) && LearnEngine.IsReviewQuestion(qid));
+        Assert.True(LearnEngine.IsFinished(s));
     }
 
     [Fact]

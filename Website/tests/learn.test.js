@@ -18,8 +18,14 @@ import {
   matchesProgress,
   syncProgress,
   isReviewQuestion,
-  reviewsPerRound,
   reviewStats,
+  MIN_GAP,
+  MAX_WAIT,
+  MAX_REPEATS,
+  MAX_LEARNING,
+  RECHECK_GAP,
+  RECHECK_WAIT,
+  RECHECK_MIN_CARDS,
 } from '../src/core/learn.js';
 import { applyAnswer, applyOverride, cardStatus } from '../src/core/mastery.js';
 import { reviewLine } from '../src/screens/learn-model.js';
@@ -43,6 +49,7 @@ function mulberry32(seed) {
 const T0 = 1760000000000;
 const SEC = 1000;
 const MIN = 60 * SEC;
+const DAY_MS = 24 * 60 * MIN;
 const OPTS = { answerWith: 'term' };
 
 function makeCards(n) {
@@ -94,6 +101,87 @@ function planned(plan) {
   };
 }
 
+// Question ids: "<round>.<kind>[.<n>]:<cardId>", kind 1 = learning, 3 = repetition, 4 = recheck.
+const QID = /^(\d+)\.([134])(?:\.(\d+))?:(.*)$/;
+const kindOf = (qid) => Number(QID.exec(qid)[2]);
+const isRecheck = (qid) => kindOf(qid) === 4;
+
+// What nextPick sees when the question at the front of the queue is asked (equal to the plan as
+// long as every answer went as planned): open = cards still to learn + repetition questions and
+// rechecks still to ask, fresh = learning cards not asked yet in this session, inFlight =
+// learning cards asked before.
+function situation(s) {
+  const learning = s.order.filter((id) => s.stage[id] < 2);
+  const queued = (re) => s.queue.filter((q) => re(q.qid)).length;
+  const reviews = s.review ? s.review.due.filter((id) => s.stage[id] >= 2).length + queued((qid) => kindOf(qid) === 3) : 0;
+  const rechecks = s.recheck ? s.recheck.due.filter((id) => s.stage[id] >= 2).length + queued(isRecheck) : 0;
+  const asked = (id) => Object.prototype.hasOwnProperty.call(s.lastAt, id);
+  return {
+    open: learning.length + reviews + rechecks,
+    learning: learning.length,
+    fresh: learning.filter((id) => !asked(id)).length,
+    reviews,
+    inFlight: learning.filter(asked).length,
+    // Learning cards asked before and the number of other questions since their last answer.
+    waits: learning.filter(asked).map((id) => ({ id, wait: s.clock - s.lastAt[id] - 1 })),
+  };
+}
+
+// Plays a session to its end (nextRound between rounds); decide(question, state) → boolean,
+// overrideIf(state) → whether to correct the wrong answer just given. Returns the final state and
+// a log entry per answer: the question, the situation before it, `wait` (other questions since the
+// card's last answer, null for its first) and `repeatsBefore`.
+function playSession(state, cards, decide, { seed = 1, start = T0, max = 5000, overrideIf = null } = {}) {
+  const rng = mulberry32(seed);
+  let s = state;
+  let t = start;
+  const log = [];
+  while (!isFinished(s)) {
+    if (log.length > max) throw new Error('session did not end');
+    t += 3 * SEC;
+    if (isRoundOver(s)) {
+      s = nextRound(s, cards, rng, t);
+      continue;
+    }
+    const q = current(s);
+    const before = situation(s);
+    const asked = Object.prototype.hasOwnProperty.call(s.lastAt, q.cardId);
+    const ok = decide(q, s) === true;
+    const entry = { ...q, round: s.round, clock: s.clock, wait: asked ? s.clock - s.lastAt[q.cardId] - 1 : null, repeatsBefore: s.repeats, stageBefore: s.stage[q.cardId], correct: ok, ...before };
+    s = answer(s, ok, t);
+    if (!ok && overrideIf && overrideIf(s)) {
+      s = override(s, t + 1);
+      entry.overridden = true;
+    }
+    log.push(entry);
+  }
+  return { s: nextRound(s, cards, rng, t + MIN), log };
+}
+
+// A stored state with a hand-made spacing situation; nextRound plans its next round. Cards not in
+// `stage` are new (stage 0), cards not in `lastAt` were not asked in this session.
+function planFrom(cards, { stage = {}, lastAt = {}, clock = 0, repeats = 0, roundSize = 7, seed = 1, extra = {} } = {}) {
+  const order = cards.map((c) => c.id);
+  const raw = {
+    v: 1,
+    order,
+    stage: Object.fromEntries(order.map((id) => [id, stage[id] || 0])),
+    learn: { roundSize },
+    clock,
+    lastAt,
+    repeats,
+    queue: [],
+    roundLog: [],
+    answered: clock,
+    correct: clock,
+    ...extra,
+  };
+  return nextRound(raw, cards, mulberry32(seed), T0);
+}
+
+// Waits of n cards asked before: lastAt so that card i has waited waits[i] other questions at `clock`.
+const lastAtFor = (ids, waits, clock) => Object.fromEntries(ids.map((id, i) => [id, clock - 1 - waits[i]]));
+
 function checkChoices(q, cards) {
   const card = cards.find((c) => c.id === q.cardId);
   const correct = q.choices.filter((c) => c.cardId === q.cardId);
@@ -140,18 +228,25 @@ test('createLearn: state shape for a set of new cards', () => {
   expect(sorted(s.order)).toEqual(sorted(cards.map((c) => c.id)));
   expect(Object.values(s.stage)).toEqual(new Array(10).fill(0));
   expect(s.initiallyMastered).toEqual([]);
-  expect(s.active).toEqual(s.order.slice(0, 7));
   expect(s.round).toBe(1);
+  // The round's questions are planned at once: seven new cards, in session order.
   expect(s.queue).toHaveLength(7);
-  expect(sorted(s.queue.map((q) => q.cardId))).toEqual(sorted(s.active));
+  expect(s.queue.map((q) => q.cardId)).toEqual(s.order.slice(0, 7));
   for (const q of s.queue) {
     expect(q.qid).toBe(`1.1:${q.cardId}`);
     expect(q.type).toBe('mc');
     expect(q.ask).toBe('term');
     expect(q.choices).toHaveLength(4);
+    expect(q.retryChoices).toHaveLength(4);
     checkChoices(q, cards);
   }
-  expect(s.retried).toEqual({});
+  // Spacing: nothing answered yet.
+  expect(s.clock).toBe(0);
+  expect(s.lastAt).toEqual({});
+  expect(s.repeats).toBe(0);
+  // Fields of the engine before spacing (1.4) are gone; the options are opt-in.
+  for (const key of ['active', 'retried', 'review', 'recheck']) expect(key in s).toBe(false);
+  expect(Object.keys(s)).toEqual(['v', 'subset', 'answerWith', 'learn', 'order', 'stage', 'initiallyMastered', 'seen', 'round', 'queue', 'clock', 'lastAt', 'repeats', 'roundLog', 'rounds', 'answered', 'correct', 'misses', 'last', 'startedAt', 'updatedAt', 'finishedAt', 'elapsedMs']);
   expect(s.roundLog).toEqual([]);
   expect(s.rounds).toEqual([]);
   expect(s.answered).toBe(0);
@@ -185,7 +280,8 @@ test('createLearn: learn options are normalised; retype is a UI option only', ()
   const cards = makeCards(10);
   const s = createLearn(cards, { answerWith: 'term', learn: { roundSize: 3, mc: false, written: true, retype: true } }, { rng: mulberry32(1), now: T0 });
   expect(s.learn).toEqual({ roundSize: 3, mc: false, written: true });
-  expect(s.active).toHaveLength(3);
+  expect(s.queue).toHaveLength(3);
+  expect(s.queue.every((q) => q.type === 'written' && q.choices === undefined && q.retryChoices === undefined)).toBe(true);
   for (const bad of [0, -2, 'x', NaN, Infinity, null]) {
     const t = createLearn(cards, { learn: { roundSize: bad } }, { rng: mulberry32(1), now: T0 });
     expect(t.learn.roundSize).toBe(7);
@@ -214,8 +310,13 @@ test('createLearn: skips cards with an empty side, duplicate ids and junk', () =
   ];
   const s = createLearn(cards, OPTS, { rng: mulberry32(1), now: T0 });
   expect(sorted(s.order)).toEqual(['a', 'd']);
+  // Two open cards: each comes back after one other question (a d a d).
+  expect(s.queue.map((q) => q.cardId)).toEqual([...s.order, ...s.order]);
   // Only askable cards serve as options: "la rue" vs "calme".
-  for (const q of s.queue) expect(sorted(q.choices.map((c) => c.cardId))).toEqual(['a', 'd']);
+  for (const q of s.queue) {
+    if (q.type === 'mc') expect(sorted(q.choices.map((c) => c.cardId))).toEqual(['a', 'd']);
+    expect(sorted(q.retryChoices.map((c) => c.cardId))).toEqual(['a', 'd']);
+  }
   const empty = createLearn(null, OPTS, { now: T0 });
   expect(empty.order).toEqual([]);
   expect(isFinished(empty)).toBe(true);
@@ -233,32 +334,36 @@ test('stage initialisation from progress: mastered cards are counted but not ask
   expect(s.stage).toEqual({ ...Object.fromEntries(s.order.map((id) => [id, 0])), c1: 2, c2: 1, c4: 2 });
   expect(sorted(s.initiallyMastered)).toEqual(['c1', 'c4']);
   expect(s.initiallyMastered).toEqual(s.order.filter((id) => id === 'c1' || id === 'c4'));
-  expect(sorted(s.active)).toEqual(['c2', 'c3', 'c5', 'c6']);
-  expect(s.active[0]).toBe('c2'); // stage-1 cards first
+  expect(sorted([...new Set(s.queue.map((q) => q.cardId))])).toEqual(['c2', 'c3', 'c5', 'c6']);
+  expect(s.queue[0].cardId).toBe('c2'); // stage-1 cards first
   expect(s.queue.some((q) => q.cardId === 'c1' || q.cardId === 'c4')).toBe(false);
-  const byCard = Object.fromEntries(s.queue.map((q) => [q.cardId, q]));
+  // Every card's first question follows its stage.
+  const byCard = {};
+  for (const q of s.queue) if (!byCard[q.cardId]) byCard[q.cardId] = q;
   expect(byCard.c2.type).toBe('written');
   expect(byCard.c2.choices).toBe(undefined);
   expect(byCard.c3.type).toBe('mc');
   expect(byCard.c5.type).toBe('mc');
+  // Planned as if every answer were right: c2 is mastered with one question, the others need two.
+  expect(s.queue.filter((q) => q.cardId === 'c2')).toHaveLength(1);
   expect(counts(s)).toEqual({ fresh: 2, learning: 2, mastered: 2, total: 6, progress: 2 / 6 });
   expect(isFinished(s)).toBe(false);
 });
 
-test('the first batch takes stage-1 cards first, then stage-0 cards in order', () => {
+test('new cards come stage-1 cards first, then stage-0 cards in order', () => {
   const cards = makeCards(10);
   const progress = { c8: progressEntry(1), c9: progressEntry(1) };
   const s = createLearn(cards, { answerWith: 'term', learn: { roundSize: 4 } }, { progress, rng: mulberry32(11), now: T0 });
   const ones = s.order.filter((id) => id === 'c8' || id === 'c9');
   const zeros = s.order.filter((id) => id !== 'c8' && id !== 'c9');
-  expect(s.active).toEqual([...ones, ...zeros.slice(0, 2)]);
+  expect(s.queue.map((q) => q.cardId)).toEqual([...ones, ...zeros.slice(0, 2)]);
+  expect(s.queue.map((q) => q.type)).toEqual(['written', 'written', 'mc', 'mc']);
 });
 
 test('everything already mastered at start: nothing asked, finished, all counted', () => {
   const cards = makeCards(3);
   const progress = { c1: progressEntry(2), c2: progressEntry(3), c3: progressEntry(2) };
   const s = createLearn(cards, OPTS, { progress, rng: mulberry32(1), now: T0 });
-  expect(s.active).toEqual([]);
   expect(s.queue).toEqual([]);
   expect(current(s)).toBe(null);
   expect(isRoundOver(s)).toBe(true);
@@ -315,23 +420,30 @@ test('a new card is asked multiple choice, then written, and is mastered after b
   expect(s.stage[id]).toBe(1);
   expect(s.roundLog).toEqual([{ qid: `1.1:${id}`, cardId: id, type: 'mc', ask: 'term', correct: true, stageAfter: 1 }]);
   expect(s.last).toEqual({ qid: `1.1:${id}`, cardId: id, type: 'mc', ask: 'term', correct: true, stageBefore: 0 });
-  // One question per card per round: no second question for it now.
-  expect(s.queue.some((q) => q.cardId === id)).toBe(false);
+  expect(s.clock).toBe(1);
+  expect(s.lastAt).toEqual({ [id]: 0 });
+  // Six open cards: it comes back after the five others (min(10, open - 1)), written.
+  expect(s.queue.map((q) => q.cardId)).toEqual([...s.order.slice(1), id]);
+  const again = s.queue[5];
+  expect(again.qid).toBe(`1.1.2:${id}`);
+  expect(again.type).toBe('written');
+  expect(again.choices).toBe(undefined);
   s = playRound(s, () => true, T0 + 10 * SEC);
-  expect(Object.values(s.stage).every((st) => st === 1)).toBe(true);
-  expect(counts(s)).toEqual({ fresh: 0, learning: 6, mastered: 0, total: 6, progress: 0 });
+  expect(s.stage[id]).toBe(2);
+  expect(s.roundLog[6]).toEqual({ qid: `1.1.2:${id}`, cardId: id, type: 'written', ask: 'term', correct: true, stageAfter: 2 });
+  expect(counts(s)).toEqual({ fresh: 0, learning: 5, mastered: 1, total: 6, progress: 1 / 6 });
   s = nextRound(s, cards, mulberry32(3), T0 + MIN);
   expect(s.round).toBe(2);
-  expect(s.queue).toHaveLength(6);
+  // The other five come back written, the one asked longest ago first.
+  expect(s.queue.map((q) => q.cardId)).toEqual(s.order.slice(1));
   for (const q of s.queue) {
     expect(q.type).toBe('written');
     expect(q.choices).toBe(undefined);
     expect(q.qid).toBe(`2.1:${q.cardId}`);
   }
   s = playRound(s, () => true, T0 + MIN);
-  expect(s.stage[id]).toBe(2);
-  expect(s.roundLog.find((e) => e.cardId === id)).toEqual({ qid: `2.1:${id}`, cardId: id, type: 'written', ask: 'term', correct: true, stageAfter: 2 });
   expect(isFinished(s)).toBe(true);
+  expect(s.answered).toBe(12);
   expect(counts(s)).toEqual({ fresh: 0, learning: 0, mastered: 6, total: 6, progress: 1 });
 });
 
@@ -339,70 +451,49 @@ test('a wrong written answer sends the card back to multiple choice', () => {
   const cards = makeCards(5);
   const progress = Object.fromEntries(cards.map((c) => [c.id, progressEntry(1)]));
   let s = createLearn(cards, OPTS, { progress, rng: mulberry32(4), now: T0 });
+  // Planned as if every answer were right: one written question per card masters it.
+  expect(s.queue.map((q) => q.cardId)).toEqual(s.order);
   expect(s.queue.every((q) => q.type === 'written')).toBe(true);
   const id = current(s).cardId;
   s = answer(s, false, T0 + 10 * SEC);
   expect(s.stage[id]).toBe(0);
   expect(s.last).toEqual({ qid: `1.1:${id}`, cardId: id, type: 'written', ask: 'term', correct: false, stageBefore: 1 });
-  const retry = s.queue[s.queue.length - 1];
-  expect(retry.cardId).toBe(id);
-  expect(retry.qid).toBe(`1.2:${id}`);
-  expect(retry.type).toBe('mc');
-  expect(retry.ask).toBe('term');
-  checkChoices(retry, cards);
-  s = playRound(s, (q) => q.cardId !== id || q.type === 'mc', T0 + 10 * SEC);
-  // The retry (multiple choice) was answered correctly → stage 1 again.
-  expect(s.stage[id]).toBe(1);
-  expect(checkpoint(s).items.find((it) => it.cardId === id)).toEqual({ cardId: id, stage: 1, results: [false, true] });
+  // No retry at the end of the round.
+  expect(s.queue.some((q) => q.cardId === id)).toBe(false);
+  s = playRound(s, () => true, T0 + 10 * SEC);
+  expect(checkpoint(s).items.find((it) => it.cardId === id)).toEqual({ cardId: id, stage: 0, results: [false] });
   s = nextRound(s, cards, mulberry32(5), T0 + MIN);
-  expect(s.active).toEqual([id]);
-  expect(s.queue).toHaveLength(1);
-  expect(current(s).type).toBe('written');
+  // The only open card: multiple choice, then (nothing else to wait for) written right after.
+  expect(s.queue.map((q) => [q.qid, q.type])).toEqual([
+    [`2.1:${id}`, 'mc'],
+    [`2.1.2:${id}`, 'written'],
+  ]);
+  checkChoices(s.queue[0], cards);
   s = answer(s, true, T0 + MIN + 5 * SEC);
+  expect(s.stage[id]).toBe(1);
+  expect(isFinished(s)).toBe(false);
+  s = answer(s, true, T0 + MIN + 10 * SEC);
   expect(isFinished(s)).toBe(true);
 });
 
-test('a wrong answer is re-queued once at the end of the same round', () => {
-  const cards = makeCards(4);
+test('a wrong answer is not retried at the end of the round; the card comes back after the gap', () => {
+  const cards = makeCards(20);
   let s = createLearn(cards, OPTS, { rng: mulberry32(6), now: T0 });
-  const [id, ...rest] = s.queue.map((q) => q.cardId);
-  s = answer(s, false, T0 + 10 * SEC);
-  expect(s.queue.map((q) => q.cardId)).toEqual([...rest, id]);
-  expect(s.retried).toEqual({ [id]: true });
-  expect(s.misses).toEqual({ [id]: 1 });
-  s = answer(s, true, T0 + 20 * SEC);
-  s = answer(s, true, T0 + 30 * SEC);
-  s = answer(s, true, T0 + 40 * SEC);
-  expect(current(s).cardId).toBe(id);
-  expect(current(s).qid).toBe(`1.2:${id}`);
-  expect(current(s).type).toBe('mc');
-  // Wrong again: no further retry in this round.
-  s = answer(s, false, T0 + 50 * SEC);
-  expect(s.queue).toEqual([]);
-  expect(isRoundOver(s)).toBe(true);
-  expect(s.stage[id]).toBe(0);
-  expect(s.misses[id]).toBe(2);
-  expect(s.roundLog.filter((e) => e.cardId === id).map((e) => e.correct)).toEqual([false, false]);
-  // Answering past the end of the round changes nothing.
-  expect(snapshot(answer(s, true, T0 + MIN))).toBe(snapshot(s));
-});
-
-test('retries reset in the next round', () => {
-  const cards = makeCards(3);
-  let s = createLearn(cards, OPTS, { rng: mulberry32(7), now: T0 });
   const id = current(s).cardId;
-  s = playRound(s, (q) => q.cardId !== id, T0);
-  expect(s.retried).toEqual({ [id]: true });
-  s = nextRound(s, cards, mulberry32(8), T0 + MIN);
-  expect(s.retried).toEqual({});
-  expect(s.active[0]).toBe(id);
-  const q = s.queue.find((x) => x.cardId === id);
-  expect(q.type).toBe('mc');
-  expect(q.qid).toBe(`2.1:${id}`);
-  while (current(s).cardId !== id) s = answer(s, true, T0 + MIN + SEC);
-  s = answer(s, false, T0 + MIN + 2 * SEC);
-  expect(s.queue[s.queue.length - 1].qid).toBe(`2.2:${id}`);
-  expect(s.retried).toEqual({ [id]: true });
+  s = answer(s, false, T0 + SEC);
+  expect(s.misses).toEqual({ [id]: 1 });
+  expect(s.queue.map((q) => q.cardId)).toEqual(s.order.slice(1, 7));
+  const r = playRound(s, () => true, T0 + SEC);
+  expect(r.roundLog.filter((e) => e.cardId === id)).toHaveLength(1);
+  // Answering past the end of the round changes nothing.
+  expect(snapshot(answer(r, true, T0 + MIN))).toBe(snapshot(r));
+  const { log } = playSession(s, cards, () => true, { seed: 7 });
+  const back = log.find((e) => e.cardId === id);
+  expect(back.wait).toBeGreaterThanOrEqual(MIN_GAP);
+  expect(back.wait).toBeLessThanOrEqual(MAX_WAIT);
+  expect(back.round).toBeGreaterThan(1);
+  expect(back.qid).toBe(`${back.round}.1:${id}`);
+  expect(back.type).toBe('mc');
 });
 
 test('nextRound is a no-op while the round is still running', () => {
@@ -416,85 +507,75 @@ test('nextRound is a no-op while the round is still running', () => {
 
 // ---------- rounds ----------
 
-test('nextRound: mastered cards leave, then stage-1 cards refill before stage-0 cards in order', () => {
+test('nextRound: mastered cards leave, then new cards come, stage-1 cards before stage-0 cards in order', () => {
   const cards = makeCards(8);
   const progress = { c2: progressEntry(1), c4: progressEntry(1), c6: progressEntry(1), c8: progressEntry(1) };
   const opts = { answerWith: 'term', learn: { roundSize: 3 } };
   let s = createLearn(cards, opts, { progress, rng: mulberry32(4), now: T0 });
   const ones = s.order.filter((id) => progress[id]);
   const zeros = s.order.filter((id) => !progress[id]);
-  expect(s.active).toEqual(ones.slice(0, 3));
+  expect(s.queue.map((q) => q.cardId)).toEqual(ones.slice(0, 3));
   expect(s.queue.every((q) => q.type === 'written')).toBe(true);
   s = playRound(s, () => true, T0);
   expect(ones.slice(0, 3).every((id) => s.stage[id] === 2)).toBe(true);
   s = nextRound(s, cards, mulberry32(5), T0 + MIN);
   expect(s.round).toBe(2);
   expect(s.rounds).toEqual([{ round: 1, answered: 3, correct: 3, cardIds: ones.slice(0, 3) }]);
-  expect(s.active).toEqual([ones[3], zeros[0], zeros[1]]);
+  expect(s.queue.map((q) => q.cardId)).toEqual([ones[3], zeros[0], zeros[1]]);
   const types = Object.fromEntries(s.queue.map((q) => [q.cardId, q.type]));
   expect(types).toEqual({ [ones[3]]: 'written', [zeros[0]]: 'mc', [zeros[1]]: 'mc' });
 });
 
-test('nextRound: the batch keeps its unmastered cards', () => {
+test('nextRound: a missed card stays open and comes back once it waited its gap', () => {
   const cards = makeCards(8);
   const progress = { c2: progressEntry(1), c4: progressEntry(1), c6: progressEntry(1), c8: progressEntry(1) };
   let s = createLearn(cards, { answerWith: 'term', learn: { roundSize: 3 } }, { progress, rng: mulberry32(4), now: T0 });
   const ones = s.order.filter((id) => progress[id]);
   const zeros = s.order.filter((id) => !progress[id]);
   const keep = ones[1];
-  s = playRound(s, (q) => q.cardId !== keep, T0); // keep: wrong, retry wrong
+  s = playRound(s, (q) => q.cardId !== keep, T0);
   expect(s.stage[keep]).toBe(0);
+  expect(s.lastAt[keep]).toBe(1);
   s = nextRound(s, cards, mulberry32(5), T0 + MIN);
-  expect(s.active).toEqual([keep, ones[3], zeros[0]]);
-  expect(s.rounds[0]).toEqual({ round: 1, answered: 4, correct: 2, cardIds: ones.slice(0, 3) });
-  expect(s.queue.find((q) => q.cardId === keep).type).toBe('mc');
+  expect(s.rounds[0]).toEqual({ round: 1, answered: 3, correct: 2, cardIds: ones.slice(0, 3) });
+  // Six cards open: keep waits for five other questions, new cards come meanwhile.
+  expect(s.queue.map((q) => q.cardId)).toEqual([ones[3], zeros[0], zeros[1]]);
+  const { log } = playSession(s, cards, () => true, { seed: 6 });
+  const back = log.find((e) => e.cardId === keep);
+  expect(back.wait).toBeGreaterThanOrEqual(Math.min(MIN_GAP, back.open - 1));
+  expect(back.type).toBe('mc');
+  expect(log.filter((e) => e.cardId === keep).map((e) => e.type)).toEqual(['mc', 'written']);
 });
 
-test('each round asks one question per batch card in shuffled order', () => {
+test('the session order is shuffled once; new cards follow it', () => {
   const cards = makeCards(10);
   let differs = 0;
   for (let seed = 1; seed <= 30; seed++) {
     const s = createLearn(cards, OPTS, { rng: mulberry32(seed), now: T0 });
-    const asked = s.queue.map((q) => q.cardId);
-    expect(asked).toHaveLength(s.active.length);
-    expect(sorted(asked)).toEqual(sorted(s.active));
-    if (asked.join() !== s.active.join()) differs++;
+    expect(s.queue.map((q) => q.cardId)).toEqual(s.order.slice(0, 7));
+    if (s.order.join() !== cards.map((c) => c.id).join()) differs++;
   }
-  expect(differs).toBeGreaterThan(20);
+  expect(differs).toBeGreaterThan(25);
 });
 
-test('20 cards with roundSize 7, all answers correct: six rounds to finish', () => {
+test('20 cards with roundSize 7, all answers correct: every card twice, multiple choice then written', () => {
   const cards = makeCards(20);
-  let s = createLearn(cards, OPTS, { rng: mulberry32(8), now: T0 });
-  const order = s.order.slice();
-  const plan = [
-    { active: order.slice(0, 7), type: 'mc', after: { fresh: 13, learning: 7, mastered: 0 } },
-    { active: order.slice(0, 7), type: 'written', after: { fresh: 13, learning: 0, mastered: 7 } },
-    { active: order.slice(7, 14), type: 'mc', after: { fresh: 6, learning: 7, mastered: 7 } },
-    { active: order.slice(7, 14), type: 'written', after: { fresh: 6, learning: 0, mastered: 14 } },
-    { active: order.slice(14), type: 'mc', after: { fresh: 0, learning: 6, mastered: 14 } },
-    { active: order.slice(14), type: 'written', after: { fresh: 0, learning: 0, mastered: 20 } },
-  ];
-  let t = T0;
-  plan.forEach((p, i) => {
-    expect(s.round).toBe(i + 1);
-    expect(s.active).toEqual(p.active);
-    expect(sorted(s.queue.map((q) => q.cardId))).toEqual(sorted(p.active));
-    expect(s.queue.every((q) => q.type === p.type)).toBe(true);
-    s = playRound(s, () => true, t);
-    t += MIN;
-    const c = counts(s);
-    expect({ fresh: c.fresh, learning: c.learning, mastered: c.mastered }).toEqual(p.after);
-    if (i < plan.length - 1) {
-      expect(isFinished(s)).toBe(false);
-      s = nextRound(s, cards, mulberry32(100 + i), t);
-    }
-  });
-  expect(isFinished(s)).toBe(true);
-  s = nextRound(s, cards, mulberry32(1), t + MIN);
+  const s0 = createLearn(cards, OPTS, { rng: mulberry32(8), now: T0 });
+  const { s, log } = playSession(s0, cards, () => true, { seed: 100 });
+  expect(log).toHaveLength(40);
+  // New cards in session order.
+  expect(log.filter((e) => e.wait === null).map((e) => e.cardId)).toEqual(s0.order);
+  for (const id of s0.order) {
+    const mine = log.filter((e) => e.cardId === id);
+    expect(mine.map((e) => e.type)).toEqual(['mc', 'written']);
+    expect(mine[1].wait).toBeGreaterThanOrEqual(Math.min(MIN_GAP, mine[1].open - 1));
+    expect(mine[1].wait).toBeLessThanOrEqual(MAX_WAIT + 1);
+  }
   expect(s.rounds.map((r) => r.round)).toEqual([1, 2, 3, 4, 5, 6]);
-  expect(s.rounds.map((r) => r.answered)).toEqual([7, 7, 7, 7, 6, 6]);
-  expect(s.rounds.map((r) => r.cardIds)).toEqual(plan.map((p) => p.active));
+  expect(s.rounds.map((r) => r.answered)).toEqual([7, 7, 7, 7, 7, 5]);
+  expect(s.rounds.map((r) => r.correct)).toEqual([7, 7, 7, 7, 7, 5]);
+  // A round's cards in the order of their first answer in it.
+  for (const r of s.rounds) expect(r.cardIds).toEqual([...new Set(log.filter((e) => e.round === r.round).map((e) => e.cardId))]);
   const stats = finalStats(s);
   expect(stats.total).toBe(20);
   expect(stats.mastered).toBe(20);
@@ -512,25 +593,32 @@ test('20 cards with roundSize 7 and random mistakes: invariants hold until finis
     let t = T0;
     let rounds = 0;
     while (!isFinished(s)) {
-      if (rounds++ > 100) throw new Error(`seed ${seed}: did not finish`);
-      expect(s.active.length).toBeLessThanOrEqual(7);
-      expect(s.queue.length).toBe(s.active.length);
+      if (rounds++ > 200) throw new Error(`seed ${seed}: did not finish`);
+      expect(s.queue.length).toBeGreaterThan(0);
+      expect(s.queue.length).toBeLessThanOrEqual(7);
+      // Question ids: this round, learning, a card's n-th question in the round gets ".n".
+      const nth = {};
       for (const q of s.queue) {
-        expect(s.active).toContain(q.cardId);
-        expect(s.stage[q.cardId]).toBeLessThan(2);
-        expect(q.type).toBe(s.stage[q.cardId] === 0 ? 'mc' : 'written');
+        nth[q.cardId] = (nth[q.cardId] || 0) + 1;
+        const m = QID.exec(q.qid);
+        expect([Number(m[1]), m[2], m[3], m[4]]).toEqual([s.round, '1', nth[q.cardId] > 1 ? String(nth[q.cardId]) : undefined, q.cardId]);
       }
-      const asked = {};
       while (!isRoundOver(s)) {
         t += 4 * SEC;
         const q = current(s);
-        asked[q.cardId] = (asked[q.cardId] || 0) + 1;
+        expect(s.stage[q.cardId]).toBeLessThan(2);
+        expect(q.type).toBe(s.stage[q.cardId] === 0 ? 'mc' : 'written');
         if (q.type === 'mc') checkChoices(q, cards);
+        const before = s;
         s = answer(s, rng() < 0.7, t);
+        expect(s.clock).toBe(before.clock + 1);
+        expect(s.lastAt[q.cardId]).toBe(before.clock);
+        expect(s.repeats).toBe(q.cardId in before.lastAt ? before.repeats + 1 : 0);
         if (!s.last.correct && rng() < 0.15) s = override(s, t + SEC);
+        // Queued questions of the card follow its stage at once.
+        for (const x of s.queue) if (x.cardId === q.cardId) expect(x.type).toBe(s.stage[q.cardId] === 0 ? 'mc' : 'written');
       }
-      for (const k of Object.keys(asked)) expect(asked[k]).toBeLessThanOrEqual(2);
-      expect(s.roundLog.length).toBe(Object.values(asked).reduce((a, b) => a + b, 0));
+      expect(s.clock).toBe(s.answered);
       const missSum = Object.values(s.misses).reduce((a, b) => a + b, 0);
       expect(missSum).toBe(s.answered - s.correct);
       s = nextRound(s, cards, rng, t + SEC);
@@ -547,11 +635,14 @@ test('20 cards with roundSize 7 and random mistakes: invariants hold until finis
 
 test('finishing: finishedAt on the last answer, nextRound closes the final round once', () => {
   const cards = makeCards(2);
-  let s = createLearn(cards, OPTS, { rng: mulberry32(9), now: T0 });
-  s = playRound(s, () => true, T0); // both stage 1
-  s = nextRound(s, cards, mulberry32(1), T0 + MIN);
-  s = answer(s, true, T0 + MIN + 5 * SEC);
+  let s = createLearn(cards, { answerWith: 'term', learn: { roundSize: 3 } }, { rng: mulberry32(9), now: T0 });
+  const [a, b] = s.order;
+  // Two open cards: each comes back after one other question.
+  expect(s.queue.map((q) => q.qid)).toEqual([`1.1:${a}`, `1.1:${b}`, `1.1.2:${a}`]);
+  s = playRound(s, () => true, T0);
   expect(isFinished(s)).toBe(false);
+  s = nextRound(s, cards, mulberry32(1), T0 + MIN);
+  expect(s.queue.map((q) => q.qid)).toEqual([`2.1:${b}`]);
   s = answer(s, true, T0 + MIN + 10 * SEC);
   expect(isFinished(s)).toBe(true);
   expect(isRoundOver(s)).toBe(true);
@@ -560,15 +651,232 @@ test('finishing: finishedAt on the last answer, nextRound closes the final round
   const closed = nextRound(s, cards, mulberry32(1), T0 + 2 * MIN);
   expect(closed.round).toBe(2);
   expect(closed.rounds.map((r) => [r.round, r.answered, r.correct])).toEqual([
-    [1, 2, 2],
-    [2, 2, 2],
+    [1, 3, 3],
+    [2, 1, 1],
   ]);
   expect(closed.finishedAt).toBe(T0 + MIN + 10 * SEC);
   // The final round's checkpoint is still available.
   expect(checkpoint(closed).round).toBe(2);
-  expect(checkpoint(closed).answered).toBe(2);
+  expect(checkpoint(closed).answered).toBe(1);
   expect(snapshot(nextRound(closed, cards, mulberry32(1), T0 + 3 * MIN))).toBe(snapshot(closed));
   expect(finalStats(closed).rounds).toBe(2);
+});
+
+// ---------- spacing (Abstand) and the mix ----------
+
+test('spacing constants', () => {
+  expect([MIN_GAP, MAX_WAIT, MAX_REPEATS, MAX_LEARNING, RECHECK_GAP, RECHECK_WAIT, RECHECK_MIN_CARDS]).toEqual([10, 15, 3, 10, 30, 50, 60]);
+});
+
+test('spacing: with 11 or more open cards a card comes back after at least 10 other questions', () => {
+  const cards = makeCards(20);
+  // c1 was asked before and has waited `wait` questions; the 19 others are new.
+  let came = 0;
+  for (let wait = 0; wait <= MAX_WAIT; wait++) {
+    for (let seed = 1; seed <= 20; seed++) {
+      const s = planFrom(cards, { stage: { c1: 1 }, lastAt: lastAtFor(['c1'], [wait], 30), clock: 30, seed });
+      const at = s.queue.findIndex((q) => q.cardId === 'c1');
+      if (at >= 0) came++;
+      // Never before it waited MIN_GAP other questions (the ones planned before it count too).
+      expect(at === -1 || wait + at >= MIN_GAP).toBe(true);
+    }
+  }
+  expect(came).toBeGreaterThan(100);
+  // Played sessions, every answer right (the plan is what happens) or with mistakes.
+  let many = 0;
+  for (const [n, seed, p] of [[12, 1, 1], [20, 2, 1], [35, 3, 1], [30, 4, 0.7], [30, 5, 0.5]]) {
+    const d = mulberry32(seed + 50);
+    const { log } = playSession(createLearn(makeCards(n), OPTS, { rng: mulberry32(seed), now: T0 }), makeCards(n), () => d() < p, { seed });
+    const again = log.filter((e) => e.wait !== null);
+    many += again.filter((e) => e.open > MIN_GAP).length;
+    for (const e of again) {
+      if (e.open > MIN_GAP) expect(e.wait).toBeGreaterThanOrEqual(MIN_GAP);
+      if (p === 1) expect(e.wait).toBeGreaterThanOrEqual(e.open - 1 < MIN_GAP ? e.open - 1 : MIN_GAP);
+    }
+  }
+  expect(many).toBeGreaterThan(50);
+});
+
+test('spacing: with fewer open cards the gap shrinks to open - 1', () => {
+  // Three new cards: a b c a b c (two others in between), two cards alternate, one comes again at once.
+  for (const n of [1, 2, 3]) {
+    const s = createLearn(makeCards(n), OPTS, { rng: mulberry32(n), now: T0 });
+    expect(s.queue.map((q) => q.cardId)).toEqual([...s.order, ...s.order]);
+  }
+  // Four cards asked before, nothing new: each comes as soon as it waited (open - 1); as cards
+  // are mastered fewer are open, so the gaps shrink.
+  const four = makeCards(4);
+  const s4 = planFrom(four, { stage: { c1: 1, c2: 1, c3: 1, c4: 1 }, lastAt: { c1: 6, c2: 7, c3: 8, c4: 9 }, clock: 10 });
+  expect(s4.queue.map((q) => q.qid)).toEqual(['1.1:c1', '1.1:c2', '1.1:c3', '1.1:c4']);
+  // c1 waited only 2 of the 3 needed: the others come first.
+  const s5 = planFrom(four, { stage: { c1: 1, c2: 1, c3: 1, c4: 1 }, lastAt: { c4: 6, c1: 7, c2: 8, c3: 9 }, clock: 10 });
+  expect(s5.queue.map((q) => q.cardId)).toEqual(['c4', 'c1', 'c2', 'c3']);
+  // Five new cards, all answers right: every card again after exactly four others.
+  const { log } = playSession(createLearn(makeCards(5), OPTS, { rng: mulberry32(4), now: T0 }), makeCards(5), () => true);
+  expect(log.filter((e) => e.wait !== null).map((e) => e.wait)).toEqual([4, 4, 4, 4, 4]);
+});
+
+test('spacing: no card may come yet and nothing is new: the one waiting longest comes early', () => {
+  // Only possible with a repaired state (two cards answered at the same place).
+  const cards = makeCards(3);
+  const s = planFrom(cards, { stage: { c1: 1, c2: 1, c3: 1 }, lastAt: { c1: 9, c2: 9, c3: 8 }, clock: 10, roundSize: 1 });
+  // c3 waited 1, c1 and c2 0 of the 2 needed.
+  expect(s.queue.map((q) => q.cardId)).toEqual(['c3']);
+  const t = planFrom(cards, { stage: { c1: 1, c2: 1, c3: 1 }, lastAt: { c1: 9, c2: 9, c3: 9 }, clock: 10, roundSize: 1 });
+  // A tie goes to the card earlier in the session order.
+  expect(t.queue.map((q) => q.cardId)).toEqual(['c1']);
+});
+
+test('spacing: a waiting card comes for sure once it waited 15, the longest overdue first', () => {
+  const cards = makeCards(20);
+  // c1 and c2 asked before (c2 waited longer), all others new: no new card comes first.
+  for (let seed = 1; seed <= 20; seed++) {
+    const s = planFrom(cards, { stage: { c1: 1, c2: 1 }, lastAt: lastAtFor(['c1', 'c2'], [MAX_WAIT, MAX_WAIT + 1], 40), clock: 40, seed });
+    expect(s.queue.slice(0, 2).map((q) => q.cardId)).toEqual(['c2', 'c1']);
+    expect(s.queue.slice(2).every((q) => q.qid === `1.1:${q.cardId}` && q.cardId !== 'c1' && q.cardId !== 'c2')).toBe(true);
+  }
+  // In between, the chance grows with every question it waits: (wait - 9) in 6.
+  for (let wait = MIN_GAP; wait < MAX_WAIT; wait++) {
+    let hits = 0;
+    for (let seed = 1; seed <= 300; seed++) {
+      const s = planFrom(cards, { stage: { c1: 1 }, lastAt: lastAtFor(['c1'], [wait], 40), clock: 40, seed, roundSize: 1 });
+      if (s.queue[0].cardId === 'c1') hits++;
+    }
+    const want = (300 * (wait - MIN_GAP + 1)) / (MAX_WAIT - MIN_GAP + 1);
+    expect(Math.abs(hits - want)).toBeLessThan(35);
+  }
+  // Played sessions, every answer right: once a card waited 15 it is asked (the longest overdue
+  // first), unless a new card has to come after three repeats. So no card waits more than 16.
+  let checked = 0;
+  for (const [n, seed] of [[25, 1], [40, 2], [40, 3], [60, 4], [60, 5], [60, 6]]) {
+    const { log } = playSession(createLearn(makeCards(n), OPTS, { rng: mulberry32(seed), now: T0 }), makeCards(n), () => true, { seed });
+    for (const e of log) {
+      expect(e.wait === null || e.wait <= MAX_WAIT + 1).toBe(true);
+      const overdue = e.waits.filter((w) => w.wait >= MAX_WAIT);
+      if (!overdue.length) continue;
+      checked++;
+      if (e.wait === null) expect(e.repeatsBefore).toBeGreaterThanOrEqual(e.inFlight >= MAX_LEARNING ? 2 * MAX_REPEATS : MAX_REPEATS);
+      else expect(e.wait).toBe(Math.max(...overdue.map((w) => w.wait)));
+    }
+  }
+  expect(checked).toBeGreaterThan(10);
+});
+
+test('mix: at most 3 repeats in a row while there are new cards', () => {
+  const cards = makeCards(20);
+  const four = ['c1', 'c2', 'c3', 'c4'];
+  const base = { stage: Object.fromEntries(four.map((id) => [id, 1])), lastAt: lastAtFor(four, [18, 17, 16, 15], 40), clock: 40 };
+  // Four overdue cards: after three of them a new card comes first (c5: the first new one).
+  expect(planFrom(cards, base).queue.slice(0, 5).map((q) => q.cardId)).toEqual(['c1', 'c2', 'c3', 'c5', 'c4']);
+  // Three repeats before this round: a new card right away.
+  expect(planFrom(cards, { ...base, repeats: MAX_REPEATS }).queue.slice(0, 5).map((q) => q.cardId)).toEqual(['c5', 'c1', 'c2', 'c3', 'c6']);
+  // Without new cards repeats go on.
+  const old = cards.slice(0, 4);
+  expect(planFrom(old, { ...base, repeats: MAX_REPEATS }).queue.map((q) => q.cardId)).toEqual(four);
+  // Played sessions, also with mistakes: the runs of repeats while new cards are waiting.
+  for (const [p, seed] of [[1, 1], [1, 2], [0.8, 3], [0.6, 4]]) {
+    const d = mulberry32(seed + 70);
+    const { log } = playSession(createLearn(makeCards(30), OPTS, { rng: mulberry32(seed), now: T0 }), makeCards(30), () => d() < p, { seed });
+    let run = 0;
+    let longest = 0;
+    for (const e of log) {
+      run = e.wait === null ? 0 : run + 1;
+      expect(run).toBe(e.wait === null ? 0 : e.repeatsBefore + 1);
+      if (e.fresh > 0) {
+        expect(run).toBeLessThanOrEqual(e.inFlight >= MAX_LEARNING ? 2 * MAX_REPEATS : MAX_REPEATS);
+        if (e.inFlight < MAX_LEARNING) longest = Math.max(longest, run);
+      }
+    }
+    expect(longest).toBe(MAX_REPEATS);
+  }
+});
+
+test('mix: while 10 cards are being learned a new card comes only after 6 repeats', () => {
+  const cards = makeCards(20);
+  const ten = cards.slice(0, 10).map((c) => c.id);
+  const stage = Object.fromEntries(ten.map((id) => [id, 1]));
+  const base = { stage, lastAt: lastAtFor(ten, [19, 18, 17, 16, 15, 14, 13, 12, 11, 10], 40), clock: 40 };
+  // Full: after three repeats still a card being learned (the most overdue) …
+  expect(planFrom(cards, { ...base, repeats: MAX_REPEATS }).queue[0].cardId).toBe('c1');
+  expect(planFrom(cards, { ...base, repeats: 2 * MAX_REPEATS - 1 }).queue[0].cardId).toBe('c1');
+  // … after six a new one.
+  expect(planFrom(cards, { ...base, repeats: 2 * MAX_REPEATS }).queue[0].cardId).toBe('c11');
+  // A card that may come comes for sure (no chance for a new card); the one furthest past the gap.
+  const ready = { stage, lastAt: lastAtFor(ten, [11, 14, 12, 10, 13, 11, 14, 12, 10, 13], 40), clock: 40 };
+  for (let seed = 1; seed <= 20; seed++) expect(planFrom(cards, { ...ready, seed, roundSize: 1 }).queue[0].cardId).toBe('c2');
+  // With nine being learned the usual limit holds: after three repeats a new card.
+  const nine = ten.slice(0, 9);
+  const notFull = { stage: Object.fromEntries(nine.map((id) => [id, 1])), lastAt: lastAtFor(nine, [19, 18, 17, 16, 15, 14, 13, 12, 11], 40), clock: 40 };
+  expect(planFrom(cards, { ...notFull, repeats: MAX_REPEATS }).queue[0].cardId).toBe('c10');
+  // Played: every answer wrong for a while. With 10 or more cards being learned a new card comes
+  // only after six repeats (or when no card may come yet).
+  const n = 40;
+  let full = 0;
+  const { s, log } = playSession(createLearn(makeCards(n), OPTS, { rng: mulberry32(9), now: T0 }), makeCards(n), (q, st) => st.answered >= 150, { seed: 9 });
+  for (const e of log.slice(0, 150)) {
+    if (e.inFlight < MAX_LEARNING) continue;
+    full++;
+    if (e.wait !== null) continue;
+    const anyReady = e.waits.some((w) => w.wait >= Math.min(MIN_GAP, e.open - 1));
+    if (anyReady) expect(e.repeatsBefore).toBeGreaterThanOrEqual(2 * MAX_REPEATS);
+  }
+  expect(full).toBeGreaterThan(100);
+  // Fewer new cards started than without the limit (one in four).
+  expect(log.slice(0, 150).filter((e) => e.wait === null).length).toBeLessThan(150 / (MAX_REPEATS + 1));
+  expect(isFinished(s)).toBe(true);
+});
+
+test("a wrong answer: the card's later question in the round is asked as multiple choice at its place", () => {
+  const cards = makeCards(3);
+  let s = createLearn(cards, OPTS, { rng: mulberry32(5), now: T0 });
+  const [a, b, c] = s.order;
+  const plan = s.queue.map((q) => ({ ...q }));
+  expect(plan.map((q) => q.qid)).toEqual([`1.1:${a}`, `1.1:${b}`, `1.1:${c}`, `1.1.2:${a}`, `1.1.2:${b}`, `1.1.2:${c}`]);
+  expect(plan.map((q) => q.type)).toEqual(['mc', 'mc', 'mc', 'written', 'written', 'written']);
+  s = answer(s, false, T0 + SEC);
+  expect(s.queue.map((q) => q.qid)).toEqual(plan.slice(1).map((q) => q.qid));
+  expect(s.queue[2]).toEqual({ qid: `1.1.2:${a}`, cardId: a, type: 'mc', ask: 'term', choices: plan[3].retryChoices, retryChoices: plan[3].retryChoices });
+  checkChoices(s.queue[2], cards);
+  // "Ich hatte recht": back to written.
+  expect(override(s, T0 + 2 * SEC).queue[2]).toEqual(plan[3]);
+  // Right the second time: stage 1, so the card comes once more in a later round.
+  s = answer(s, true, T0 + 3 * SEC);
+  s = answer(s, true, T0 + 4 * SEC);
+  s = answer(s, true, T0 + 5 * SEC);
+  expect(s.stage[a]).toBe(1);
+  s = playRound(s, () => true, T0 + 5 * SEC);
+  expect([s.stage[b], s.stage[c]]).toEqual([2, 2]);
+  expect(isFinished(s)).toBe(false);
+  s = nextRound(s, cards, mulberry32(6), T0 + MIN);
+  expect(s.queue.map((q) => [q.qid, q.type])).toEqual([[`2.1:${a}`, 'written']]);
+});
+
+test('question ids: <round>.<kind>:<card>, a later question of the card in the round <round>.<kind>.<n>:<card>', () => {
+  const s = createLearn([{ id: 'solo', term: 'le soleil', definition: 'die Sonne' }], OPTS, { rng: mulberry32(1), now: T0 });
+  expect(s.queue.map((q) => q.qid)).toEqual(['1.1:solo', '1.1.2:solo']);
+  // Card ids may contain anything, also ':' and '.'.
+  const odd = [
+    { id: 'a:b', term: 'un', definition: 'eins' },
+    { id: '1.2', term: 'deux', definition: 'zwei' },
+  ];
+  const t = createLearn(odd, OPTS, { rng: mulberry32(1), now: T0 });
+  expect(sorted(t.queue.map((q) => q.qid))).toEqual(sorted(['1.1:a:b', '1.1:1.2', '1.1.2:a:b', '1.1.2:1.2']));
+  // In whole sessions: the round, the kind and the card's number in the round. The plan masters a
+  // card with two right answers, so a card has at most two questions in a round.
+  let most = 0;
+  for (const n of [2, 9]) {
+    const cards = makeCards(n);
+    const d = mulberry32(3);
+    const { log } = playSession(createLearn(cards, OPTS, { rng: mulberry32(2), now: T0 }), cards, () => d() < 0.5, { seed: 2 });
+    const nth = {};
+    for (const e of log) {
+      const key = `${e.round}/${e.cardId}`;
+      nth[key] = (nth[key] || 0) + 1;
+      expect(e.qid).toBe(nth[key] > 1 ? `${e.round}.1.${nth[key]}:${e.cardId}` : `${e.round}.1:${e.cardId}`);
+      most = Math.max(most, nth[key]);
+    }
+  }
+  expect(most).toBe(2);
 });
 
 // ---------- checkpoint, counts, finalStats ----------
@@ -576,7 +884,8 @@ test('finishing: finishedAt on the last answer, nextRound closes the final round
 test('checkpoint: per-card results in asked order and counts', () => {
   const cards = makeCards(3);
   let s = createLearn(cards, OPTS, { rng: mulberry32(6), now: T0 });
-  const [x, y, z] = s.queue.map((q) => q.cardId);
+  const [x, y, z] = s.order;
+  expect(s.queue.map((q) => q.cardId)).toEqual([x, y, z, x, y, z]);
   s = answer(s, true, T0 + SEC);
   s = answer(s, false, T0 + 2 * SEC);
   expect(checkpoint(s)).toEqual({
@@ -590,17 +899,19 @@ test('checkpoint: per-card results in asked order and counts', () => {
     counts: { fresh: 1, learning: 2, mastered: 0, total: 3 },
   });
   s = answer(s, true, T0 + 3 * SEC); // z
-  s = answer(s, true, T0 + 4 * SEC); // y retry
+  s = answer(s, true, T0 + 4 * SEC); // x again: mastered
+  expect(current(s)).toEqual({ ...current(s), qid: `1.1.2:${y}`, type: 'mc' }); // y again, multiple choice now
+  s = answer(s, true, T0 + 5 * SEC);
   expect(checkpoint(s)).toEqual({
     round: 1,
-    answered: 4,
-    correct: 3,
+    answered: 5,
+    correct: 4,
     items: [
-      { cardId: x, stage: 1, results: [true] },
+      { cardId: x, stage: 2, results: [true, true] },
       { cardId: y, stage: 1, results: [false, true] },
       { cardId: z, stage: 1, results: [true] },
     ],
-    counts: { fresh: 0, learning: 3, mastered: 0, total: 3 },
+    counts: { fresh: 0, learning: 2, mastered: 1, total: 3 },
   });
 });
 
@@ -623,19 +934,19 @@ test('counts: fresh means never answered (in this session or before)', () => {
 test('finalStats: accuracy, rounds, answered and hardest cards', () => {
   const cards = makeCards(3);
   let s = createLearn(cards, OPTS, { rng: mulberry32(13), now: T0 });
-  const [a, b, c] = s.queue.map((q) => q.cardId);
-  s = playRound(s, planned({ [a]: [false, false], [b]: [false, true], [c]: [true] }), T0);
+  const [a, b, c] = s.order;
+  expect(s.queue.map((q) => q.cardId)).toEqual([a, b, c, a, b, c]);
+  s = playRound(s, planned({ [a]: [false, false], [b]: [false, true], [c]: [true, true] }), T0);
+  expect([s.stage[a], s.stage[b], s.stage[c]]).toEqual([0, 1, 2]);
   s = nextRound(s, cards, mulberry32(1), T0 + MIN);
-  expect(sorted(s.active)).toEqual(sorted([a, b, c]));
-  s = playRound(s, () => true, T0 + MIN); // a → 1, b → 2, c → 2
-  s = nextRound(s, cards, mulberry32(1), T0 + 2 * MIN);
-  expect(s.active).toEqual([a]);
-  s = playRound(s, () => true, T0 + 2 * MIN);
+  // a waited longest, b is mastered by one more answer, then a again.
+  expect(s.queue.map((q) => q.cardId)).toEqual([a, b, a]);
+  s = playRound(s, () => true, T0 + MIN);
   expect(isFinished(s)).toBe(true);
   const stats = finalStats(s);
   expect(stats.total).toBe(3);
   expect(stats.mastered).toBe(3);
-  expect(stats.rounds).toBe(3);
+  expect(stats.rounds).toBe(2);
   expect(stats.answered).toBe(9);
   expect(stats.accuracy).toBe(6 / 9);
   expect(stats.hardest).toEqual([
@@ -648,12 +959,14 @@ test('finalStats: accuracy, rounds, answered and hardest cards', () => {
 
 test('finalStats: hardest ties keep the session order, max 10', () => {
   const cards = makeCards(12);
-  let s = createLearn(cards, { answerWith: 'term', learn: { roundSize: 12 } }, { rng: mulberry32(14), now: T0 });
+  // 11 questions: 11 new cards (the first one may come back only after 10 others).
+  let s = createLearn(cards, { answerWith: 'term', learn: { roundSize: 11 } }, { rng: mulberry32(14), now: T0 });
+  expect(s.queue.map((q) => q.cardId)).toEqual(s.order.slice(0, 11));
   s = playRound(s, () => false, T0);
   const stats = finalStats(s);
   expect(stats.hardest).toHaveLength(10);
-  expect(stats.hardest).toEqual(s.order.slice(0, 10).map((cardId) => ({ cardId, misses: 2 })));
-  expect(stats.answered).toBe(24);
+  expect(stats.hardest).toEqual(s.order.slice(0, 10).map((cardId) => ({ cardId, misses: 1 })));
+  expect(stats.answered).toBe(11);
   expect(stats.accuracy).toBe(0);
   expect(stats.rounds).toBe(1);
   expect(stats.mastered).toBe(0);
@@ -836,13 +1149,19 @@ test('buildChoices: odd input never throws', () => {
 
 // ---------- question types & flags ----------
 
-test('a 1-card set is written-only, its retry too', () => {
+test('a 1-card set is written-only and asked again right away', () => {
   const cards = [{ id: 'solo', term: 'le soleil', definition: 'die Sonne' }];
   let s = createLearn(cards, OPTS, { rng: mulberry32(1), now: T0 });
   expect(current(s)).toEqual({ qid: '1.1:solo', cardId: 'solo', type: 'written', ask: 'term' });
-  expect(s.queue[0].retryChoices).toBe(undefined);
+  expect(s.queue.map((q) => q.qid)).toEqual(['1.1:solo', '1.1.2:solo']);
+  expect(s.queue.every((q) => q.retryChoices === undefined)).toBe(true);
   s = answer(s, false, T0 + SEC);
-  expect(current(s)).toEqual({ qid: '1.2:solo', cardId: 'solo', type: 'written', ask: 'term' });
+  expect(current(s)).toEqual({ qid: '1.1.2:solo', cardId: 'solo', type: 'written', ask: 'term' });
+  s = answer(s, true, T0 + 2 * SEC);
+  expect(s.stage.solo).toBe(1);
+  s = nextRound(s, cards, mulberry32(2), T0 + 3 * SEC);
+  expect(current(s)).toEqual({ qid: '2.1:solo', cardId: 'solo', type: 'written', ask: 'term' });
+  expect(s.queue).toHaveLength(1);
 });
 
 test('multiple choice falls back to written without a valid distractor', () => {
@@ -852,20 +1171,24 @@ test('multiple choice falls back to written without a valid distractor', () => {
     { id: 'b', term: 'moche', definition: 'hässlich' },
   ];
   const s = createLearn(syn, OPTS, { rng: mulberry32(1), now: T0 });
-  expect(s.queue.map((q) => q.type)).toEqual(['written', 'written']);
+  expect(s.queue.map((q) => q.type)).toEqual(['written', 'written', 'written', 'written']);
   // Same answer text on both cards (distinct prompts): fewer than 2 distinct answers.
   const same = [
     { id: 'a', term: 'le visage', definition: 'das Gesicht' },
     { id: 'b', term: 'la figure', definition: 'das Gesicht' },
   ];
-  expect(createLearn(same, { answerWith: 'definition' }, { rng: mulberry32(1), now: T0 }).queue.map((q) => q.type)).toEqual(['written', 'written']);
+  expect(createLearn(same, { answerWith: 'definition' }, { rng: mulberry32(1), now: T0 }).queue.map((q) => q.type)).toEqual(['written', 'written', 'written', 'written']);
   // A third card with its own answer makes multiple choice possible again (2 options each).
   const three = [...same, { id: 'c', term: 'le nez', definition: 'die Nase' }];
   const s3 = createLearn(three, { answerWith: 'definition' }, { rng: mulberry32(1), now: T0 });
+  expect(s3.queue.map((q) => q.type)).toEqual(['mc', 'mc', 'mc', 'written', 'written', 'written']);
   for (const q of s3.queue) {
-    expect(q.type).toBe('mc');
-    expect(q.choices).toHaveLength(2);
-    checkChoices(q, three);
+    expect(q.retryChoices).toHaveLength(2);
+    checkChoices({ ...q, choices: q.retryChoices }, three);
+    if (q.type === 'mc') {
+      expect(q.choices).toHaveLength(2);
+      checkChoices(q, three);
+    }
   }
 });
 
@@ -922,7 +1245,7 @@ test('flag mc only: stage 1 is asked as multiple choice, mastered after two corr
   expect(current(solo).type).toBe('written');
 });
 
-test('flag written only: every question is written, retries too', () => {
+test('flag written only: every question is written, also after a wrong answer', () => {
   const cards = makeCards(5);
   let s = createLearn(cards, { answerWith: 'term', learn: { mc: false, written: true } }, { rng: mulberry32(5), now: T0 });
   for (const q of s.queue) {
@@ -931,7 +1254,7 @@ test('flag written only: every question is written, retries too', () => {
     expect(q.retryChoices).toBe(undefined);
   }
   s = answer(s, false, T0 + SEC);
-  expect(s.queue[s.queue.length - 1].type).toBe('written');
+  expect(s.queue.every((q) => q.type === 'written')).toBe(true);
   s = playRound(s, () => true, T0 + SEC);
   s = nextRound(s, cards, mulberry32(6), T0 + MIN);
   expect(s.queue.every((q) => q.type === 'written')).toBe(true);
@@ -941,25 +1264,33 @@ test('both flags (default): stage 0 multiple choice, stage 1 written', () => {
   const cards = makeCards(6);
   const progress = { c1: progressEntry(1), c2: progressEntry(1), c3: progressEntry(0, 0, 1) };
   const s = createLearn(cards, { answerWith: 'term', learn: { mc: true, written: true } }, { progress, rng: mulberry32(7), now: T0 });
-  for (const q of s.queue) expect(q.type).toBe(s.stage[q.cardId] === 1 ? 'written' : 'mc');
+  // The n-th question of a card in the round is planned at stage + n - 1.
+  const nth = {};
+  for (const q of s.queue) {
+    nth[q.cardId] = (nth[q.cardId] || 0) + 1;
+    expect(q.type).toBe(s.stage[q.cardId] + nth[q.cardId] - 1 === 1 ? 'written' : 'mc');
+  }
 });
 
 test('answerWith definition: the definition is asked, options are definitions', () => {
   const cards = makeCards(6);
   const s = createLearn(cards, { answerWith: 'definition' }, { rng: mulberry32(8), now: T0 });
+  expect(s.queue.filter((q) => q.type === 'mc')).toHaveLength(6);
   for (const q of s.queue) {
     expect(q.ask).toBe('definition');
+    expect(q.retryChoices.every((c) => c.text.startsWith('Begriff '))).toBe(true);
+    if (q.type !== 'mc') continue;
     expect(q.choices.every((c) => c.text.startsWith('Begriff '))).toBe(true);
     checkChoices(q, cards);
   }
 });
 
-test("answerWith 'both': ask is picked per question, options and retry follow it", () => {
+test("answerWith 'both': ask is picked per question, options follow it", () => {
   const cards = makeCards(8);
   const asks = { term: 0, definition: 0 };
   let mixed = 0;
   for (let seed = 1; seed <= 40; seed++) {
-    let s = createLearn(cards, { answerWith: 'both' }, { rng: mulberry32(seed), now: T0 });
+    const s = createLearn(cards, { answerWith: 'both' }, { rng: mulberry32(seed), now: T0 });
     expect(s.answerWith).toBe('both');
     const local = new Set();
     for (const q of s.queue) {
@@ -969,37 +1300,52 @@ test("answerWith 'both': ask is picked per question, options and retry follow it
       for (const c of q.retryChoices) expect(c.text).toBe(answerSide(cards.find((x) => x.id === c.cardId), q.ask));
     }
     if (local.size === 2) mixed++;
-    const first = current(s);
-    s = answer(s, false, T0 + SEC);
-    const retry = s.queue[s.queue.length - 1];
-    expect(retry.cardId).toBe(first.cardId);
-    expect(retry.ask).toBe(first.ask);
-    checkChoices(retry, cards);
   }
   expect(asks.term).toBeGreaterThan(100);
   expect(asks.definition).toBeGreaterThan(100);
   expect(mixed).toBeGreaterThan(30);
+  // A card's later question in the round has its own ask; after a wrong answer it is multiple
+  // choice with options for that ask.
+  const three = makeCards(3);
+  let otherAsk = 0;
+  for (let seed = 1; seed <= 20; seed++) {
+    let s = createLearn(three, { answerWith: 'both' }, { rng: mulberry32(seed), now: T0 });
+    const first = current(s);
+    s = answer(s, false, T0 + SEC);
+    const later = s.queue.find((q) => q.cardId === first.cardId);
+    expect(later.qid).toBe(`1.1.2:${first.cardId}`);
+    expect(later.type).toBe('mc');
+    checkChoices(later, three);
+    if (later.ask !== first.ask) otherAsk++;
+  }
+  expect(otherAsk).toBeGreaterThan(3);
 });
 
 // ---------- override ----------
 
-test('override: a wrong multiple-choice answer becomes correct and its retry is dropped', () => {
+test("override: a wrong multiple-choice answer becomes correct; the card's later question follows", () => {
   const cards = makeCards(5);
   let s = createLearn(cards, OPTS, { rng: mulberry32(3), now: T0 });
   const id = current(s).cardId;
+  const planned = s.queue.find((q) => q.qid === `1.1.2:${id}`);
+  expect(planned.type).toBe('written');
   s = answer(s, false, T0 + 10 * SEC);
-  expect(s.queue).toHaveLength(5);
+  expect(s.queue).toHaveLength(6);
+  // Wrong: its later question in this round turns multiple choice, with the options kept for it.
+  expect(s.queue.find((q) => q.cardId === id)).toEqual({ ...planned, type: 'mc', choices: planned.retryChoices });
   const o = override(s, T0 + 15 * SEC);
   expect(o.stage[id]).toBe(1);
-  expect(o.queue).toHaveLength(4);
-  expect(o.queue.some((q) => q.cardId === id)).toBe(false);
-  expect(o.retried).toEqual({});
+  expect(o.queue).toHaveLength(6);
+  expect(o.queue.find((q) => q.cardId === id)).toEqual(planned);
   expect(o.answered).toBe(1);
   expect(o.correct).toBe(1);
   expect(o.misses[id]).toBe(0);
   expect(o.roundLog).toEqual([{ qid: `1.1:${id}`, cardId: id, type: 'mc', ask: 'term', correct: true, stageAfter: 1 }]);
   expect(o.last).toEqual({ qid: `1.1:${id}`, cardId: id, type: 'mc', ask: 'term', correct: true, stageBefore: 0 });
   expect(o.updatedAt).toBe(T0 + 15 * SEC);
+  // The spacing stays: the answer was given at the same place.
+  expect(o.lastAt).toEqual(s.lastAt);
+  expect(o.clock).toBe(1);
   expect(counts(o)).toEqual({ fresh: 4, learning: 1, mastered: 0, total: 5, progress: 0 });
   expect(checkpoint(o).correct).toBe(1);
 });
@@ -1019,9 +1365,11 @@ test('override of a wrong written answer masters the card and can finish the ses
   const progress = { c1: progressEntry(2), c2: progressEntry(2), c3: progressEntry(1) };
   let s = createLearn(cards, OPTS, { progress, rng: mulberry32(5), now: T0 });
   expect(current(s)).toEqual({ qid: '1.1:c3', cardId: 'c3', type: 'written', ask: 'term' });
+  expect(s.queue).toHaveLength(1);
   s = answer(s, false, T0 + 10 * SEC);
   expect(s.stage.c3).toBe(0);
-  expect(current(s).type).toBe('mc'); // retry
+  expect(isRoundOver(s)).toBe(true);
+  expect(isFinished(s)).toBe(false);
   const o = override(s, T0 + 20 * SEC);
   expect(o.stage.c3).toBe(2);
   expect(o.queue).toEqual([]);
@@ -1043,15 +1391,18 @@ test('override is a no-op without a wrong last answer and after nextRound', () =
   expect(snapshot(override(n, T0 + MIN + SEC))).toBe(snapshot(n));
 });
 
-test('override of a retry answer keeps the retry flag', () => {
+test("override of a card's later answer corrects only that answer", () => {
   const cards = makeCards(3);
   let s = createLearn(cards, OPTS, { rng: mulberry32(8), now: T0 });
   const id = current(s).cardId;
-  s = playRound(s, (q) => q.cardId !== id, T0); // main wrong, retry wrong
-  expect(s.last.qid).toBe(`1.2:${id}`);
+  s = answer(s, false, T0 + SEC); // wrong
+  s = answer(s, true, T0 + 2 * SEC);
+  s = answer(s, true, T0 + 3 * SEC);
+  expect(current(s)).toEqual({ ...current(s), qid: `1.1.2:${id}`, type: 'mc' });
+  s = answer(s, false, T0 + 4 * SEC); // its second question, wrong again
+  expect(s.misses[id]).toBe(2);
   const o = override(s, T0 + MIN);
   expect(o.stage[id]).toBe(1);
-  expect(o.retried).toEqual({ [id]: true });
   expect(o.misses[id]).toBe(1);
   expect(o.roundLog.filter((e) => e.cardId === id).map((e) => [e.correct, e.stageAfter])).toEqual([
     [false, 0],
@@ -1066,20 +1417,21 @@ test('removeCard mid-round removes the card everywhere', () => {
   const cards = makeCards(6);
   let s = createLearn(cards, OPTS, { rng: mulberry32(2), now: T0 });
   const [a, b] = s.queue.map((q) => q.cardId);
-  s = answer(s, false, T0 + 10 * SEC); // a wrong → retry queued
+  expect(s.queue.map((q) => q.cardId)).toEqual([...s.order, a]);
+  s = answer(s, false, T0 + 10 * SEC); // a wrong
   s = answer(s, true, T0 + 20 * SEC); // b correct
   const r = removeCard(s, a, T0 + 30 * SEC);
   expect(r.order).not.toContain(a);
   expect(r.order).toHaveLength(5);
   expect(r.stage[a]).toBe(undefined);
-  expect(r.active).not.toContain(a);
+  expect(r.lastAt).toEqual({ [b]: 1 });
+  expect(r.clock).toBe(2);
   expect(r.queue.some((q) => q.cardId === a)).toBe(false);
   expect(r.queue).toHaveLength(4);
   for (const q of r.queue) {
     expect(q.choices.map((c) => c.cardId)).not.toContain(a);
     expect((q.retryChoices || []).map((c) => c.cardId)).not.toContain(a);
   }
-  expect(r.retried).toEqual({});
   expect(r.misses[a]).toBe(undefined);
   expect(r.roundLog.map((e) => e.cardId)).toEqual([b]);
   expect(r.answered).toBe(1);
@@ -1099,22 +1451,32 @@ test('removeCard of the current question moves on to the next one', () => {
   const [, second, third] = s.queue.map((q) => q.cardId);
   s = answer(s, true, T0 + SEC);
   expect(current(s).cardId).toBe(second);
+  const rest = s.queue.filter((q) => q.cardId !== second).map((q) => q.qid);
   s = removeCard(s, second, T0 + 2 * SEC);
   expect(current(s).cardId).toBe(third);
-  expect(s.queue).toHaveLength(2);
+  expect(s.queue.map((q) => q.qid)).toEqual(rest);
 });
 
 test('removeCard drops its option from other questions (mc becomes written below two)', () => {
   const cards = makeCards(3);
   let s = createLearn(cards, OPTS, { rng: mulberry32(4), now: T0 });
-  expect(s.queue.every((q) => q.choices.length === 3)).toBe(true);
-  const [x, y, z] = s.queue.map((q) => q.cardId);
+  const [x, y, z] = s.order;
+  expect(s.queue.map((q) => q.cardId)).toEqual([x, y, z, x, y, z]);
+  for (const q of s.queue) {
+    expect(q.retryChoices).toHaveLength(3);
+    if (q.type === 'mc') expect(q.choices).toHaveLength(3);
+  }
   s = removeCard(s, x, T0 + SEC);
-  expect(s.queue.every((q) => q.type === 'mc' && q.choices.length === 2)).toBe(true);
+  expect(s.queue.map((q) => q.cardId)).toEqual([y, z, y, z]);
+  expect(s.queue.map((q) => q.type)).toEqual(['mc', 'mc', 'written', 'written']);
+  for (const q of s.queue) {
+    expect(q.retryChoices).toHaveLength(2);
+    if (q.type === 'mc') expect(q.choices).toHaveLength(2);
+  }
   s = removeCard(s, y, T0 + 2 * SEC);
-  expect(s.queue).toHaveLength(1);
+  expect(s.queue.map((q) => q.qid)).toEqual([`1.1:${z}`, `1.1.2:${z}`]);
   expect(current(s)).toEqual({ qid: `1.1:${z}`, cardId: z, type: 'written', ask: 'term' });
-  expect(s.queue[0].retryChoices).toBe(undefined);
+  expect(s.queue.every((q) => q.retryChoices === undefined)).toBe(true);
   s = answer(s, false, T0 + 3 * SEC);
   expect(current(s).type).toBe('written');
 });
@@ -1123,7 +1485,7 @@ test('removeCard of the last open card finishes the session', () => {
   const cards = makeCards(3);
   const progress = { c1: progressEntry(2), c2: progressEntry(2) };
   let s = createLearn(cards, OPTS, { progress, rng: mulberry32(5), now: T0 });
-  expect(s.active).toEqual(['c3']);
+  expect(s.queue.map((q) => q.qid)).toEqual(['1.1:c3', '1.1.2:c3']);
   s = removeCard(s, 'c3', T0 + 5 * SEC);
   expect(isFinished(s)).toBe(true);
   expect(s.finishedAt).toBe(T0 + 5 * SEC);
@@ -1133,11 +1495,11 @@ test('removeCard of the last open card finishes the session', () => {
   // A round that lost every card before any answer: the session ends with the last closed round.
   const two = makeCards(2);
   let t = createLearn(two, { answerWith: 'term', learn: { roundSize: 1 } }, { progress: { c1: progressEntry(1) }, rng: mulberry32(6), now: T0 });
-  expect(t.active).toEqual(['c1']);
+  expect(t.queue.map((q) => q.cardId)).toEqual(['c1']);
   t = answer(t, true, T0 + SEC);
   t = nextRound(t, two, mulberry32(7), T0 + 2 * SEC);
   expect(t.round).toBe(2);
-  expect(t.active).toEqual(['c2']);
+  expect(t.queue.map((q) => q.cardId)).toEqual(['c2']);
   t = removeCard(t, 'c2', T0 + 3 * SEC);
   expect(isFinished(t)).toBe(true);
   expect(t.round).toBe(1);
@@ -1147,14 +1509,14 @@ test('removeCard of the last open card finishes the session', () => {
 
 test('nextRound drops scope cards that are missing from cards', () => {
   const cards = makeCards(4);
-  let s = createLearn(cards, OPTS, { rng: mulberry32(9), now: T0 });
+  let s = createLearn(cards, { answerWith: 'term', learn: { roundSize: 4 } }, { rng: mulberry32(9), now: T0 });
   s = playRound(s, () => true, T0);
   const gone = s.order[0];
   const left = cards.filter((c) => c.id !== gone);
   s = nextRound(s, left, mulberry32(10), T0 + MIN);
   expect(s.order).not.toContain(gone);
-  expect(s.active).not.toContain(gone);
-  expect(s.queue).toHaveLength(3);
+  expect(s.lastAt[gone]).toBe(undefined);
+  expect(s.queue.map((q) => q.cardId)).toEqual(s.order);
   for (const q of s.queue) expect(q.type).toBe('written');
   expect(s.rounds[0].cardIds).not.toContain(gone);
   expect(counts(s).total).toBe(3);
@@ -1180,7 +1542,7 @@ test('tick accumulates active time and ignores gaps longer than 5 minutes', () =
 
 test('answers advance the clock and it stops once finished', () => {
   const cards = [{ id: 'solo', term: 'le soleil', definition: 'die Sonne' }];
-  let s = createLearn(cards, OPTS, { rng: mulberry32(1), now: T0 });
+  let s = createLearn(cards, { answerWith: 'term', learn: { roundSize: 1 } }, { rng: mulberry32(1), now: T0 });
   s = answer(s, true, T0 + 12 * SEC);
   expect(s.elapsedMs).toBe(12 * SEC);
   expect(s.updatedAt).toBe(T0 + 12 * SEC);
@@ -1308,14 +1670,26 @@ test('defensive: a corrupt or partial state does not crash the engine', () => {
   expect(s.misses).toEqual({ a: 0 });
   expect(isFinished(s)).toBe(true);
   expect(s.finishedAt).toBe(T0);
-  // An open card that fell out of the batch is picked up again by nextRound.
+  expect('active' in s).toBe(false);
+  expect([s.clock, s.lastAt, s.repeats]).toEqual([1, { a: 0 }, 0]);
+  // An open card that fell out of the queue is planned again by nextRound.
   const stuck = { order: ['a'], stage: { a: 0 }, active: [], queue: [], round: 1 };
   expect(isRoundOver(stuck)).toBe(true);
   const refilled = nextRound(stuck, [{ id: 'a', term: 'oui', definition: 'ja' }], mulberry32(1), T0);
   expect(refilled.round).toBe(1);
   expect(refilled.rounds).toEqual([]);
-  expect(refilled.active).toEqual(['a']);
+  expect(refilled.queue.map((q) => q.qid)).toEqual(['1.1:a', '1.1.2:a']);
   expect(current(refilled)).toEqual({ qid: '1.1:a', cardId: 'a', type: 'written', ask: 'term' });
+  // Junk spacing fields are repaired: the answer count stands in for the clock, bad entries go.
+  for (const clock of [-3, 'x', 2.5, null, NaN]) expect(tick({ order: ['a'], answered: 4, clock }, NaN).clock).toBe(4);
+  expect(tick({ order: ['a'], answered: 4.7 }, NaN).clock).toBe(4);
+  expect(tick({ order: ['a'], answered: 4, clock: 9 }, NaN).clock).toBe(9);
+  const junk = tick({ order: ['a', 'b', 'c', 'd'], lastAt: { a: 3, b: -1, c: 'x', d: 1.5, ghost: 2 }, repeats: -2 }, NaN);
+  expect(junk.lastAt).toEqual({ a: 3 });
+  expect(junk.repeats).toBe(0);
+  for (const lastAt of [null, 'x', [3], 5]) expect(tick({ order: ['a'], lastAt }, NaN).lastAt).toEqual({});
+  for (const repeats of [1.5, 'x', null]) expect(tick({ order: ['a'], repeats }, NaN).repeats).toBe(0);
+  expect(tick({ order: ['a'], repeats: 4 }, NaN).repeats).toBe(4);
 });
 
 // ---------- removed options are refilled ----------
@@ -1358,13 +1732,16 @@ test('removeCard refill: never the removed or an emptied card, never a duplicate
   const emptied = cards.map((c) => (c.id === gone ? { ...c, definition: ' ' } : c));
   for (let seed = 1; seed <= 20; seed++) {
     const r = removeCard(s, gone, T0 + SEC, { cards: emptied, rng: mulberry32(seed) });
+    expect(r.queue.length).toBeGreaterThan(0);
     for (const q of r.queue) {
-      const ids = q.choices.map((c) => c.cardId);
-      expect(ids).not.toContain(gone);
-      expect(new Set(ids).size).toBe(ids.length);
-      // Five cards minus the removed one leave exactly four possible options.
-      expect(ids).toHaveLength(4);
-      expect(sorted(ids)).toEqual(sorted(cards.filter((c) => c.id !== gone).map((c) => c.id)));
+      for (const list of [q.choices, q.retryChoices].filter(Boolean)) {
+        const ids = list.map((c) => c.cardId);
+        expect(ids).not.toContain(gone);
+        expect(new Set(ids).size).toBe(ids.length);
+        // Five cards minus the removed one leave exactly four possible options.
+        expect(ids).toHaveLength(4);
+        expect(sorted(ids)).toEqual(sorted(cards.filter((c) => c.id !== gone).map((c) => c.id)));
+      }
     }
   }
   // Four cards: every option is in use, so removing one leaves three.
@@ -1372,7 +1749,7 @@ test('removeCard refill: never the removed or an emptied card, never a duplicate
   const t = createLearn(four, OPTS, { rng: mulberry32(24), now: T0 });
   const out = t.queue[0].choices.find((c) => c.cardId !== t.queue[0].cardId).cardId;
   const r = removeCard(t, out, T0 + SEC, { cards: four.filter((c) => c.id !== out), rng: mulberry32(25) });
-  expect(r.queue.every((q) => q.choices.length === 3)).toBe(true);
+  expect(r.queue.every((q) => q.retryChoices.length === 3 && (q.type !== 'mc' || q.choices.length === 3))).toBe(true);
 });
 
 test('removeCard refill skips synonyms and texts equal to a remaining option', () => {
@@ -1408,47 +1785,53 @@ function recorded(...results) {
 
 test('matchesProgress / syncProgress: Learn follows answers given in Write mode', () => {
   const cards = makeCards(6);
-  const progress = { c6: recorded(true) }; // familiar → written
+  const progress = { c5: recorded(true), c6: recorded(true) }; // familiar → written
   let s = createLearn(cards, OPTS, { progress, rng: mulberry32(31), now: T0 });
   expect(matchesProgress(s, progress)).toBe(true);
+  const ones = s.order.filter((id) => id === 'c5' || id === 'c6');
+  const zeros = s.order.filter((id) => !ones.includes(id));
+  expect(s.queue.map((q) => q.cardId)).toEqual([...ones, ...zeros, zeros[0]]);
   const first = current(s);
   s = answer(s, true, T0 + SEC);
-  progress[first.cardId] = recorded(true); // what Learn records itself
+  progress[first.cardId] = applyAnswer(progress[first.cardId], true, T0); // what Learn records itself
   expect(matchesProgress(s, progress)).toBe(true);
-  expect(s.stage[first.cardId]).toBe(1);
+  expect(s.stage[first.cardId]).toBe(2);
 
-  // Write: the card Learn just got right is answered wrong → back to multiple choice.
+  // Write: the card Learn just mastered is answered wrong → learned again (in a later round).
   progress[first.cardId] = applyAnswer(progress[first.cardId], false, T0);
   expect(matchesProgress(s, progress)).toBe(false);
   let r = syncProgress(s, progress, T0 + 2 * SEC);
   expect(r.stage[first.cardId]).toBe(0);
-  expect(counts(r).learning).toBe(counts(s).learning);
+  expect(counts(r).mastered).toBe(0);
+  expect(r.queue).toEqual(s.queue);
 
-  // Write: a queued multiple choice card is answered right → its question becomes written.
+  // Write: a queued multiple choice card is answered right → its questions become written.
   const mcQ = r.queue.find((q) => q.type === 'mc');
+  expect(mcQ.cardId).toBe(zeros[0]);
   progress[mcQ.cardId] = recorded(true);
   // Write: a queued written card (stage 1) is answered wrong → its question becomes multiple choice.
-  const wQ = r.queue.find((q) => q.cardId === 'c6');
+  const wQ = r.queue.find((q) => q.cardId === ones[1]);
   expect(wQ.type).toBe('written');
-  progress.c6 = applyAnswer(progress.c6, false, T0);
-  // Write: another queued card is mastered → it leaves the round and the batch.
+  progress[ones[1]] = applyAnswer(progress[ones[1]], false, T0);
+  // Write: another queued card is mastered → it leaves the round.
   const done = r.queue.find((q) => q.type === 'mc' && q.cardId !== mcQ.cardId);
   progress[done.cardId] = recorded(true, true);
   r = syncProgress(r, progress, T0 + 3 * SEC);
   expect(matchesProgress(r, progress)).toBe(true);
   const nowMc = r.queue.find((q) => q.qid === mcQ.qid);
   expect(nowMc).toEqual({ qid: mcQ.qid, cardId: mcQ.cardId, type: 'written', ask: mcQ.ask, retryChoices: mcQ.retryChoices });
+  expect(r.queue.filter((q) => q.cardId === mcQ.cardId).map((q) => q.type)).toEqual(['written', 'written']);
   const nowW = r.queue.find((q) => q.qid === wQ.qid);
   expect(nowW.type).toBe('mc');
   expect(nowW.choices).toEqual(wQ.retryChoices);
   checkChoices(nowW, cards);
   expect(r.queue.some((q) => q.cardId === done.cardId)).toBe(false);
-  expect(r.active).not.toContain(done.cardId);
   expect(r.stage[done.cardId]).toBe(2);
   expect(counts(r).mastered).toBe(1);
   // Nothing else changed, and a second sync is a no-op.
   expect(r.answered).toBe(1);
   expect(r.roundLog).toEqual(s.roundLog);
+  expect([r.clock, r.lastAt, r.repeats]).toEqual([s.clock, s.lastAt, s.repeats]);
   expect(snapshot(syncProgress(r, progress, T0 + 4 * SEC))).toBe(snapshot(r));
 
   // From here on Learn's own answers keep both in step.
@@ -1465,7 +1848,7 @@ test('syncProgress: a card mastered before the session but missed elsewhere is s
   const progress = { c1: recorded(true, true) };
   let s = createLearn(cards, OPTS, { progress, rng: mulberry32(32), now: T0 });
   expect(s.initiallyMastered).toEqual(['c1']);
-  expect(s.active).not.toContain('c1');
+  expect(s.queue.some((q) => q.cardId === 'c1')).toBe(false);
   progress.c1 = applyAnswer(progress.c1, false, T0);
   s = syncProgress(s, progress, T0 + SEC);
   expect(s.stage.c1).toBe(0);
@@ -1520,10 +1903,12 @@ test('syncProgress: a reset elsewhere makes the cards new again; overrides stay 
   s = override(s, T0 + 2 * SEC);
   progress[q.cardId] = applyOverride(progress[q.cardId]);
   expect(matchesProgress(s, progress)).toBe(true);
-  // The progress is reset in another tab.
+  expect(s.queue.filter((x) => x.cardId === q.cardId).map((x) => x.type)).toEqual(['written']);
+  // The progress is reset in another tab: its questions are multiple choice again.
   const r = syncProgress(s, {}, T0 + 3 * SEC);
   expect(counts(r)).toEqual({ fresh: 4, learning: 0, mastered: 0, total: 4, progress: 0 });
-  expect(r.queue.every((x) => x.type === 'mc')).toBe(true);
+  expect(r.queue.filter((x) => x.cardId === q.cardId).map((x) => x.type)).toEqual(['mc']);
+  expect(r.queue.filter((x) => QID.exec(x.qid)[3] === undefined).every((x) => x.type === 'mc')).toBe(true);
   expect(matchesProgress(r, null)).toBe(true);
 });
 
@@ -1584,17 +1969,13 @@ function playAll(state, decide, start = T0) {
 
 const reviewIds = (s) => s.queue.filter((q) => isReviewQuestion(q.qid)).map((q) => q.cardId);
 
-test('repetition questions are recognised by their id; reviewsPerRound is max(1, roundSize / 3)', () => {
+test('repetition questions are recognised by their id', () => {
   expect(isReviewQuestion('1.3:c1')).toBe(true);
   expect(isReviewQuestion('12.3:a:b')).toBe(true);
-  for (const qid of ['1.1:c1', '1.2:c1', '.3:c1', 'x.3:c1', '1.q3:c1', '13', '1.33:c1', '', null, undefined, 3]) {
+  expect(isReviewQuestion('2.3.2:c1')).toBe(true);
+  for (const qid of ['1.1:c1', '1.2:c1', '1.4:c1', '1.1.2:c1', '.3:c1', 'x.3:c1', '1.q3:c1', '13', '1.33:c1', '1.3.:c1', '', null, undefined, 3]) {
     expect(isReviewQuestion(qid)).toBe(false);
   }
-  expect(reviewsPerRound(7)).toBe(2);
-  expect(reviewsPerRound(5)).toBe(1);
-  expect(reviewsPerRound(1)).toBe(1);
-  expect(reviewsPerRound(15)).toBe(5);
-  expect(reviewsPerRound(undefined)).toBe(1);
 });
 
 test('review: without the option nothing changes (no key, no repetition, no stats)', () => {
@@ -1632,15 +2013,21 @@ test('review: everything mastered without the option is finished at once', () =>
   expect(s.queue).toEqual([]);
 });
 
-test('review: a few repetition questions join each round, the most overdue first', () => {
+test('review: repetition questions come among the new cards, the most overdue first', () => {
   const cards = makeCards(10);
-  // c1…c6 mastered (c1 answered longest ago), c7…c10 new.
+  const mastered = ['c1', 'c2', 'c3', 'c4', 'c5', 'c6'];
   const s = createReview(cards, { progress: masteredProgress(cards.slice(0, 6)) });
-  expect(s.review.due).toEqual(['c3', 'c4', 'c5', 'c6']);
   const reviews = s.queue.filter((q) => isReviewQuestion(q.qid));
-  expect(sorted(reviews.map((q) => q.cardId))).toEqual(['c1', 'c2']);
-  expect(s.queue).toHaveLength(4 + 2);
-  // Mastered cards are asked written, with options ready for a retry.
+  expect(reviews.length).toBeGreaterThan(0);
+  // c1 was answered longest ago: the most overdue come first, the rest wait in `due`.
+  expect(reviews.map((q) => q.cardId)).toEqual(mastered.slice(0, reviews.length));
+  expect(s.review.due).toEqual(mastered.slice(reviews.length));
+  expect(s.queue).toHaveLength(7);
+  // The other questions: the new cards in session order.
+  const learn = s.queue.filter((q) => !isReviewQuestion(q.qid));
+  const fresh = s.order.filter((id) => !mastered.includes(id));
+  expect(learn.filter((q) => q.qid === `1.1:${q.cardId}`).map((q) => q.cardId)).toEqual(fresh.slice(0, learn.filter((q) => q.qid === `1.1:${q.cardId}`).length));
+  // Mastered cards are asked written, with options ready in case they are learned again.
   for (const q of reviews) {
     expect(q.type).toBe('written');
     expect(Array.isArray(q.retryChoices)).toBe(true);
@@ -1648,6 +2035,24 @@ test('review: a few repetition questions join each round, the most overdue first
   }
   expect(isFinished(s)).toBe(false);
   expect(reviewStats(s)).toEqual({ asked: 0, kept: 0, left: 6 });
+});
+
+test('review: about every third new question is a repetition question while there are new cards too', () => {
+  const cards = makeCards(40);
+  const progress = masteredProgress(cards.slice(0, 20));
+  let reviews = 0;
+  let total = 0;
+  for (let seed = 1; seed <= 60; seed++) {
+    // The first round: 20 new and 20 mastered cards, nothing may come back yet.
+    const s = createReview(cards, { progress, seed });
+    for (const q of s.queue) {
+      total++;
+      if (isReviewQuestion(q.qid)) reviews++;
+      else expect(q.qid).toBe(`1.1:${q.cardId}`);
+    }
+  }
+  expect(reviews / total).toBeGreaterThan(0.25);
+  expect(reviews / total).toBeLessThan(0.42);
 });
 
 test('review: a whole round of repetition when everything is mastered', () => {
@@ -1693,22 +2098,27 @@ test('review: a missed repetition question sends the card back to learning', () 
   expect(s.stage[first.cardId]).toBe(0);
   expect(s.initiallyMastered).not.toContain(first.cardId);
   expect(s.review.results[first.cardId]).toBe(false);
-  // Asked once more at the end of the round, as multiple choice.
-  const retry = s.queue[s.queue.length - 1];
-  expect(retry.cardId).toBe(first.cardId);
-  expect(retry.qid).toBe(`1.2:${first.cardId}`);
-  expect(isReviewQuestion(retry.qid)).toBe(false);
-  expect(retry.type).toBe('mc');
+  // No retry at the end of the round: it is learned again once it waited its gap.
+  expect(s.queue.some((q) => q.cardId === first.cardId)).toBe(false);
   expect(counts(s).mastered).toBe(5);
   // What the store records for it: no longer mastered.
   const stored = applyAnswer(progress[first.cardId], false, T0 + SEC);
   expect(cardStatus(stored)).toBe('learning');
   expect(reviewStats(s)).toEqual({ asked: 1, kept: 0, left: 5 });
+  const { s: end, log } = playSession(s, cards, () => true, { seed: 9 });
+  const again = log.filter((e) => e.cardId === first.cardId);
+  expect(again.map((e) => [kindOf(e.qid), e.type])).toEqual([
+    [1, 'mc'],
+    [1, 'written'],
+  ]);
+  expect(again[0].wait).toBeGreaterThanOrEqual(Math.min(MIN_GAP, again[0].open - 1));
+  expect(reviewStats(end)).toEqual({ asked: 6, kept: 5, left: 0 });
 });
 
 test('review: a missed card is learned again until it is mastered', () => {
   const cards = makeCards(4);
   let s = createReview(cards, { progress: masteredProgress(cards), roundSize: 7 });
+  expect(s.queue.map((q) => q.qid)).toEqual(['1.3:c1', '1.3:c2', '1.3:c3', '1.3:c4']);
   const missed = current(s).cardId;
   let first = true;
   s = playAll(s, () => {
@@ -1716,13 +2126,14 @@ test('review: a missed card is learned again until it is mastered', () => {
     first = false;
     return ok;
   });
-  // The retry was right: stage 1, so the card comes back in the next round, written.
-  expect(s.stage[missed]).toBe(1);
+  expect(s.stage[missed]).toBe(0);
   expect(isFinished(s)).toBe(false);
   s = nextRound(s, cards, mulberry32(9), T0 + MIN);
-  expect(s.active).toEqual([missed]);
-  expect(s.queue.map((q) => q.cardId)).toEqual([missed]);
-  expect(isReviewQuestion(s.queue[0].qid)).toBe(false);
+  // The only open card: learned from the start, multiple choice then written.
+  expect(s.queue.map((q) => [q.qid, q.type])).toEqual([
+    [`2.1:${missed}`, 'mc'],
+    [`2.1.2:${missed}`, 'written'],
+  ]);
   s = playAll(s, () => true, T0 + MIN);
   expect(isFinished(s)).toBe(true);
   expect(finalStats(s).alreadyMastered).toBe(3);
@@ -1750,18 +2161,20 @@ test('review: only the first answer of a repetition question counts', () => {
   const q = current(s);
   s = answer(s, false, T0 + SEC);
   s = playAll(s, () => true, T0 + SEC);
+  s = nextRound(s, cards, mulberry32(4), T0 + MIN);
+  // Learned again with ordinary questions.
+  expect(s.queue.map((x) => x.qid)).toEqual([`2.1:${q.cardId}`, `2.1.2:${q.cardId}`]);
+  // Overriding a wrong answer to one of them leaves the result alone.
+  let t = answer(s, false, T0 + MIN + SEC);
+  t = override(t, T0 + MIN + 2 * SEC);
+  expect(t.stage[q.cardId]).toBe(1);
+  expect(t.review.results[q.cardId]).toBe(false);
+  expect(t.initiallyMastered).not.toContain(q.cardId);
+  // Right answers to them do not either.
+  s = playAll(s, () => true, T0 + MIN);
+  expect(isFinished(s)).toBe(true);
   expect(s.review.results[q.cardId]).toBe(false);
-  expect(reviewStats(s).kept).toBe(2);
-  // Overriding the retry (not the repetition question) leaves the result alone.
-  let t = createReview(cards, { progress: masteredProgress(cards), roundSize: 7, seed: 8 });
-  const r = current(t);
-  t = answer(t, false, T0 + SEC);
-  while (current(t).cardId !== r.cardId) t = answer(t, true, T0 + 2 * SEC);
-  expect(isReviewQuestion(current(t).qid)).toBe(false);
-  t = answer(t, false, T0 + 3 * SEC);
-  t = override(t, T0 + 4 * SEC);
-  expect(t.review.results[r.cardId]).toBe(false);
-  expect(t.initiallyMastered).not.toContain(r.cardId);
+  expect(reviewStats(s)).toEqual({ asked: 3, kept: 2, left: 0 });
 });
 
 test('review: a deleted card leaves the repetition', () => {
@@ -1788,18 +2201,25 @@ test('review: a card missed elsewhere is learned instead of repeated', () => {
   // c5 is answered wrong in Schreiben: no longer mastered.
   progress.c5 = applyAnswer(progress.c5, false, T0 + 500);
   s = syncProgress(s, progress, T0 + 600);
-  s = playAll(s, () => true, T0 + 600);
-  s = nextRound(s, cards, mulberry32(5), T0 + MIN);
-  expect(s.active).toContain('c5');
   expect(s.review.due).not.toContain('c5');
   expect(s.queue.some((q) => q.cardId === 'c5' && isReviewQuestion(q.qid))).toBe(false);
+  const { s: end, log } = playSession(s, cards, () => true, { seed: 5 });
+  const c5 = log.filter((e) => e.cardId === 'c5');
+  expect(c5.map((e) => [kindOf(e.qid), e.type])).toEqual([
+    [1, 'mc'],
+    [1, 'written'],
+  ]);
+  expect('c5' in end.review.results).toBe(false);
+  expect(reviewStats(end)).toEqual({ asked: 5, kept: 5, left: 0 });
 });
 
 test('review: a queued repetition question of a card missed elsewhere becomes an ordinary question', () => {
   const cards = makeCards(8);
   const progress = masteredProgress(cards.slice(0, 6));
   let s = createReview(cards, { progress });
-  const [id] = reviewIds(s);
+  const queued = reviewIds(s);
+  expect(queued.length).toBeGreaterThan(1);
+  const [id] = queued;
   const qid = s.queue.find((q) => q.cardId === id).qid;
   progress[id] = applyAnswer(progress[id], false, T0 + 500);
   s = syncProgress(s, progress, T0 + 600);
@@ -1812,7 +2232,8 @@ test('review: a queued repetition question of a card missed elsewhere becomes an
   expect(reviewStats(s).left).toBe(5);
   s = playAll(s, () => true, T0 + 600);
   expect(id in s.review.results).toBe(false);
-  expect(reviewStats(s)).toEqual({ asked: 1, kept: 1, left: 4 });
+  const n = queued.length - 1;
+  expect(reviewStats(s)).toEqual({ asked: n, kept: n, left: 5 - n });
 });
 
 test('review: resuming and reconciling keep the repetition questions and the missed card', () => {
@@ -1832,7 +2253,8 @@ test('review: resuming and reconciling keep the repetition questions and the mis
     expect(matchesProgress(s, progress)).toBe(true);
   }
   expect(s.review.results[missed]).toBe(false);
-  expect(s.stage[missed]).toBe(1); // missed, then right in the retry
+  expect(s.stage[missed]).toBe(0); // it comes back after the gap, not in this round
+  const asked = reviewStats(s).asked;
   // A reload: the stored JSON continues identically, nothing to reconcile.
   const stored = JSON.parse(JSON.stringify(s));
   expect(matchesProgress(stored, progress)).toBe(true);
@@ -1840,9 +2262,9 @@ test('review: resuming and reconciling keep the repetition questions and the mis
   const a = nextRound(s, cards, mulberry32(6), t + MIN);
   const b = nextRound(stored, cards, mulberry32(6), t + MIN);
   expect(snapshot(b)).toBe(snapshot(a));
-  expect(reviewIds(b)).toHaveLength(2);
-  expect(b.active).toContain(missed);
-  expect(reviewStats(b)).toEqual({ asked: 2, kept: 1, left: 3 });
+  expect(b.order).toContain(missed);
+  expect(b.queue.filter((q) => q.cardId === missed).every((q) => kindOf(q.qid) === 1)).toBe(true);
+  expect(reviewStats(b)).toEqual({ asked, kept: asked - 1, left: 5 - asked });
 });
 
 test('review: the repetition survives storage; junk is dropped on repair', () => {
@@ -1880,7 +2302,7 @@ test('review: a session over chosen cards ("Falsche lernen") repeats the mastere
   expect(sorted(s.order)).toEqual(['c2', 'c6', 'c7']);
   expect(s.initiallyMastered).toEqual(['c2']);
   expect(reviewIds(s)).toEqual(['c2']);
-  expect(sorted(s.active)).toEqual(['c6', 'c7']);
+  expect(sorted([...new Set(s.queue.filter((q) => !isReviewQuestion(q.qid)).map((q) => q.cardId))])).toEqual(['c6', 'c7']);
   // All mastered: still a session (the exam found them wrong), not the finished state.
   const all = createLearn(cards, OPTS, { subset: { cardIds: ['c1', 'c3'] }, progress, rng: mulberry32(12), now: T0, review: true });
   expect(isFinished(all)).toBe(false);
@@ -1901,6 +2323,509 @@ test('review: functions never mutate a review state', () => {
   removeCard(frozen, frozen.order[0], T0 + 2 * SEC, { cards, rng: mulberry32(1) });
   nextRound(playAll(frozen, () => true, T0 + 2 * SEC), cards, mulberry32(2), T0 + MIN);
   expect(snapshot(frozen)).toBe(before);
+});
+
+// ---------- rechecks (Nachkontrolle) ----------
+// Opt-in, only in sessions with more than 60 cards: a card answered wrong in the session is asked
+// once more 30–50 questions after it was mastered; wrong again, it is learned again.
+
+function createRecheck(n, { seed = 1, progress = {}, review = false, answerWith = 'term' } = {}) {
+  const cards = makeCards(n);
+  return { cards, s: createLearn(cards, { answerWith }, { progress, rng: mulberry32(seed), now: T0, recheck: true, review }) };
+}
+
+// decide() with the planned results for some cards (consumed in order); every other answer right.
+function scripted(plan) {
+  const left = {};
+  for (const k of Object.keys(plan)) left[k] = plan[k].slice();
+  return (q) => (left[q.cardId] && left[q.cardId].length ? left[q.cardId].shift() : true);
+}
+
+// Plays (with nextRound between rounds) until stop(question, state) holds for the current question;
+// keeps the progress the store would record. Returns { s, progress, t }.
+function playUntil(state, cards, stop, decide = () => true, { seed = 1, start = T0 } = {}) {
+  const rng = mulberry32(seed);
+  const progress = {};
+  let s = state;
+  let t = start;
+  for (let guard = 0; ; guard++) {
+    if (guard > 3000 || isFinished(s)) throw new Error('playUntil: never stopped');
+    t += SEC;
+    if (isRoundOver(s)) {
+      s = nextRound(s, cards, rng, t);
+      continue;
+    }
+    const q = current(s);
+    if (stop(q, s)) return { s, progress, t };
+    const ok = decide(q, s) === true;
+    s = answer(s, ok, t);
+    progress[q.cardId] = applyAnswer(progress[q.cardId], ok, t);
+  }
+}
+
+test('recheck: opt-in and only in sessions with more than 60 cards', () => {
+  const cards = makeCards(61);
+  expect('recheck' in createLearn(cards, OPTS, { rng: mulberry32(1), now: T0 })).toBe(false);
+  expect(createLearn(cards, OPTS, { rng: mulberry32(1), now: T0, recheck: true }).recheck).toEqual({ due: [] });
+  for (const recheck of ['yes', 1, {}]) expect('recheck' in createLearn(cards, OPTS, { rng: mulberry32(1), now: T0, recheck })).toBe(false);
+  expect('recheck' in createLearn(makeCards(60), OPTS, { rng: mulberry32(1), now: T0, recheck: true })).toBe(false);
+  // The cards in scope count, not the cards of the set.
+  expect('recheck' in createLearn(cards, OPTS, { subset: 'starred', rng: mulberry32(1), now: T0, recheck: true })).toBe(false);
+  // Otherwise the same session, rng draw for rng draw …
+  const plain = createLearn(cards, OPTS, { rng: mulberry32(2), now: T0 });
+  const on = createLearn(cards, OPTS, { rng: mulberry32(2), now: T0, recheck: true });
+  const { recheck, ...rest } = on;
+  expect(rest).toEqual(plain);
+  // … and without mistakes nothing is rechecked.
+  const a = playSession(plain, cards, () => true, { seed: 3 });
+  const b = playSession(on, cards, () => true, { seed: 3 });
+  expect(b.log.map((e) => e.qid)).toEqual(a.log.map((e) => e.qid));
+  expect(b.s.recheck).toEqual({ due: [] });
+  expect('recheck' in a.s).toBe(false);
+});
+
+test('recheck: a card answered wrong is asked once more 30–50 questions after it was mastered', () => {
+  const { cards, s: s0 } = createRecheck(70);
+  const x = s0.order[0];
+  let waiting = 0;
+  let rechecked = false;
+  const decide = scripted({ [x]: [false] });
+  const { s, log } = playSession(
+    s0,
+    cards,
+    (q, st) => {
+      if (q.cardId === x && isRecheck(q.qid)) rechecked = true;
+      if (st.stage[x] === 2 && !rechecked) {
+        // Mastered and waiting for its recheck: due, or queued.
+        expect(st.recheck.due.includes(x) || st.queue.some((y) => y.cardId === x && isRecheck(y.qid))).toBe(true);
+        expect(isFinished(st)).toBe(false);
+        waiting++;
+      }
+      return decide(q);
+    },
+    { seed: 2 },
+  );
+  const mine = log.filter((e) => e.cardId === x);
+  expect(mine.map((e) => [kindOf(e.qid), e.type, e.correct])).toEqual([
+    [1, 'mc', false],
+    [1, 'mc', true],
+    [1, 'written', true],
+    [4, 'written', true],
+  ]);
+  const check = mine[3];
+  expect(check.qid).toBe(`${check.round}.4:${x}`);
+  expect(check.stageBefore).toBe(2);
+  expect(check.wait).toBeGreaterThanOrEqual(RECHECK_GAP);
+  expect(check.wait).toBeLessThanOrEqual(RECHECK_WAIT);
+  expect(waiting).toBeGreaterThanOrEqual(RECHECK_GAP);
+  // Only that card is rechecked; the session ends normally.
+  expect(log.filter((e) => isRecheck(e.qid)).map((e) => e.cardId)).toEqual([x]);
+  expect(isFinished(s)).toBe(true);
+  expect(s.recheck).toEqual({ due: [] });
+  expect(s.stage[x]).toBe(2);
+  expect(finalStats(s).hardest).toEqual([{ cardId: x, misses: 1 }]);
+  // A recheck is no repetition question.
+  expect(isReviewQuestion(check.qid)).toBe(false);
+  expect(reviewStats(s)).toBe(null);
+});
+
+test('recheck: wrong again → learned again → after mastering it a new recheck', () => {
+  const { cards, s: s0 } = createRecheck(70, { seed: 4 });
+  const x = s0.order[1];
+  const { s, log } = playSession(s0, cards, scripted({ [x]: [false, true, true, false] }), { seed: 5 });
+  const mine = log.filter((e) => e.cardId === x);
+  expect(mine.map((e) => [kindOf(e.qid), e.type, e.correct])).toEqual([
+    [1, 'mc', false],
+    [1, 'mc', true],
+    [1, 'written', true],
+    [4, 'written', false],
+    [1, 'mc', true],
+    [1, 'written', true],
+    [4, 'written', true],
+  ]);
+  expect(mine[3].wait).toBeGreaterThanOrEqual(RECHECK_GAP);
+  expect(mine[3].wait).toBeLessThanOrEqual(RECHECK_WAIT);
+  // The second recheck: after the gap, or fewer when fewer cards are open.
+  expect(mine[6].wait).toBeGreaterThanOrEqual(Math.min(RECHECK_GAP, mine[6].open - 1));
+  // The learning questions after the wrong recheck keep the usual gap.
+  expect(mine[4].wait).toBeGreaterThanOrEqual(Math.min(MIN_GAP, mine[4].open - 1));
+  expect(s.misses[x]).toBe(2);
+  expect(isFinished(s)).toBe(true);
+});
+
+test('recheck: at the end of the session a recheck that would come within 10 questions is dropped', () => {
+  const { cards, s: s0 } = createRecheck(65, { seed: 7 });
+  const x = s0.order[64]; // the last new card
+  const { s, log } = playSession(s0, cards, scripted({ [x]: [false] }), { seed: 8 });
+  const mine = log.filter((e) => e.cardId === x);
+  // Missed, then mastered as the session's last answer: its recheck would come at once, so it goes.
+  expect(mine.map((e) => kindOf(e.qid))).toEqual([1, 1, 1]);
+  expect(log[log.length - 1]).toBe(mine[2]);
+  expect(isFinished(s)).toBe(true);
+  expect(s.recheck).toEqual({ due: [] });
+  expect(s.misses[x]).toBe(1);
+  // The session ends with that answer.
+  const { s: before, t } = playUntil(s0, cards, (q, st) => q.cardId === x && st.stage[x] === 1, scripted({ [x]: [false] }), { seed: 8 });
+  expect(counts(before).mastered).toBe(64);
+  const done = answer(before, true, t + SEC);
+  expect(done.recheck).toEqual({ due: [] });
+  expect(isFinished(done)).toBe(true);
+  expect(done.finishedAt).toBe(t + SEC);
+});
+
+// Everything mastered, rechecks of c2…c(k+1) queued, c1 mastered `wait` questions ago and waiting
+// for its recheck. syncProgress with matching progress changes nothing but checks for the end.
+function lateRecheck(k, { wait = 0, extraQueue = [], stage = {}, review = undefined } = {}) {
+  const cards = makeCards(k + 1);
+  const order = cards.map((c) => c.id);
+  const clock = 100;
+  const raw = {
+    v: 1,
+    order,
+    stage: Object.fromEntries(order.map((id) => [id, stage[id] === undefined ? 2 : stage[id]])),
+    seen: Object.fromEntries(order.map((id) => [id, true])),
+    clock,
+    answered: clock,
+    correct: clock - k - 1,
+    lastAt: Object.fromEntries(order.map((id, i) => [id, i === 0 ? clock - 1 - wait : clock - 40 - i])),
+    misses: Object.fromEntries(order.map((id) => [id, 1])),
+    queue: [...order.slice(1).map((id) => ({ qid: `9.4:${id}`, cardId: id, type: 'written', ask: 'term' })), ...extraQueue],
+    roundLog: [{ qid: '9.1:c1', cardId: 'c1', type: 'written', ask: 'term', correct: true, stageAfter: 2 }],
+    round: 9,
+    recheck: { due: ['c1'] },
+    updatedAt: T0,
+    startedAt: T0,
+  };
+  if (review) raw.review = review;
+  const progress = Object.fromEntries(order.map((id) => [id, stage[id] === 1 ? recorded(true) : recorded(true, true)]));
+  return { raw, cards, sync: (r = raw) => syncProgress(r, progress, T0 + SEC) };
+}
+
+test('recheck: dropped only when it would come within 10 questions of mastering, at the end', () => {
+  // Nine rechecks still ahead: c1's would come 9 questions after its answer → dropped.
+  const nine = lateRecheck(9);
+  expect(nine.sync().recheck).toEqual({ due: [] });
+  // Ten ahead: it waits long enough → kept, the session is not finished.
+  const kept = lateRecheck(10).sync();
+  expect(kept.recheck).toEqual({ due: ['c1'] });
+  expect(isFinished(kept)).toBe(false);
+  // Answered longer ago: kept too.
+  expect(lateRecheck(5, { wait: 5 }).sync().recheck).toEqual({ due: ['c1'] });
+  expect(lateRecheck(5, { wait: 4 }).sync().recheck).toEqual({ due: [] });
+  // Without a known last answer it counts as overdue.
+  const unknown = lateRecheck(0);
+  delete unknown.raw.lastAt.c1;
+  expect(unknown.sync().recheck).toEqual({ due: ['c1'] });
+  // Not at the end: a card still to learn, a learning question or a repetition question queued.
+  expect(lateRecheck(3, { stage: { c3: 1 } }).sync().recheck).toEqual({ due: ['c1'] });
+  expect(lateRecheck(3, { extraQueue: [{ qid: '9.1:c2', cardId: 'c2', type: 'written', ask: 'term' }] }).sync().recheck).toEqual({ due: ['c1'] });
+  expect(lateRecheck(3, { review: { due: ['c2'], results: {} } }).sync().recheck).toEqual({ due: ['c1'] });
+  // nextRound drops it before it checks for the end (nothing queued: nothing ahead).
+  const last = lateRecheck(0);
+  const n = nextRound({ ...last.raw, queue: [] }, last.cards, mulberry32(1), T0 + SEC);
+  expect(n.recheck).toEqual({ due: [] });
+  expect(isFinished(n)).toBe(true);
+  expect(n.queue).toEqual([]);
+  const later = lateRecheck(0, { wait: MIN_GAP });
+  const m = nextRound({ ...later.raw, queue: [] }, later.cards, mulberry32(1), T0 + SEC);
+  expect(m.queue.map((q) => q.qid)).toEqual(['10.4:c1']);
+  expect(isFinished(m)).toBe(false);
+  // A read (isFinished) does not drop it.
+  expect(isFinished(nine.raw)).toBe(false);
+});
+
+test('recheck: the gap is at least 10, also with few cards open (except at the end of a planned round)', () => {
+  // c1 mastered 5 questions ago and waiting for its recheck, c2 new: c2 twice, then nothing else
+  // is left in the plan and the recheck comes after only 7 (a planned recheck is not dropped).
+  const cards = makeCards(2);
+  for (let seed = 1; seed <= 40; seed++) {
+    const s = planFrom(cards, { stage: { c1: 2 }, lastAt: { c1: 4 }, clock: 10, seed, extra: { recheck: { due: ['c1'] }, misses: { c1: 1 } } });
+    expect(s.queue.map((q) => q.qid)).toEqual(['1.1:c2', '1.1.2:c2', '1.4:c1']);
+  }
+  // 12 cards (c1 mastered, 11 new): min = max(10, min(30, 11)) = 11. After 10 it may not come,
+  // after 11 with a chance of 1 in 40.
+  const twelve = makeCards(12);
+  const extra = { recheck: { due: ['c1'] }, misses: { c1: 1 } };
+  let came = 0;
+  for (let seed = 1; seed <= 200; seed++) {
+    const s10 = planFrom(twelve, { stage: { c1: 2 }, lastAt: { c1: 30 - 1 - 10 }, clock: 30, seed, roundSize: 1, extra });
+    expect(s10.queue[0].cardId).not.toBe('c1');
+    const s11 = planFrom(twelve, { stage: { c1: 2 }, lastAt: { c1: 30 - 1 - 11 }, clock: 30, seed, roundSize: 1, extra });
+    if (s11.queue[0].cardId === 'c1') came++;
+  }
+  expect(came).toBeGreaterThan(0);
+  expect(came).toBeLessThan(20);
+  // Three mastered cards waiting, nothing else (the end): c1, mastered 3 questions ago, is dropped
+  // by nextRound; the two others have waited 10 and come.
+  const three = makeCards(3);
+  const all = { stage: { c1: 2, c2: 2, c3: 2 }, clock: 20, extra: { recheck: { due: ['c1', 'c2', 'c3'] }, misses: { c1: 1, c2: 1, c3: 1 } } };
+  const end = planFrom(three, { ...all, lastAt: lastAtFor(['c1', 'c2', 'c3'], [3, 10, 12], 20) });
+  expect(end.queue.map((q) => q.qid)).toEqual(['1.4:c3', '1.4:c2']);
+  expect(end.recheck).toEqual({ due: [] });
+});
+
+test('spacing: waiting rechecks do not stretch the gap of the learning cards; repetition questions do', () => {
+  // Three cards to learn (asked before) and ten mastered cards waiting for their recheck.
+  const cards = makeCards(13);
+  const learn = ['c1', 'c2', 'c3'];
+  const mastered = cards.slice(3).map((c) => c.id);
+  const base = {
+    stage: { c1: 1, c2: 1, c3: 1, ...Object.fromEntries(mastered.map((id) => [id, 2])) },
+    lastAt: { ...lastAtFor(learn, [2, 1, 0], 40), ...lastAtFor(mastered, mastered.map(() => 5), 40) },
+    clock: 40,
+    roundSize: 3,
+  };
+  const rechecks = { recheck: { due: mastered }, misses: Object.fromEntries(mastered.map((id) => [id, 1])) };
+  // The gap is min(10, 3 - 1) = 2: c1 comes at once, then c2 and c3.
+  for (let seed = 1; seed <= 10; seed++) expect(planFrom(cards, { ...base, seed, extra: rechecks }).queue.map((q) => q.qid)).toEqual(['1.1:c1', '1.1:c2', '1.1:c3']);
+  // Ten repetition questions instead: 13 to learn or repeat, the gap is 10, so they come first.
+  const r = planFrom(cards, { ...base, extra: { review: { due: mastered, results: {} } } });
+  expect(r.queue.map((q) => q.qid)).toEqual(mastered.slice(0, 3).map((id) => `1.3:${id}`));
+});
+
+test('spacing: nothing may come and nothing is new: a learning card early, a recheck only without one', () => {
+  // c1 and c2 answered at the same place (repaired state): neither may come; c3 waits for its
+  // recheck (not ready either) and has waited longest – still c1 comes.
+  const cards = makeCards(3);
+  const s = planFrom(cards, { stage: { c1: 1, c2: 1, c3: 2 }, lastAt: { c1: 9, c2: 9, c3: 4 }, clock: 10, roundSize: 1, extra: { recheck: { due: ['c3'] }, misses: { c3: 1 } } });
+  expect(s.queue.map((q) => q.qid)).toEqual(['1.1:c1']);
+  // Only rechecks waiting, none ready, a repetition question still to come later: the recheck
+  // waiting longest comes (the repetition question is new, so only once it is planned).
+  const t = planFrom(cards, {
+    stage: { c1: 2, c2: 2, c3: 2 },
+    lastAt: { c1: 9, c2: 3 },
+    clock: 12,
+    roundSize: 2,
+    extra: { recheck: { due: ['c1', 'c2'] }, misses: { c1: 1, c2: 1 }, review: { due: ['c3'], results: {} } },
+  });
+  expect(t.queue.map((q) => q.qid)).toEqual(['1.3:c3', '1.4:c2']);
+});
+
+test('recheck: "Ich hatte recht"', () => {
+  const { cards, s: s0 } = createRecheck(70, { seed: 6 });
+  const [x, y] = s0.order;
+  // A wrong recheck answer overridden: still mastered, rechecked, no further recheck.
+  let { s } = playUntil(s0, cards, (q) => q.cardId === x && isRecheck(q.qid), scripted({ [x]: [false] }), { seed: 1 });
+  s = answer(s, false, T0 + DAY_MS);
+  expect(s.stage[x]).toBe(0);
+  expect(s.misses[x]).toBe(2);
+  s = override(s, T0 + DAY_MS + SEC);
+  expect(s.stage[x]).toBe(2);
+  expect(s.misses[x]).toBe(1);
+  expect(s.recheck.due).not.toContain(x);
+  expect(s.queue.some((q) => q.cardId === x)).toBe(false);
+  const rest = playSession(s, cards, () => true, { seed: 2, start: T0 + DAY_MS + MIN });
+  expect(rest.log.some((e) => e.cardId === x)).toBe(false);
+  expect(isFinished(rest.s)).toBe(true);
+  // The answer that masters a card missed before, overridden: the recheck is noted.
+  ({ s } = playUntil(s0, cards, (q, st) => q.cardId === x && st.stage[x] === 1, scripted({ [x]: [false] }), { seed: 1 }));
+  s = answer(s, false, T0 + DAY_MS);
+  expect(s.recheck.due).not.toContain(x);
+  s = override(s, T0 + DAY_MS + SEC);
+  expect(s.stage[x]).toBe(2);
+  expect(s.misses[x]).toBe(1);
+  expect(s.recheck.due).toEqual([x]);
+  // A miss overridden right away leaves nothing to recheck.
+  const first = playUntil(s0, cards, (q) => q.cardId === y, () => true, { seed: 1 });
+  s = override(answer(first.s, false, T0 + DAY_MS), T0 + DAY_MS + SEC);
+  expect(s.misses[y]).toBe(0);
+  const done = playSession(s, cards, () => true, { seed: 3, start: T0 + DAY_MS + MIN });
+  expect(done.log.some((e) => isRecheck(e.qid))).toBe(false);
+  expect(done.s.recheck).toEqual({ due: [] });
+});
+
+test('recheck: removeCard and syncProgress', () => {
+  const { cards, s: s0 } = createRecheck(70, { seed: 9 });
+  const x = s0.order[0];
+  const waitingFor = playUntil(s0, cards, (q, st) => st.recheck.due.includes(x), scripted({ [x]: [false] }), { seed: 1 });
+  let s = waitingFor.s;
+  expect(s.stage[x]).toBe(2);
+  // Deleted: it leaves the rechecks.
+  const r = removeCard(s, x, T0 + DAY_MS, { cards: cards.filter((c) => c.id !== x), rng: mulberry32(1) });
+  expect(r.recheck).toEqual({ due: [] });
+  expect(r.order).not.toContain(x);
+  // Missed elsewhere: it leaves the rechecks and is learned again (a miss of this session is
+  // still counted, so after mastering it again it is rechecked).
+  const progress = { ...waitingFor.progress };
+  progress[x] = applyAnswer(progress[x], false, T0);
+  expect(matchesProgress(s, waitingFor.progress)).toBe(true);
+  s = syncProgress(s, progress, T0 + DAY_MS);
+  expect(s.stage[x]).toBe(0);
+  expect(s.recheck.due).not.toContain(x);
+  const after = playSession(s, cards, () => true, { seed: 2, start: T0 + DAY_MS });
+  expect(after.log.filter((e) => e.cardId === x).map((e) => kindOf(e.qid))).toEqual([1, 1, 4]);
+  // A queued recheck of a card missed elsewhere becomes an ordinary question at its place.
+  const queued = playUntil(s0, cards, (q, st) => st.queue.some((y) => y.cardId === x && isRecheck(y.qid)), scripted({ [x]: [false] }), { seed: 1 });
+  const qBefore = queued.s.queue.find((y) => y.cardId === x);
+  const p2 = { ...queued.progress, [x]: applyAnswer(queued.progress[x], false, T0) };
+  const synced = syncProgress(queued.s, p2, T0 + DAY_MS);
+  const qAfter = synced.queue.find((y) => y.cardId === x);
+  expect(qAfter.qid).toBe(qBefore.qid.replace('.4', '.1'));
+  expect(qAfter.type).toBe('mc');
+  expect(synced.queue.map((y) => y.cardId)).toEqual(queued.s.queue.map((y) => y.cardId));
+  // Mastered elsewhere without a miss in this session: nothing to recheck.
+  expect(syncProgress(s0, { [x]: recorded(true, true) }, T0).recheck).toEqual({ due: [] });
+});
+
+test('recheck: survives storage; junk is dropped on repair', () => {
+  const { cards, s: s0 } = createRecheck(70, { seed: 9 });
+  const x = s0.order[0];
+  const { s } = playUntil(s0, cards, (q, st) => st.recheck.due.includes(x), scripted({ [x]: [false] }), { seed: 1 });
+  const json = JSON.parse(JSON.stringify(s));
+  expect(json).toEqual(s);
+  expect(tick(json, NaN)).toEqual(s);
+  const repaired = tick({ ...json, recheck: { due: [x, 'zz', 7, x, null] } }, NaN);
+  expect(repaired.recheck).toEqual({ due: [x] });
+  expect(tick({ ...json, recheck: {} }, NaN).recheck).toEqual({ due: [] });
+  for (const junk of [null, [], 'x', 3, true]) expect('recheck' in tick({ ...json, recheck: junk }, NaN)).toBe(false);
+  // Recheck questions are recognised by their kind (4) when the state is read.
+  const q = { qid: `3.4:${x}`, cardId: x, type: 'written', ask: 'term' };
+  const withQ = tick({ ...json, queue: [q, ...json.queue], recheck: { due: [] } }, NaN);
+  expect(isFinished({ ...withQ, order: [x], stage: { [x]: 2 } })).toBe(false);
+  expect(isFinished({ ...withQ, order: [x], stage: { [x]: 2 }, queue: [] })).toBe(true);
+});
+
+test('recheck: functions never mutate a recheck state', () => {
+  const { cards, s: s0 } = createRecheck(70, { seed: 9 });
+  const x = s0.order[0];
+  const { s } = playUntil(s0, cards, (q, st) => st.queue.some((y) => y.cardId === x && isRecheck(y.qid)), scripted({ [x]: [false] }), { seed: 1 });
+  const frozen = deepFreeze(JSON.parse(JSON.stringify(s)));
+  const before = snapshot(frozen);
+  answer(frozen, false, T0 + DAY_MS);
+  override(answer(frozen, false, T0 + DAY_MS), T0 + DAY_MS);
+  syncProgress(frozen, deepFreeze({}), T0 + DAY_MS);
+  removeCard(frozen, x, T0 + DAY_MS, { cards, rng: mulberry32(1) });
+  nextRound(playAll(frozen, () => false, T0 + DAY_MS), cards, mulberry32(2), T0 + DAY_MS);
+  expect(snapshot(frozen)).toBe(before);
+});
+
+// ---------- stored sessions and determinism ----------
+
+// A session stored by 1.3 (before spacing): `active` batch, `retried`, a retry "1.2:c1" queued at
+// the end of the round, no clock or lastAt. 5 cards, roundSize 3, c2 familiar; c1 answered wrong,
+// c3 right.
+const OLD_STATE = {
+  v: 1,
+  subset: 'all',
+  answerWith: 'term',
+  learn: { roundSize: 3, mc: true, written: true },
+  order: ['c3', 'c2', 'c1', 'c5', 'c4'],
+  stage: { c3: 1, c2: 1, c1: 0, c5: 0, c4: 0 },
+  initiallyMastered: [],
+  seen: { c2: true, c1: true, c3: true },
+  active: ['c2', 'c3', 'c1'],
+  round: 1,
+  queue: [
+    { qid: '1.1:c2', cardId: 'c2', type: 'written', ask: 'term', retryChoices: [{ cardId: 'c2', text: 'terme 2' }, { cardId: 'c5', text: 'terme 5' }, { cardId: 'c1', text: 'terme 1' }, { cardId: 'c4', text: 'terme 4' }] },
+    { qid: '1.2:c1', cardId: 'c1', type: 'mc', ask: 'term', choices: [{ cardId: 'c1', text: 'terme 1' }, { cardId: 'c2', text: 'terme 2' }, { cardId: 'c3', text: 'terme 3' }, { cardId: 'c4', text: 'terme 4' }] },
+  ],
+  retried: { c1: true },
+  roundLog: [
+    { qid: '1.1:c1', cardId: 'c1', type: 'mc', ask: 'term', correct: false, stageAfter: 0 },
+    { qid: '1.1:c3', cardId: 'c3', type: 'mc', ask: 'term', correct: true, stageAfter: 1 },
+  ],
+  rounds: [],
+  answered: 2,
+  correct: 1,
+  misses: { c1: 1 },
+  last: { qid: '1.1:c3', cardId: 'c3', type: 'mc', ask: 'term', correct: true, stageBefore: 0 },
+  startedAt: 1760000000000,
+  updatedAt: 1760000002000,
+  finishedAt: null,
+  elapsedMs: 2000,
+};
+
+test('stored sessions from before spacing (active, retried, no clock) run on', () => {
+  const cards = makeCards(5);
+  const old = JSON.parse(JSON.stringify(OLD_STATE));
+  expect(current(old)).toEqual({ qid: '1.1:c2', cardId: 'c2', type: 'written', ask: 'term' });
+  const read = tick(old, NaN);
+  expect('active' in read).toBe(false);
+  expect('retried' in read).toBe(false);
+  // The answer count stands in for the clock; nobody has a last answer yet.
+  expect([read.clock, read.lastAt, read.repeats]).toEqual([2, {}, 0]);
+  expect(read.queue).toEqual(old.queue);
+  expect(matchesProgress(old, { c2: recorded(true), c3: recorded(true), c1: recorded(false) })).toBe(true);
+  let s = answer(old, true, T0 + 3 * SEC);
+  expect(s.stage.c2).toBe(2);
+  expect([s.clock, s.lastAt]).toEqual([3, { c2: 2 }]);
+  // The old retry is asked as an ordinary question.
+  expect(current(s)).toEqual({ qid: '1.2:c1', cardId: 'c1', type: 'mc', ask: 'term', choices: old.queue[1].choices });
+  expect(isReviewQuestion('1.2:c1')).toBe(false);
+  s = answer(s, true, T0 + 4 * SEC);
+  expect(s.stage.c1).toBe(1);
+  expect(isRoundOver(s)).toBe(true);
+  s = nextRound(s, cards, mulberry32(1), T0 + 5 * SEC);
+  expect(s.round).toBe(2);
+  expect(s.rounds).toEqual([{ round: 1, answered: 4, correct: 3, cardIds: ['c1', 'c3', 'c2'] }]);
+  for (const q of s.queue) expect(QID.exec(q.qid).slice(1, 3)).toEqual(['2', '1']);
+  const { s: end, log } = playSession(s, cards, () => true, { seed: 2 });
+  expect(isFinished(end)).toBe(true);
+  expect(end.answered).toBe(end.clock);
+  expect(end.rounds.reduce((n, r) => n + r.answered, 0)).toBe(end.answered);
+  expect(counts(end)).toEqual({ fresh: 0, learning: 0, mastered: 5, total: 5, progress: 1 });
+  expect(log.length).toBe(end.answered - 4);
+  // A stored session that is between two rounds plans the next one with the new rules.
+  const between = { ...JSON.parse(JSON.stringify(OLD_STATE)), queue: [] };
+  const n = nextRound(between, cards, mulberry32(3), T0 + MIN);
+  expect(n.round).toBe(2);
+  expect(n.queue.length).toBeGreaterThan(0);
+  expect(n.queue.every((q) => kindOf(q.qid) === 1 && q.qid.startsWith('2.'))).toBe(true);
+});
+
+test('determinism: the same seed gives the same session, also with repetition questions and rechecks', () => {
+  const cards = makeCards(70);
+  const progress = masteredProgress(cards.slice(0, 10));
+  const run = (seed) => {
+    const d = mulberry32(seed + 1000);
+    const s = createLearn(cards, { answerWith: 'both' }, { progress, rng: mulberry32(seed), now: T0, review: true, recheck: true });
+    return playSession(s, cards, () => d() < 0.75, { seed, overrideIf: () => d() < 0.1 });
+  };
+  const a = run(1);
+  expect(snapshot(run(1))).toBe(snapshot(a));
+  const c = run(2);
+  expect(snapshot(c.log.map((e) => e.qid))).not.toBe(snapshot(a.log.map((e) => e.qid)));
+  for (const r of [a, c]) {
+    expect(isFinished(r.s)).toBe(true);
+    const nth = {};
+    const seenIds = new Set();
+    for (const e of r.log) {
+      const [, round, kind, n, id] = QID.exec(e.qid);
+      expect(Number(round)).toBe(e.round);
+      expect(id).toBe(e.cardId);
+      const key = `${e.round}/${e.cardId}`;
+      nth[key] = (nth[key] || 0) + 1;
+      expect(n === undefined ? 1 : Number(n)).toBe(nth[key]);
+      expect(e.type).toBe(e.stageBefore === 0 ? 'mc' : 'written');
+      // Repetition questions: once per card mastered before, as its first question.
+      if (kind === '3') expect(e.stageBefore === 2 && !seenIds.has(id) && progress[id] !== undefined).toBe(true);
+      // Rechecks: mastered cards; learning questions: cards not mastered.
+      if (kind === '4') expect(e.stageBefore).toBe(2);
+      if (kind === '1') expect(e.stageBefore).toBeLessThan(2);
+      seenIds.add(id);
+    }
+    expect(r.log.filter((e) => kindOf(e.qid) === 3)).toHaveLength(10);
+    expect(reviewStats(r.s).asked).toBe(10);
+    expect(reviewStats(r.s).left).toBe(0);
+    // Every card with a miss left in the session ended with a recheck, the others without one –
+    // unless its recheck was dropped at the end (mastered fewer than 10 questions before).
+    const rechecked = r.log.filter((e) => isRecheck(e.qid));
+    expect(rechecked.length).toBeGreaterThan(5);
+    for (const id of r.s.order) {
+      const last = r.log.filter((e) => e.cardId === id).pop();
+      const missed = (r.s.misses[id] || 0) > 0;
+      if (kindOf(last.qid) === 4) expect(missed).toBe(true);
+      else if (missed) {
+        const after = r.log.slice(r.log.indexOf(last) + 1);
+        // Dropped at a moment when everything was mastered and only rechecks were queued (they
+        // may still be answered wrong, so the session can go on for a while).
+        expect(after.length < MIN_GAP || after.some((x) => x.learning === 0 && x.reviews === 0)).toBe(true);
+      }
+    }
+    // Rechecks wait at least 10 questions, except when a round's plan has nothing else left to ask
+    // (then a planned recheck comes early; only rechecks not yet planned are dropped).
+    for (const e of rechecked) if (e.wait < MIN_GAP) expect([e.learning, e.reviews]).toEqual([0, 0]);
+  }
 });
 
 test('buildChoices: Arabic and Chinese spellings that grading treats as equal are no wrong options', () => {

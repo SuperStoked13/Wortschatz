@@ -1,5 +1,7 @@
 # Wortschatz — Learn mode ("Lernen"), a 1:1 copy of Quizlet Learn — Spec addendum
 
+> **Überholt seit 1.4 (03.11.2026):** Runden über eine feste Gruppe (active batch) und der Retry am Rundenende gibt es nicht mehr. Lernen plant jetzt mit Abstand (eine Karte frühestens nach 10, spätestens nach etwa 15 anderen Fragen wieder, gemischt mit neuen Karten), eine Runde ist die nächsten `roundSize` Fragen, dazu die Nachkontrolle nach Fehlern. Massgebend: Kopfkommentar von `src/core/learn.js`.
+
 Date: 2026-10-11 · Requested by the user (in German):
 
 > "baue wie in quizlet für neue wörter ein multiple choice ein (4 möglichkeiten) also wenn man beginnt

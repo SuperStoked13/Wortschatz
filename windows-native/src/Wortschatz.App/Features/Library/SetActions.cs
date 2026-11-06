@@ -12,7 +12,18 @@ namespace Wortschatz.App.Features;
 /// </summary>
 public static class SetActions
 {
-    public static ContextMenu Menu(AppModel model, Window window, SetSummary summary, bool includesStudy)
+    /// <summary>Starts over at once without answers, else after asking (the running session ends).</summary>
+    static void Restart(AppModel model, string id, StudyMode mode, StudySubset? subset, bool hasAnswers, string title, string message)
+    {
+        if (!hasAnswers)
+        {
+            model.Study(id, mode, subset, forceNew: true);
+            return;
+        }
+        model.Ask(PromptRequest.Confirm(title, message, "Neu starten", () => model.Study(id, mode, subset, forceNew: true)));
+    }
+
+    public static ContextMenu Menu(AppModel model, MainView window, SetSummary summary, bool includesStudy)
     {
         var menu = new ContextMenu();
         var id = summary.Id;
@@ -47,10 +58,18 @@ public static class SetActions
         }
         else
         {
-            if (summary.Learn is not null) Item("Lernen neu starten", IconName.RotateCcw, () => model.Study(id, StudyMode.Learn, forceNew: true));
-            if (summary.Write is not null) Item("Schreiben neu starten", IconName.RotateCcw, () => model.Study(id, StudyMode.Write, forceNew: true));
-            if (model.Preferences.Deck(id) is { IsResumable: true })
-                Item("Karteikarten neu starten", IconName.RotateCcw, () => model.Study(id, StudyMode.Flashcards, forceNew: true));
+            if (summary.Learn is { } learn)
+            {
+                var subset = learn.Subset.Kind is StudySubsetKind.Starred or StudySubsetKind.Learning or StudySubsetKind.Missed ? learn.Subset : null;
+                Item("Lernen neu starten", IconName.RotateCcw, () => Restart(model, id, StudyMode.Learn, subset, learn.HasAnswers,
+                    "Neu starten?", LearnFlow.RestartSessionMessage(learn.Subset)));
+            }
+            if (summary.Write is { } write)
+                Item("Schreiben neu starten", IconName.RotateCcw, () => Restart(model, id, StudyMode.Write, null, write.HasAnswers,
+                    "Neue Runde starten?", $"Deine gespeicherte Runde ({write.Detail}) endet. Dein Lernfortschritt bleibt erhalten."));
+            if (model.Preferences.Deck(id) is { IsResumable: true } deck)
+                Item("Karteikarten neu starten", IconName.RotateCcw, () => Restart(model, id, StudyMode.Flashcards, deck.StarredOnly ? StudySubset.Starred : null,
+                    deck.HasProgress, "Karteikarten neu starten?", FlashcardCopy.RestartMessage(deck)));
             if (summary.Starred > 0) Item($"Nur markierte schreiben ({summary.Starred})", IconName.Star, () => model.Study(id, StudyMode.Write, StudySubset.Starred));
             Divider();
         }

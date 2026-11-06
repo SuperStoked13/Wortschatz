@@ -175,6 +175,9 @@ public sealed class ProgressCapsuleView : StackPanel
     readonly AnimatedStatusBar _bar;
     readonly TextBlock[] _counts = new TextBlock[3];
     readonly int[] _values = [-1, -1, -1];
+    readonly TextBlock[] _labels = new TextBlock[3];
+    readonly StackPanel _legend;
+    bool _compact;
 
     public ProgressCapsuleView(int fresh, int learning, int mastered)
     {
@@ -184,17 +187,33 @@ public sealed class ProgressCapsuleView : StackPanel
         VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center;
         _bar = new AnimatedStatusBar(mastered, learning, fresh, 120, 7) { VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center };
         Children.Add(_bar);
-        var legend = new StackPanel { Orientation = Avalonia.Layout.Orientation.Horizontal, Spacing = 12, VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center };
+        var legend = _legend = new StackPanel { Orientation = Avalonia.Layout.Orientation.Horizontal, Spacing = 12, VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center };
         var items = new[] { (p.New.Fill, "Neu"), (p.Learning.Fill, "Am Lernen"), (p.Mastered.Fill, "Gemeistert") };
         for (int i = 0; i < 3; i++)
         {
             _counts[i] = Ui.Text("", 13.5, FontWeight.Bold);
+            _labels[i] = Ui.Text(items[i].Item2, 13.5, color: p.TextSecondary);
             legend.Children.Add(Ui.H(5,
                 new Border { Width = 7, Height = 7, CornerRadius = new CornerRadius(3.5), Background = WsTheme.B(items[i].Item1), VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center },
-                _counts[i], Ui.Text(items[i].Item2, 13.5, color: p.TextSecondary)));
+                _counts[i], _labels[i]));
         }
         Children.Add(legend);
         Update(fresh, learning, mastered, animated: false);
+    }
+
+    /// <summary>Narrow windows (Mac: ProgressCapsule style .compact): a shorter bar and bare numbers with coloured dots.</summary>
+    public bool Compact
+    {
+        get => _compact;
+        set
+        {
+            if (_compact == value) return;
+            _compact = value;
+            _bar.Width = value ? 72 : 120;
+            Spacing = value ? 8 : 16;
+            _legend.Spacing = value ? 6 : 12;
+            foreach (var label in _labels) label.IsVisible = !value;
+        }
     }
 
     public void Update(int fresh, int learning, int mastered, bool animated = true)

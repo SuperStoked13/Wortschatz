@@ -131,6 +131,7 @@ public static partial class LearnFlow
                 case Event.EditCard edit: EditCard(edit.Card); break;
                 case Event.OptionsChanged o: OptionsChanged(o.Options); break;
                 case Event.ReviewChanged r: s.Review = r.Review; break;
+                case Event.RecheckChanged r: s.Recheck = r.Recheck; break;
                 case Event.StartReview:
                     if (IsFree && s.Phase == Phase.AllMastered) StartFresh(s.Subset, review: true);
                     break;
@@ -153,6 +154,7 @@ public static partial class LearnFlow
                     {
                         s.OptionsBeforeOverlay = s.Options;
                         s.ReviewBeforeOverlay = s.Review;
+                        s.RecheckBeforeOverlay = s.Recheck;
                     }
                     break;
                 case Event.OverlayDismissed: OverlayDismissed(); break;
@@ -423,7 +425,7 @@ public static partial class LearnFlow
             s.Highlighted = null;
             s.Draft = "";
             freshStarts++;
-            var fresh = LearnEngine.CreateLearn(s.Cards, s.Options, subset, progress ?? env.Progress, env.Rng, Now, review ?? s.Review);
+            var fresh = LearnEngine.CreateLearn(s.Cards, s.Options, subset, progress ?? env.Progress, env.Rng, Now, review ?? s.Review, s.Recheck);
             s.Subset = fresh.Subset;
             if (fresh.Order.Count == 0 || LearnEngine.IsFinished(fresh))
             {
@@ -1010,15 +1012,19 @@ public static partial class LearnFlow
             if (s.Overlay is null) return;
             var before = s.OptionsBeforeOverlay;
             bool reviewBefore = s.ReviewBeforeOverlay ?? s.Review;
+            bool recheckBefore = s.RecheckBeforeOverlay ?? s.Recheck;
             s.Overlay = null;
             s.OptionsBeforeOverlay = null;
             s.ReviewBeforeOverlay = null;
-            // Direction, question types, round size and the repetition questions shape the session: they need a restart.
+            s.RecheckBeforeOverlay = null;
+            // Direction, question types, round size, repetition questions and rechecks shape the session: they need a restart.
             if (before is not null && s.Session is { FinishedAt: null } session)
             {
-                var current = SessionSettingsOf(s.Options, s.Review);
+                // Rechecks only exist in sessions with more than RECHECK_MIN_CARDS cards.
+                bool large = session.Order.Count > LearnEngine.RECHECK_MIN_CARDS;
+                var current = SessionSettingsOf(s.Options, s.Review, s.Recheck && large);
                 var changes = SettingsChanges(SessionSettingsOf(session), current);
-                if (SettingsChanges(SessionSettingsOf(before, reviewBefore), current).Count > 0 && changes.Count > 0)
+                if (SettingsChanges(SessionSettingsOf(before, reviewBefore, recheckBefore && large), current).Count > 0 && changes.Count > 0)
                 {
                     s.Prompt = new Prompt.RestartForOptions(changes);
                     return;

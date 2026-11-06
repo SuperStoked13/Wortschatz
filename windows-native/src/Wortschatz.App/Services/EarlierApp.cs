@@ -22,7 +22,7 @@ public static partial class EarlierApp
     /// <summary>The earlier app's leftovers in its data folder (the folder this app now shares).</summary>
     public static IEnumerable<string> Folders(string root) => [Path.Combine(root, "WebView2"), Path.Combine(root, "App")];
 
-    public static bool HasLeftovers(string root) => Folders(root).Any(Directory.Exists);
+    public static bool HasLeftovers(string root) => Folders(root).Any(Directory.Exists) || File.Exists(Path.Combine(root, "wortschatz.log"));
 
     /// <summary>The downloads of the earlier app as the website named them, e.g. "Wortschatz-1.1-Windows (1).exe".</summary>
     [GeneratedRegex(@"^Wortschatz-1\.[01](\.\d+)*-Windows( \(\d+\))?\.exe$", RegexOptions.IgnoreCase)]
@@ -61,6 +61,10 @@ public static partial class EarlierApp
             try { if (Directory.Exists(folder)) Directory.Delete(folder, recursive: true); }
             catch (Exception e) when (e is IOException or UnauthorizedAccessException) { done = false; }
         }
+
+        // Its log (windows/host/main.go writes wortschatz.log into the data folder).
+        try { File.Delete(Path.Combine(root, "wortschatz.log")); }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { done = false; }
 
         // 3. Its downloaded exe files (only the website's file names, only version 1.0/1.1, never this exe).
         var self = Environment.ProcessPath;

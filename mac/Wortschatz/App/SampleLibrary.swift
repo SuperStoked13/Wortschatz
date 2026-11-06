@@ -244,17 +244,19 @@ enum SampleLibrary {
             if progress[id] != nil { seen[id] = true }
         }
         let open = ids.filter { (stage[$0] ?? 0) < 2 }
-        let active = Array(open.prefix(7))
-        let queue = active.suffix(4).map {
+        let round = Array(open.prefix(7))
+        let queue = round.suffix(4).map {
             LearnQueueQuestion(qid: "3.1:\($0)", cardId: $0, type: .written, ask: .term)
         }
-        let log = active.prefix(3).map {
+        let log = round.prefix(3).map {
             LearnRoundLogEntry(qid: "3.1:\($0)", cardId: $0, type: .written, ask: .term, correct: true, stageAfter: 2)
         }
+        // The three answers of this round were the session's answers 19 to 21 (clock = answered).
+        var lastAt: [String: Int] = [:]
+        for (i, entry) in log.enumerated() { lastAt[entry.cardId] = 19 + i }
         return LearnState(
             subset: .all, answerWith: .term, learn: LearnSessionOptions(), order: ids, stage: stage,
-            initiallyMastered: [], seen: seen, active: active, round: 3, queue: queue, retried: [:],
-            roundLog: log,
+            initiallyMastered: [], seen: seen, round: 3, queue: queue, clock: 22, lastAt: lastAt, roundLog: log,
             rounds: [
                 LearnRoundRecord(round: 1, answered: 9, correct: 6, cardIds: Array(ids.prefix(7))),
                 LearnRoundRecord(round: 2, answered: 10, correct: 8, cardIds: Array(ids.dropFirst(7).prefix(7))),

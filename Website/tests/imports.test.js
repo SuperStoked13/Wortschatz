@@ -264,7 +264,7 @@ const MODULES = [
       finalStats: 'function',
       tick: 'function',
       matchesProgress: 'function',
-      syncProgress: 'function', isReviewQuestion: 'function', reviewStats: 'function', reviewsPerRound: 'function' },
+      syncProgress: 'function', isReviewQuestion: 'function', reviewStats: 'function' },
   ],
   // Import adapters (W6)
   ['../src/import/layout.js', { itemsToLines: 'function', estimateSlope: 'function', deskewItems: 'function' }],

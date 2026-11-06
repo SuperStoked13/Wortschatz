@@ -202,12 +202,14 @@ private struct MasteryPanel: View {
 // MARK: - Study actions
 
 /// Lernen ↩ (or Weiterlernen ↩), Schreiben, Karteikarten, Prüfung, the subset shortcuts,
-/// Bearbeiten and "…", then the running sessions and what Lernen asks.
+/// Bearbeiten, Optionen and "…", then the running sessions, what Lernen asks and the options
+/// this set has of its own.
 private struct SetStudyActions: View {
     let summary: SetSummary
     let layout: SetDetailLayout
 
     @Environment(AppModel.self) private var model
+    @State private var isShowingOptions = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: Spacing.s) {
@@ -240,6 +242,17 @@ private struct SetStudyActions: View {
                     Label(SetDetailCopy.studyNote(summary.set, options: summary.options), systemImage: "info.circle")
                         .font(.callout)
                         .foregroundStyle(.secondary)
+                    // The options this set has of its own (they differ from Einstellungen; "Optionen"
+                    // shows and resets them).
+                    let own = LearnOptionsCopy.deviations(
+                        summary.options, standard: model.settings.study,
+                        names: LearnOptionsCopy.sideNames(termLang: summary.set.termLang, defLang: summary.set.defLang),
+                        termLang: summary.set.termLang)
+                    if !own.isEmpty {
+                        Label(SetDetailCopy.ownOptionsNote(own), systemImage: "slider.horizontal.3")
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                    }
                     if summary.starred == 0, summary.learn == nil {
                         Label("Markiere schwierige Begriffe mit dem Stern, um sie gezielt zu üben.", systemImage: "lightbulb")
                             .font(.callout)
@@ -247,6 +260,10 @@ private struct SetStudyActions: View {
                     }
                 }
             }
+        }
+        .sheet(isPresented: $isShowingOptions) {
+            SetOptionsSheet(setID: summary.id)
+                .environment(model)
         }
     }
 
@@ -293,6 +310,11 @@ private struct SetStudyActions: View {
             model.openEditor(.edit(setID: id))
         }
         .help("Begriffe hinzufügen oder bearbeiten (⌘E)")
+
+        SecondaryButton("Optionen", systemImage: "slider.horizontal.3", controlSize: size) {
+            isShowingOptions = true
+        }
+        .help("Abfrage, Fragetypen und Toleranz für dieses Lernset")
 
         MoreMenu(summary: summary, controlSize: size)
     }

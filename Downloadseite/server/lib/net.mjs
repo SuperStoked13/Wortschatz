@@ -125,7 +125,7 @@ export function expandIpv6(ip) {
 }
 
 /**
- * The key for limits, blocks and link binding: the IPv4 address, or the /56 network of an
+ * The key for limits and link binding: the IPv4 address, or the /56 network of an
  * IPv6 address. A household usually gets a /56 or /48 and can switch between its /64s at
  * will, so a /64 key would let one connection pose as hundreds of addresses.
  */
@@ -136,6 +136,14 @@ export function ipKey(ip) {
     return `${groups.slice(0, 3).join(':')}:${groups[3].slice(0, 2)}00::/56`;
   }
   return ip;
+}
+
+/**
+ * The wider key for password guesses: a whole IPv6 /48 counts as one, because rotating through
+ * its 256 /56s is free and each would otherwise get its own allowance of guesses.
+ */
+export function networkKey(ip) {
+  return net.isIPv6(ip) ? `${expandIpv6(ip).slice(0, 3).join(':')}::/48` : ipKey(ip);
 }
 
 const LOOPBACK_LIST = (() => {

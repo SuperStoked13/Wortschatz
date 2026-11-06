@@ -7,10 +7,13 @@ import WortschatzCore
 
 // MARK: - Lernen
 
-/// Lernen: question types, terms per round, the answer direction, the copy step after a written
-/// miss and read-aloud.
+/// Lernen: question types, questions per round, the answer direction, Wiederholungsfragen and
+/// Nachkontrolle (the same for every set, also switchable in the Learn options), the copy step
+/// after a written miss and read-aloud.
 struct SettingsLearnTab: View {
     @Environment(AppModel.self) private var model
+    @AppStorage(LearnController.reviewKey) private var review = false
+    @AppStorage(LearnController.recheckKey) private var recheck = true
 
     var body: some View {
         let writer = SettingsWriter(model: model)
@@ -46,8 +49,8 @@ struct SettingsLearnTab: View {
                         Text("\(size)").tag(size)
                     }
                 } label: {
-                    Text("Begriffe pro Runde")
-                    Text("Nach jeder Runde siehst du deinen Zwischenstand.")
+                    Text(LearnOptionsCopy.roundSizeLabel)
+                    Text(LearnOptionsCopy.roundSizeNote)
                 }
                 .pickerStyle(.segmented)
 
@@ -64,6 +67,8 @@ struct SettingsLearnTab: View {
                 Text(SettingsCopy.directionText(options.answerWith, names: names))
                     .foregroundStyle(.secondary)
             }
+
+            LearnGlobalSwitchesSection(review: $review, recheck: $recheck)
 
             Section {
                 Toggle(isOn: writer.binding(learn.retype) { StudyOptionsPatch(learn: LearnOptionsPatch(retype: $0)) }) {

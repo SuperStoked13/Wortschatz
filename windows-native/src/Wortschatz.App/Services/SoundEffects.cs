@@ -49,11 +49,22 @@ public sealed class SoundEffects
     public void Play(Sound sound, bool force = false)
     {
         if (!force && !IsEnabled) return;
-        if (!OperatingSystem.IsWindows()) return;
+        var player = PlatformPlayer;
+        if (player is null && !OperatingSystem.IsWindows()) return;
         var samples = SamplesOf(sound);
         if (samples.Length == 0) return;
-        Task.Run(() => WaveOut.Play(samples, Synth.SampleRate));
+        Task.Run(() =>
+        {
+            if (player is not null) player(samples, Synth.SampleRate);
+            else WaveOut.Play(samples, Synth.SampleRate);
+        });
     }
+
+    /// <summary>
+    /// Plays 16-bit mono samples at a rate on another platform (a phone: AudioTrack); null: Windows' waveOut.
+    /// The sounds themselves are made here, the same everywhere.
+    /// </summary>
+    public static Action<short[], int>? PlatformPlayer { get; set; }
 
     short[] SamplesOf(Sound sound)
     {

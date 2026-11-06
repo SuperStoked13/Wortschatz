@@ -151,12 +151,36 @@ public static class Motion
     public static Func<double> Now { get; set; } = () => Watch.Elapsed.TotalSeconds;
 
     static bool? _reduceMotion;
+    static bool _reduceMotionForced;
 
-    /// <summary>Windows' "Animationseffekte" are off (read once; the snapshot tool can set it).</summary>
+    /// <summary>
+    /// Windows' "Animationseffekte" are off (read at the start and again by <see cref="RefreshReduceMotion"/> whenever the
+    /// window becomes active, so a change in the Windows settings works at once, like the Mac's Reduce Motion; the
+    /// snapshot tool can set it).
+    /// </summary>
     public static bool ReduceMotion
     {
         get => _reduceMotion ??= ReadReduceMotion();
-        set => _reduceMotion = value;
+        set
+        {
+            _reduceMotion = value;
+            _reduceMotionForced = true;
+        }
+    }
+
+    /// <summary>Reads Windows' animation setting again; true when it changed.</summary>
+    public static bool RefreshReduceMotion()
+    {
+        if (_reduceMotionForced) return false;
+        bool now = ReadReduceMotion();
+        // Not read yet: nothing was drawn with the old value.
+        if (_reduceMotion is null || _reduceMotion == now)
+        {
+            _reduceMotion = now;
+            return false;
+        }
+        _reduceMotion = now;
+        return true;
     }
 
     /// <summary>The snapshot tool renders frozen frames: decorative time-based animation (confetti) draws a still.</summary>

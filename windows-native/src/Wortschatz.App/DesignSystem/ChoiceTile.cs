@@ -113,6 +113,16 @@ public static class ChoiceTile
                 return StudyStatusPill.FeedbackSymbol(StudyStatus.Kinds.Correct, P.Success.Fill, 28);
             case ChoiceTileState.Wrong:
                 return StudyStatusPill.FeedbackSymbol(StudyStatus.Kinds.Wrong, P.Failure.Fill, 28);
+            case var _ when !AppDevice.ShowsKeyHints:
+                // Phone: no keys 1–4 to press – an empty round mark to tap (like a radio button), which the answer
+                // turns into the round ✓ or ✗ in the same place.
+                return new Border
+                {
+                    Width = 26, Height = 26, CornerRadius = new CornerRadius(13), Margin = new Thickness(1),
+                    BorderBrush = WsTheme.B(state == ChoiceTileState.Highlighted ? P.Accent : P.TextTertiary), BorderThickness = new Thickness(1.6),
+                    Opacity = state == ChoiceTileState.Highlighted ? 1 : 0.7,
+                    VerticalAlignment = VerticalAlignment.Center,
+                };
             case ChoiceTileState.Highlighted:
                 return new Border
                 {
@@ -144,13 +154,15 @@ public static class ChoiceTile
     /// <summary>The 2×2 grid (Mac: ChoiceGrid): tiles numbered 1…n, rows of equal height, 14 points apart.</summary>
     public static Avalonia.Controls.Grid Grid(IReadOnlyList<Control> tiles)
     {
-        var grid = new Avalonia.Controls.Grid { ColumnDefinitions = new ColumnDefinitions("*,*"), ColumnSpacing = 14, RowSpacing = 14 };
-        int rows = (tiles.Count + 1) / 2;
+        // Phone upright: one column (two would leave each answer a word wide); sideways two again.
+        int columns = AppDevice.IsWide ? 2 : 1;
+        var grid = new Avalonia.Controls.Grid { ColumnDefinitions = new ColumnDefinitions(columns == 1 ? "*" : "*,*"), ColumnSpacing = 14, RowSpacing = columns == 1 ? 10 : 14 };
+        int rows = (tiles.Count + columns - 1) / columns;
         for (int r = 0; r < rows; r++) grid.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
         for (int i = 0; i < tiles.Count; i++)
         {
-            Avalonia.Controls.Grid.SetRow(tiles[i], i / 2);
-            Avalonia.Controls.Grid.SetColumn(tiles[i], i % 2);
+            Avalonia.Controls.Grid.SetRow(tiles[i], i / columns);
+            Avalonia.Controls.Grid.SetColumn(tiles[i], i % columns);
             grid.Children.Add(tiles[i]);
         }
         return grid;

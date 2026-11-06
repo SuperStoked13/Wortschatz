@@ -6,13 +6,13 @@ public interface IStorageBackend
 {
     /// <summary>The stored document, or null when nothing has been stored yet.</summary>
     byte[]? Load();
-    /// <summary>Older copies, newest first (unreadable ones left out).</summary>
+    /// <summary>Older copies, newest first (unreadable ones left out). Should never throw (the store guards it anyway).</summary>
     List<byte[]> LoadBackups();
-    /// <summary>Atomically replaces the stored document (rotating backups where supported).</summary>
+    /// <summary>Atomically replaces the stored document (rotating backups where supported; a failed rotation never fails the save).</summary>
     void Save(byte[] data);
-    /// <summary>Moves an unreadable primary document aside (kept for manual recovery).</summary>
+    /// <summary>Moves an unreadable primary document aside (kept for manual recovery). Best effort, should never throw.</summary>
     void PreserveCorrupt() { }
-    /// <summary>Deletes every older copy (after "Alle Daten löschen").</summary>
+    /// <summary>Deletes every older copy (after "Alle Daten löschen"). Best effort, should never throw.</summary>
     void DiscardBackups() { }
 }
 
@@ -107,6 +107,7 @@ public sealed class FileBackend : IStorageBackend
         lock (_lock) return File.Exists(Path) ? File.ReadAllBytes(Path) : null;
     }
 
+    /// <summary>Never throws: a backup that cannot be read (locked, no permission, gone) is left out.</summary>
     public List<byte[]> LoadBackups()
     {
         lock (_lock)
@@ -115,38 +116,53 @@ public sealed class FileBackend : IStorageBackend
             foreach (var p in BackupPaths)
             {
                 try { if (File.Exists(p)) list.Add(File.ReadAllBytes(p)); }
-                catch (IOException) { }
+                catch (Exception) { }
             }
             return list;
         }
     }
 
+    /// <summary>
+    /// Writes a uniquely named temporary file next to the library and moves it over the library (Mac: Data.write with
+    /// .atomic). A second writer never shares the temporary file, and a failed write leaves the library untouched.
+    /// </summary>
     public void Save(byte[] data)
     {
         lock (_lock)
         {
             Directory.CreateDirectory(System.IO.Path.GetDirectoryName(Path)!);
             if (BackupCount > 0 && File.Exists(Path) && RotationDue()) RotateBackups();
-            var tmp = Path + ".tmp";
-            File.WriteAllBytes(tmp, data);
-            File.Move(tmp, Path, overwrite: true);
+            var tmp = $"{Path}.{Guid.NewGuid():N}.tmp";
+            try
+            {
+                File.WriteAllBytes(tmp, data);
+                File.Move(tmp, Path, overwrite: true);
+            }
+            catch (Exception)
+            {
+                try { File.Delete(tmp); }
+                catch (Exception) { }
+                throw;
+            }
         }
     }
 
+    /// <summary>Best effort, never throws.</summary>
     public void PreserveCorrupt()
     {
         lock (_lock)
         {
-            if (!File.Exists(Path)) return;
             try
             {
+                if (!File.Exists(Path)) return;
                 if (File.Exists(CorruptPath)) File.Delete(CorruptPath);
                 File.Move(Path, CorruptPath);
             }
-            catch (IOException) { }
+            catch (Exception) { }
         }
     }
 
+    /// <summary>Best effort, never throws: each copy that can be deleted is deleted.</summary>
     public void DiscardBackups()
     {
         lock (_lock)
@@ -154,7 +170,7 @@ public sealed class FileBackend : IStorageBackend
             foreach (var old in BackupPaths.Append(CorruptPath))
             {
                 try { if (File.Exists(old)) File.Delete(old); }
-                catch (IOException) { }
+                catch (Exception) { }
             }
         }
     }
@@ -170,23 +186,35 @@ public sealed class FileBackend : IStorageBackend
     bool RotationDue()
     {
         var newest = BackupPaths.FirstOrDefault();
-        if (newest is null || !File.Exists(newest)) return true;
-        return _clock() - File.GetLastWriteTimeUtc(newest) >= BackupInterval;
+        try
+        {
+            if (newest is null || !File.Exists(newest)) return true;
+            return _clock() - File.GetLastWriteTimeUtc(newest) >= BackupInterval;
+        }
+        catch (Exception) { return true; }
     }
 
+    /// <summary>
+    /// Best effort (like the Mac): every step is tried on its own, and no error (a locked or read-only backup, missing
+    /// permission) ever prevents the save itself.
+    /// </summary>
     void RotateBackups()
     {
         var paths = BackupPaths;
         if (paths.Count == 0) return;
+        try { if (File.Exists(paths[^1])) File.Delete(paths[^1]); }
+        catch (Exception) { }
+        for (int i = paths.Count - 2; i >= 0; i--)
+        {
+            try { if (File.Exists(paths[i])) File.Move(paths[i], paths[i + 1], overwrite: true); }
+            catch (Exception) { }
+        }
         try
         {
-            if (File.Exists(paths[^1])) File.Delete(paths[^1]);
-            for (int i = paths.Count - 2; i >= 0; i--)
-                if (File.Exists(paths[i])) File.Move(paths[i], paths[i + 1]);
             File.Copy(Path, paths[0], overwrite: true);
             File.SetLastWriteTimeUtc(paths[0], _clock());
         }
-        catch (IOException)
+        catch (Exception)
         {
             // Keep saving even without a fresh backup.
         }

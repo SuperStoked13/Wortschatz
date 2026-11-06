@@ -80,7 +80,7 @@ enum SettingsTab: String, CaseIterable, Identifiable {
         let width: CGFloat = 620
         return switch self {
         case .general: CGSize(width: width, height: 470)
-        case .learn: CGSize(width: width, height: 560)
+        case .learn: CGSize(width: width, height: 720)
         case .write: CGSize(width: width, height: 270)
         case .tolerance: CGSize(width: width, height: 500)
         case .data: CGSize(width: width, height: 580)
@@ -129,14 +129,19 @@ struct SettingsWriter {
 }
 
 /// The note under the study tabs with "Standard wiederherstellen" (disabled while the tab
-/// already shows the defaults).
+/// already shows the defaults); it names the sets with options of their own.
 struct SettingsDefaultsFooter: View {
     let isDefault: Bool
     let restore: () -> Void
 
+    @Environment(AppModel.self) private var model
+
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: Spacing.m) {
-            Text("Gilt für alle Lernsets. Was du in den Optionen eines Lernsets umstellst, gilt nur für dieses Lernset.")
+            Text(
+                "Gilt für alle Lernsets. Was du in den Optionen eines Lernsets umstellst, gilt nur für dieses Lernset."
+                    + SettingsCopy.ownOptionsText(model.library.sets, standard: model.settings.study)
+            )
                 .foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
             Button("Standard wiederherstellen", action: restore)

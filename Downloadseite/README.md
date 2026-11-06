@@ -110,45 +110,66 @@ Was der Server tut (alle Werte lassen sich in `.env` ändern, siehe `.env.exampl
 - **Passwort (optional).** Mit `SITE_PASSWORD` in `.env` leitet die Startseite auf `/login`:
   ein einziges Passwortfeld, kein Benutzername. Danach merkt sich der Browser die Anmeldung
   90 Tage in einem Cookie (`__Host-wortschatz`, HttpOnly, SameSite=Lax, mit HMAC signiert; der
-  Schlüssel kommt aus dem Passwort, ein neues Passwort meldet also alle ab). Ohne Anmeldung gibt
-  es keine Seite, keine Prüfsummen, keinen Download-Link und keine Datei. Offen bleiben nur
-  `/login`, `/datenschutz`, `/healthz` (Docker-Healthcheck) und die statischen Dateien, die die
-  Login-Seite braucht (CSS, Skripte, Bilder). Jeder Anmeldeversuch zählt pro Adresse: zehn auf
-  einmal, dann einer alle 12 Sekunden, auch mit dem richtigen Passwort. Skripte dürfen das
-  Passwort weiterhin per HTTP Basic Auth schicken (Benutzername egal, nur falsche zählen); der
-  Browser fragt aber nie danach. Das Passwort reist nur dank HTTPS geschützt.
+  Schlüssel kommt mit scrypt aus dem Passwort, ein neues Passwort meldet also alle ab). «Abmelden»
+  in der Fusszeile löscht das Cookie, für geteilte Computer. Ohne Anmeldung gibt es keine Seite,
+  keine Prüfsummen, keinen Download-Link und keine Datei. Offen bleiben nur `/login`, `/datenschutz`,
+  `/healthz` (Docker-Healthcheck) und die statischen Dateien, die die Login-Seite braucht (CSS,
+  Skripte, Bilder). Nur falsche Passwörter zählen, pro Adresse (bei IPv6 pro /48): zehn auf einmal,
+  dann einer alle 12 Sekunden, höchstens 200 am Tag. Eine ganze Klasse kann sich also gleichzeitig
+  anmelden; ist die Grenze erreicht, kommt auch das richtige Passwort nicht durch, damit ein Treffer
+  nicht auffällt. Skripte dürfen das Passwort weiterhin per HTTP Basic Auth schicken (Benutzername
+  egal, gleiche Grenzen); der Browser fragt aber nie danach. Das Passwort reist nur dank HTTPS
+  geschützt, und es sollte lang und zufällig sein: Gegen viele Adressen hilft nur das.
 - **Signierte Download-Links.** Ein Klick auf «Laden» schickt ein Formular an `/download/mac`.
   Der Server antwortet mit einem Link, der mit HMAC-SHA256 signiert ist, nach zwei Minuten
   abläuft, höchstens dreimal benutzt werden kann und nur für die Internetadresse gilt, die ihn
   angefordert hat. Direktes Verlinken der Dateien von anderen Seiten funktioniert nicht.
 - **Nur von der eigenen Seite.** Link-Anfragen ohne passenden `Origin` bzw. `Sec-Fetch-Site`
   werden abgelehnt, ebenso solche, die ein unsichtbares Formularfeld ausfüllen (Bots).
-- **Download-Rate.** Pro Internetadresse 30 Downloads pro Stunde und 100 pro Tag (grosszügig,
-  weil eine ganze Schule oft eine Adresse teilt). Jeder vollständige Download zählt, auch ein
-  zweiter über denselben Link; das Fortsetzen eines abgebrochenen Downloads zählt nicht.
-  IPv6-Adressen zählen pro /56-Netz, weil ein einzelner Anschluss Millionen davon hat.
-- **Gleichzeitige Downloads.** Höchstens 6 pro Adresse und 40 insgesamt. Wer nach 30 Sekunden
-  langsamer als 16 KB/s lädt oder länger als drei Stunden braucht, wird getrennt. So kann
-  niemand mit absichtlich langsamen Verbindungen alle Plätze belegen.
-- **Bandbreite.** Alle Downloads zusammen höchstens 50 Mbit/s und 50 GB pro Tag, pro Adresse
-  höchstens 3 GB pro Tag, damit der Heimanschluss nutzbar bleibt.
-- **Anfragen-Limit und Sperren.** Seitenaufrufe und Dateien pro Adresse sind begrenzt. Wer
-  auffällt (Schwachstellen-Scanner auf `/wp-login.php` oder `/.env`, gefälschte Links, Fluten),
-  sammelt Strafpunkte und wird für eine Stunde gesperrt. Nie gesperrt werden Anfragen, die eine
-  fremde Website im Browser eines Besuchers auslöst (etwa ein Bild mit der Adresse `/.env`), und
-  private Adressen (ein falsch eingerichteter Proxy würde sonst alle aussperren).
+- **Anfragen pro Adresse.** Jede Anfrage zählt, egal wonach sie fragt und wie die Antwort ausfällt:
+  1000 auf einmal, dann 20 pro Sekunde. Das reicht für eine ganze Klasse hinter einer Adresse (ein
+  erster Besuch sind etwa zehn Anfragen). Darüber kommt nur noch eine Zeile Text ohne Seite und fast
+  ohne Header, also etwa so viel, wie die Anfrage selbst gekostet hat. Eine Flut kann den Upload so
+  nicht mehr gegen sich selbst verwenden, und sie schreibt auch nichts ins Protokoll (siehe unten).
+- **Keine Sperren.** Der Server sperrt niemanden, und das mit Absicht: In einer Schule teilen sich alle
+  eine Adresse, also hätten ein, zwei Anfragen alle eine Stunde lang aussperren können, ein Klassenbesuch
+  sogar aus Versehen. Seit Abweisungen kaum noch etwas kosten, bringt eine Sperre nichts mehr.
+- **Daten pro Adresse und insgesamt.** Seiten, Dateien und Fehlerseiten zusammen: pro Adresse 16 MB auf
+  einmal (ein erster Besuch kostet höchstens etwa 180 KB), dann 0,5 Mbit/s, und für alle zusammen 20 Mbit/s
+  mit 20 MB Reserve (Downloads haben eigene Grenzen). Mehr
+  soll der Heimanschluss dafür nicht tragen müssen. Wird es knapp, müssen zuerst die Adressen warten,
+  die zuletzt viel bekommen haben, damit ein paar gierige Adressen die ersten Seiten eines Besuchers
+  nicht verdrängen. Bei noch mehr Andrang antwortet die Seite allen kurz mit 503: Anschluss und
+  Maschine bleiben dabei nutzbar, laufende Downloads laufen weiter.
+- **Fremde Websites.** Fragt eine andere Website im Browser eines Besuchers etwas ab (Bild, Skript,
+  Frame, `fetch`, erkannt an `Sec-Fetch-*`), gibt es eine Zeile Text, und die Limits der Adresse
+  bleiben unberührt. Benutzen dürfte sie die Antwort wegen CORP und CSP sowieso nicht. Links von
+  anderen Seiten funktionieren normal.
+- **Gleichzeitige Downloads.** Höchstens 12 pro Adresse und 200 insgesamt. Wer nach 30 Sekunden im
+  Schnitt langsamer als 16 KB/s lädt oder länger als drei Stunden braucht, wird getrennt. Sind drei
+  Viertel der Plätze belegt, muss jeder Download mindestens seinen halben fairen Anteil an der
+  Bandbreite schaffen: Einen Platz zu halten kostet dann echte Bandbreite (alle Plätze etwa 25 Mbit/s).
+- **Bandbreite der Downloads.** Alle Downloads zusammen höchstens 50 Mbit/s, damit der Heimanschluss
+  nutzbar bleibt. Der Wert muss unter dem echten Upload liegen (`.env.example`: etwa 70 %). Nach
+  50 GB am Tag für alle oder 20 GB für eine Adresse teilen sich die betroffenen Downloads innerhalb
+  dieser 50 Mbit/s eine langsame Spur von 10 Mbit/s: Sie werden langsam, hören aber nie auf, und niemand kann sie bis
+  Mitternacht abschalten, indem er das Guthaben aufbraucht.
+- **Protokoll.** Abweisungen mit einer Zeile Text schreiben nichts ins Protokoll, sonst höchstens 20
+  Zeilen pro Sekunde, und jede Minute eine Zeile mit dem, was fehlt. So füllt eine Flut die Platte
+  nicht. Lange Adressen werden gekürzt.
 - **Keine fremden Dateien.** Ausgeliefert wird nur, was beim Start aus `public/` geladen wurde,
   und Downloads nur, wenn ein Manifest sie nennt. Pfade mit `..`, kodierten Schrägstrichen oder
   Nullbytes werden abgewiesen, Verknüpfungen aus `releases/` hinaus ignoriert. Eine Datei, die
   seit dem Einlesen ersetzt wurde, geht erst nach dem nächsten Einlesen hinaus, nie gemischt.
 - **Strenge Header.** Content-Security-Policy ohne Inline-Skripte und mit Trusted Types, HSTS,
   `X-Frame-Options: DENY`, `nosniff`, `Referrer-Policy`, `Permissions-Policy`, COOP und CORP.
-- **Langsame Verbindungen.** Header müssen innert 15 Sekunden ankommen, die ganze Anfrage
-  innert 30; untätige Verbindungen werden nach einer Minute getrennt, mehr als 2000
-  gleichzeitige Verbindungen nimmt der Server nicht an.
+- **Langsame Verbindungen.** Header und ganze Anfrage müssen innert 10 Sekunden ankommen, höchstens
+  8 Formulare pro Adresse (bei IPv6 pro /48) und 1500 insgesamt dürfen gleichzeitig unterwegs sein. Untätige Verbindungen
+  werden nach einer Minute getrennt. Mehr als 2000 gleichzeitige Verbindungen nimmt der Server nicht
+  an und schliesst dann zuerst die untätigen.
 - **Prüfsummen.** Die SHA-256 jeder Datei steht auf der Seite, in `/checksums.txt` und im
   Header `Repr-Digest`.
-- **Datenschutz.** Keine Cookies, kein Tracking, keine Inhalte von Dritten. Im Protokoll stehen
+- **Datenschutz.** Keine Cookies (ausser dem Login-Cookie, wenn ein Passwort gesetzt ist), kein Tracking, keine Inhalte von Dritten. Im Protokoll stehen
   IP-Adressen nur gekürzt (`203.0.113.0`), gezählt werden nur Downloads pro Tag
   (`data/downloads.json`). `OPERATOR_NAME` und `CONTACT_EMAIL` in `.env` setzen, damit die
   Datenschutzerklärung vollständig ist.
@@ -158,7 +179,9 @@ Was der Server tut (alle Werte lassen sich in `.env` ändern, siehe `.env.exampl
   die Ports nur über IPv4 frei: das Docker-Netz hat kein IPv6, über IPv6 sähe der Server sonst
   bei allen Besuchern dieselbe Adresse.
 
-Nicht abgedeckt: Die Apps sind nicht signiert bzw. nicht notarisiert (dafür braucht es
+Nicht abgedeckt: Eine Flut, die schon die Leitung füllt, kann kein Programm am Ende dieser Leitung
+abwehren; dagegen hilft nur etwas davor (Tunnel, CDN, Anbieter). Caddy, Docker und der Worker haben
+eigene Grenzen, die dieser Server nicht setzen kann. Die Apps sind nicht signiert bzw. nicht notarisiert (dafür braucht es
 kostenpflichtige Entwicklerkonten bei Apple und ein Zertifikat für Windows; `release-mac.sh --notarize`
 ist vorbereitet, siehe `VEROEFFENTLICHEN.md`). Deshalb erklärt die Seite die Warnungen beim ersten Start. Die Prüfsummen zeigen, dass ein Download vollständig
 ist; sie schützen nicht davor, dass jemand den Server selbst übernimmt. Halte deshalb das
@@ -171,9 +194,9 @@ cd Downloadseite/server
 node --test test/*.test.mjs
 ```
 
-73 Tests: Bausteine (Adressen, Links, Limits, Templates, Neuigkeiten) und der ganze Server mit echten
-Angriffsversuchen (Path Traversal, gefälschte Links, fremde Origins, Bots, Fluten, abgelaufene
-Links, hängende Downloads, ersetzte Dateien, falsche Passwörter, gefälschte Login-Cookies).
+101 Tests: Bausteine (Adressen, Links, Limits, Templates, Neuigkeiten) und der ganze Server mit echten
+Angriffsversuchen (Path Traversal, gefälschte Links, fremde Origins, Bots, Fluten, langsame Clients,
+abgelaufene Links, hängende Downloads, ersetzte Dateien, falsche Passwörter, gefälschte Login-Cookies).
 
 ## Anpassen
 

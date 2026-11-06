@@ -6,12 +6,15 @@ import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import http from 'node:http';
+import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { after, before, describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
+import zlib from 'node:zlib';
 import { createApp } from '../lib/app.mjs';
 import { loadConfig } from '../lib/config.mjs';
+import { createHttpServer } from '../lib/http.mjs';
 import { createLogger } from '../lib/log.mjs';
 
 const PUBLIC_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'public');
@@ -19,9 +22,12 @@ const HOST = 'wortschatz.test';
 const ORIGIN = `https://${HOST}`;
 
 let ipCounter = 10;
-const nextIp = () => `203.0.113.${ipCounter++}`;
+const nextIp = () => {
+  ipCounter += 1;
+  return `203.0.${113 + Math.floor(ipCounter / 250)}.${(ipCounter % 250) + 1}`;
+};
 
-async function startServer(env = {}, { releases = true, macSize = 300_000 } = {}) {
+async function startServer(env = {}, { releases = true, macSize = 300_000, logger = createLogger('silent'), serverOptions = {} } = {}) {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'wortschatz-test-'));
   const releasesDir = path.join(root, 'releases');
   const dataDir = path.join(root, 'data');
@@ -50,14 +56,15 @@ async function startServer(env = {}, { releases = true, macSize = 300_000 } = {}
     ACCESS_LOG: '0',
     ...env,
   });
-  const app = await createApp(config, createLogger('silent'));
-  const server = http.createServer(app.handle);
+  const app = await createApp(config, logger);
+  const server = createHttpServer(app.handle, serverOptions);
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
   const { port } = server.address();
   return {
     port,
     files,
     app,
+    server,
     releasesDir,
     async close() {
       server.closeAllConnections();
@@ -146,6 +153,9 @@ describe('website', () => {
     const again = await request(s.port, 'GET', css, { ip: nextIp(), headers: { 'Accept-Encoding': 'br', 'If-None-Match': res.headers.etag } });
     assert.equal(again.status, 304);
     assert.equal(again.body.length, 0);
+    const wrong = await request(s.port, 'GET', '/assets/css/site.css?v=0000000000', { ip: nextIp() });
+    assert.equal(wrong.status, 200);
+    assert.doesNotMatch(wrong.headers['cache-control'], /immutable/, 'only its own version is cached forever');
   });
 
   it('versions the asset urls inside the stylesheet', async () => {
@@ -301,14 +311,52 @@ describe('downloads', () => {
     assert.equal(bad.status, 416);
   });
 
-  it('blocks bots that fill in the hidden field', async () => {
+  it('gives no link to bots that fill in the hidden field, and blocks nobody for it', async () => {
     const ip = nextIp();
     const res = await request(s.port, 'POST', '/download/mac', { ip, headers: FORM, body: 'website=http%3A%2F%2Fspam.example' });
     assert.equal(res.status, 403);
-    const after = await request(s.port, 'GET', '/', { ip });
-    assert.equal(after.status, 403, 'the address is blocked now');
-    assert.match(after.body.toString(), /gesperrt/);
-    assert.ok(Number(after.headers['retry-after']) > 0);
+    assert.equal(res.headers.location, undefined);
+    assert.equal((await request(s.port, 'GET', '/', { ip })).status, 200, 'others at the same address go on');
+  });
+
+  it('counts a link use at once, so that requests arriving together cannot share one', async () => {
+    const ip = nextIp();
+    const location = (await link(s.port, ip)).headers.location;
+    const statuses = (await Promise.all(Array.from({ length: 6 }, () => request(s.port, 'GET', location, { ip })))).map((res) => res.status);
+    assert.deepEqual(statuses.sort(), [200, 200, 200, 410, 410, 410]);
+  });
+
+  it('counts a download only when the whole file has gone out', async () => {
+    const ip = nextIp();
+    const mac = () => s.app.stats.snapshot()[Object.keys(s.app.stats.snapshot()).sort().at(-1)]?.windows ?? 0;
+    const before = mac();
+    const location = (await link(s.port, ip, 'windows')).headers.location;
+    assert.equal((await request(s.port, 'GET', location, { ip, headers: { Range: 'bytes=-1' } })).status, 206);
+    assert.equal(mac(), before, 'the last byte alone is no download');
+    assert.equal((await request(s.port, 'GET', location, { ip })).status, 200);
+    assert.equal(mac(), before + 1);
+    assert.equal((await request(s.port, 'GET', location, { ip })).status, 200);
+    assert.equal(mac(), before + 1, 'one link counts once');
+  });
+
+  it('does not hold a slot for a client that is already gone', async () => {
+    const ip = nextIp();
+    for (let i = 0; i < 20; i += 1) {
+      const location = (await link(s.port, ip)).headers.location;
+      await new Promise((resolve) => {
+        const socket = net.connect(s.port, '127.0.0.1');
+        socket.on('error', () => {});
+        socket.on('close', resolve);
+        // The request and the end of the connection arrive together.
+        socket.end(`GET ${location} HTTP/1.1\r\nHost: ${HOST}\r\nX-Forwarded-For: ${ip}\r\n\r\n`);
+        socket.resume();
+      });
+    }
+    const started = Date.now();
+    while (s.app.activeDownloads > 0) {
+      assert.ok(Date.now() - started < 10_000, `${s.app.activeDownloads} slots still held`);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
   });
 
   it('rejects oversized and unexpected bodies', async () => {
@@ -325,57 +373,63 @@ describe('downloads', () => {
   });
 });
 
-describe('limits and blocks', () => {
+describe('limits', () => {
   let s;
   before(async () => {
     s = await startServer({
-      DOWNLOADS_PER_HOUR: '2',
-      RATE_PAGE_BURST: '5',
-      RATE_PAGE_PER_MINUTE: '1',
+      RATE_REQUEST_BURST: '6',
+      RATE_REQUESTS_PER_SECOND: '0.02',
       DOWNLOAD_LINK_SECONDS: '10',
-      BAN_THRESHOLD: '12',
       CONCURRENT_DOWNLOADS_PER_IP: '1',
       BANDWIDTH_PER_DOWNLOAD_MBIT: '0.5',
     });
   });
   after(() => s.close());
 
-  it('limits download links per address and hour', async () => {
-    const ip = nextIp();
-    assert.equal((await link(s.port, ip)).status, 303);
-    assert.equal((await link(s.port, ip)).status, 303);
-    const third = await link(s.port, ip, 'mac', { Accept: 'application/json' });
-    assert.equal(third.status, 429);
-    const data = JSON.parse(third.body);
-    assert.equal(data.title, 'Zu viele Downloads');
-    // Two downloads this hour with a limit of two: free again half an hour after the
-    // hour ends at the earliest (the window slides), so between 30 and 90 minutes.
-    const retry = Number(third.headers['retry-after']);
-    assert.ok(retry >= 1800 && retry <= 5400, `retry-after ${retry}`);
-    assert.equal((await link(s.port, nextIp())).status, 303, 'other addresses are not affected');
+  it('limits requests per address, whatever they ask for, with one short line', async () => {
+    for (const target of ['/datenschutz', '/assets/img/og.png', '/gibt-es-nicht', '/a%2fb', '/.env']) {
+      const ip = nextIp();
+      const answers = [];
+      for (let i = 0; i < 8; i += 1) answers.push(await request(s.port, 'GET', target, { ip }));
+      assert.equal(answers[5].status === 429, false, `${target}: within the burst`);
+      const last = answers[7];
+      assert.equal(last.status, 429, target);
+      assert.ok(Number(last.headers['retry-after']) > 0, target);
+      assert.ok(last.body.length < 80, `${target}: ${last.body.length} bytes`);
+      assert.equal(last.headers['content-security-policy'], undefined, 'plain text needs none of the page headers');
+    }
+    const other = await request(s.port, 'GET', '/datenschutz', { ip: nextIp() });
+    assert.equal(other.status, 200, 'other addresses are not affected');
   });
 
-  it('limits page requests per address', async () => {
-    const ip = nextIp();
-    const statuses = [];
-    for (let i = 0; i < 7; i += 1) statuses.push((await request(s.port, 'GET', '/datenschutz', { ip })).status);
-    assert.deepEqual(statuses.slice(0, 5), [200, 200, 200, 200, 200]);
-    assert.equal(statuses[6], 429);
+  it('counts refusals too: wrong methods, hosts and long addresses', async () => {
+    const attempts = [
+      (ip) => request(s.port, 'PUT', '/', { ip }),
+      (ip) => request(s.port, 'GET', '/', { ip, headers: { Host: 'evil.example' } }),
+      (ip) => request(s.port, 'GET', `/${'a'.repeat(3000)}`, { ip }),
+      (ip) => request(s.port, 'GET', 'http://evil.example/', { ip }),
+    ];
+    for (const attempt of attempts) {
+      const ip = nextIp();
+      let last;
+      for (let i = 0; i < 8; i += 1) last = await attempt(ip);
+      assert.equal(last.status, 429);
+    }
   });
 
-  it('blocks scanners after two trap hits', async () => {
+  it('blocks nobody for asking for odd things: others at the same address go on', async () => {
     const ip = nextIp();
     assert.equal((await request(s.port, 'GET', '/.env', { ip })).status, 404);
-    assert.equal((await request(s.port, 'GET', '/', { ip })).status, 200);
     assert.equal((await request(s.port, 'GET', '/wp-login.php', { ip })).status, 404);
-    assert.equal((await request(s.port, 'GET', '/', { ip })).status, 403);
+    assert.equal((await request(s.port, 'GET', '/dl/nonsense', { ip })).status, 404);
+    assert.equal((await request(s.port, 'GET', '/', { ip })).status, 200);
   });
 
   it('allows one download at a time per address when configured so', async () => {
     const ip = nextIp();
     const first = (await link(s.port, ip)).headers.location;
     const slow = request(s.port, 'GET', first, { ip });
-    await new Promise((resolve) => setTimeout(resolve, 150));
+    while (s.app.activeDownloads === 0) await new Promise((resolve) => setTimeout(resolve, 10));
     const ip2 = nextIp();
     const second = (await link(s.port, ip2)).headers.location;
     // Same address as the running download: refused for now, already on the page.
@@ -443,10 +497,10 @@ describe('fair use and robustness', () => {
   before(async () => {
     s = await startServer(
       {
-        DOWNLOADS_PER_HOUR: '2',
-        RATE_PAGE_BURST: '5',
-        RATE_PAGE_PER_MINUTE: '1',
+        RATE_REQUEST_BURST: '8',
+        RATE_REQUESTS_PER_SECOND: '0.02',
         DAILY_TRAFFIC_GB_PER_IP: '0.01',
+        DAILY_TRAFFIC_SLOW_MBIT: '16',
         DOWNLOAD_MIN_KBPS: '64',
         DOWNLOAD_SLOW_GRACE_SECONDS: '1',
         BANDWIDTH_TOTAL_MBIT: '0',
@@ -456,55 +510,47 @@ describe('fair use and robustness', () => {
   });
   after(() => s.close());
 
-  it('does not block visitors when another website makes their browser call traps', async () => {
+  it('answers another website asking through a visitor\'s browser with one line, at no cost to the address', async () => {
     const ip = nextIp();
-    const image = { 'Sec-Fetch-Site': 'cross-site', 'Sec-Fetch-Dest': 'image' };
-    for (const target of ['/.env', '/wp-login.php', '/.git/config', '/dl/nonsense']) {
-      assert.equal((await request(s.port, 'GET', target, { ip, headers: image })).status, 404);
+    const asks = [
+      { 'Sec-Fetch-Site': 'cross-site', 'Sec-Fetch-Mode': 'no-cors', 'Sec-Fetch-Dest': 'image' },
+      { 'Sec-Fetch-Site': 'cross-site', 'Sec-Fetch-Mode': 'cors', 'Sec-Fetch-Dest': 'empty' },
+      { 'Sec-Fetch-Site': 'same-site', 'Sec-Fetch-Mode': 'no-cors', 'Sec-Fetch-Dest': 'script' },
+      { 'Sec-Fetch-Site': 'cross-site', 'Sec-Fetch-Mode': 'navigate', 'Sec-Fetch-Dest': 'iframe' },
+    ];
+    for (let i = 0; i < 40; i += 1) {
+      const res = await request(s.port, 'GET', '/assets/img/og.png', { ip, headers: asks[i % asks.length] });
+      assert.equal(res.status, 403);
+      assert.ok(res.body.length < 40);
     }
-    const oldBrowser = { Referer: 'https://evil.example/forum' };
-    for (const target of ['/.env', '/wp-login.php']) {
-      assert.equal((await request(s.port, 'GET', target, { ip, headers: oldBrowser })).status, 404);
-    }
-    assert.equal((await request(s.port, 'GET', '/', { ip })).status, 200, 'not blocked');
+    assert.equal((await request(s.port, 'GET', '/', { ip })).status, 200, 'the limits of the address are untouched');
+    const click = { 'Sec-Fetch-Site': 'cross-site', 'Sec-Fetch-Mode': 'navigate', 'Sec-Fetch-Dest': 'document' };
+    assert.equal((await request(s.port, 'GET', '/', { ip: nextIp(), headers: click })).status, 200, 'a link from another website works');
+    const own = { 'Sec-Fetch-Site': 'same-origin', 'Sec-Fetch-Mode': 'no-cors', 'Sec-Fetch-Dest': 'image' };
+    assert.equal((await request(s.port, 'GET', '/assets/img/og.png', { ip: nextIp(), headers: own })).status, 200, 'its own pages load everything');
   });
 
-  it('limits private addresses behind the proxy, but never blocks them', async () => {
+  it('limits private addresses behind the proxy like any other', async () => {
     const ip = '10.20.30.40';
     const statuses = [];
-    for (let i = 0; i < 7; i += 1) statuses.push((await request(s.port, 'GET', '/datenschutz', { ip })).status);
-    assert.equal(statuses[6], 429, 'limits apply');
-    for (const target of ['/.env', '/wp-login.php', '/.git/config']) await request(s.port, 'GET', target, { ip });
-    const after = await request(s.port, 'GET', '/healthz', { ip });
-    assert.notEqual(after.status, 403, 'no block for a private address');
+    for (let i = 0; i < 10; i += 1) statuses.push((await request(s.port, 'GET', '/datenschutz', { ip })).status);
+    assert.equal(statuses[9], 429);
   });
 
-  it('counts a second full download through the same link', async () => {
-    const ip = nextIp();
-    const location = (await link(s.port, ip, 'windows')).headers.location; // download 1 of 2
-    assert.equal((await request(s.port, 'GET', location, { ip })).status, 200);
-    assert.equal((await request(s.port, 'GET', location, { ip })).status, 200); // download 2 of 2
-    const third = await request(s.port, 'GET', location, { ip });
-    assert.equal(third.status, 429);
-    assert.match(third.body.toString(), /Zu viele Downloads/);
-    const resume = await request(s.port, 'GET', location, { ip, headers: { Range: 'bytes=10-' } });
-    assert.equal(resume.status, 206, 'resuming does not count');
-  });
-
-  it('stops an address after its daily traffic', async () => {
+  it('slows an address down after its daily traffic, but never stops it', async () => {
     const ip = nextIp();
     const first = (await link(s.port, ip)).headers.location;
     const file = await request(s.port, 'GET', first, { ip });
     assert.equal(file.body.length, s.files.mac.length);
-    // 8 of 10 MB used: the next download may still start (and finish).
     const second = (await link(s.port, ip)).headers.location;
-    const res = await request(s.port, 'GET', second, { ip });
-    assert.equal(res.status, 200);
-    assert.equal(res.body.length, s.files.mac.length);
-    // 16 of 10 MB: no more links today.
-    const third = await link(s.port, ip, 'mac', { Accept: 'application/json' });
-    assert.equal(third.status, 429);
-    assert.equal(JSON.parse(third.body).title, 'Tageslimit erreicht');
+    assert.equal((await request(s.port, 'GET', second, { ip })).status, 200);
+    // 16 of 10 MB: only the slow lane now, 2 MB/s here, so the 8 MB take seconds.
+    const started = Date.now();
+    const third = (await link(s.port, ip)).headers.location;
+    const slow = await request(s.port, 'GET', third, { ip });
+    assert.equal(slow.status, 200);
+    assert.equal(slow.body.length, s.files.mac.length);
+    assert.ok(Date.now() - started > 2500, `${Date.now() - started} ms`);
   });
 
   it('cuts off a download that does not move and frees the slot', async () => {
@@ -605,7 +651,7 @@ describe('password', () => {
     const css = html.match(/href="(\/assets\/css\/site\.css\?v=[0-9a-f]+)"/)[1];
     assert.equal((await request(s.port, 'GET', css, { ip })).status, 200);
     assert.equal((await request(s.port, 'GET', '/robots.txt', { ip })).status, 200);
-    // Safari asks for these on every visit; a 404 would cost penalty points and soon block the address.
+    // Safari asks for these on every visit.
     for (const icon of ['/apple-touch-icon.png', '/apple-touch-icon-precomposed.png', '/favicon.ico']) {
       assert.equal((await request(s.port, 'GET', icon, { ip })).status, 200, icon);
     }
@@ -688,4 +734,380 @@ describe('password', () => {
     assert.deepEqual(basicStatuses.slice(0, 10), Array(10).fill(401));
     assert.equal(basicStatuses[11], 429);
   });
+
+  it('does not give away a right Basic Auth guess while guessing is slowed down', async () => {
+    const ip = nextIp();
+    const check = (headers) => request(s.port, 'GET', '/checksums.txt', { ip, headers });
+    for (let i = 0; i < 10; i += 1) assert.equal((await check(basic('', `falsch${i}xx`))).status, 401);
+    assert.equal((await check(basic('', 'falsch-xxx'))).status, 429);
+    assert.equal((await check(AUTH)).status, 429, 'answered like any other guess');
+    const other = await request(s.port, 'GET', '/checksums.txt', { ip: nextIp(), headers: AUTH });
+    assert.equal(other.status, 200, 'other addresses are not affected');
+  });
+
+  it('lets a whole class sign in at once from one address', async () => {
+    const ip = nextIp();
+    for (let i = 0; i < 24; i += 1) assert.equal((await signIn(ip, PASSWORD)).status, 303, `student ${i}`);
+    for (let i = 0; i < 24; i += 1) assert.equal((await request(s.port, 'GET', '/checksums.txt', { ip, headers: AUTH })).status, 200);
+  });
+
+  it('takes no header as an excuse for guessing', async () => {
+    const ip = nextIp();
+    const faked = { ...basic('', 'falsch-xxx'), 'Sec-Fetch-Site': 'cross-site' };
+    let last;
+    for (let i = 0; i < 11; i += 1) last = await request(s.port, 'GET', '/checksums.txt', { ip, headers: faked });
+    assert.equal(last.status, 429);
+    const referer = { 'Content-Type': FORM['Content-Type'], Origin: ORIGIN, Referer: 'https://evil.example/' };
+    const other = nextIp();
+    for (let i = 0; i < 11; i += 1) last = await request(s.port, 'POST', '/login', { ip: other, headers: referer, body: 'weiter=%2F&passwort=falsch-xxx' });
+    assert.equal(last.status, 429);
+  });
+
+  it('counts all addresses of an IPv6 /48 as one for guessing', async () => {
+    let last;
+    for (let i = 0; i < 11; i += 1) {
+      last = await request(s.port, 'GET', '/checksums.txt', { ip: `2001:db8:77:${i}00::1`, headers: basic('', 'falsch-xxx') });
+    }
+    assert.equal(last.status, 429);
+    assert.equal((await request(s.port, 'GET', '/checksums.txt', { ip: '2001:db8:78::1', headers: AUTH })).status, 200, 'the next /48 goes on');
+  });
+
+  it('refuses a correctly signed cookie that would last too long', async () => {
+    const key = crypto.scryptSync(PASSWORD, 'wortschatz-login-v1', 32, { N: 2 ** 15, r: 8, p: 1, maxmem: 64 * 1024 * 1024 });
+    const cookie = (expires) => `__Host-wortschatz=${expires}.${crypto.createHmac('sha256', key).update(`login:${expires}`).digest('base64url')}`;
+    const now = Math.floor(Date.now() / 1000);
+    assert.equal((await request(s.port, 'GET', '/', { ip: nextIp(), headers: { Cookie: cookie(now + 3600) } })).status, 200, 'the key is the right one');
+    assert.equal((await request(s.port, 'GET', '/', { ip: nextIp(), headers: { Cookie: cookie(9999999999) } })).status, 303);
+    const long = `${'x'.repeat(5000)}=1; ${cookie(now + 3600)}`;
+    assert.equal((await request(s.port, 'GET', '/', { ip: nextIp(), headers: { Cookie: long } })).status, 303, 'very long cookie headers are not read');
+  });
+
+  it('signs out, only by its own form', async () => {
+    const ip = nextIp();
+    const cookie = cookieOf(await signIn(ip, PASSWORD));
+    const home = await request(s.port, 'GET', '/', { ip, headers: { Cookie: cookie } });
+    assert.match(home.body.toString(), /action="\/logout"/);
+    assert.doesNotMatch((await request(s.port, 'GET', '/login', { ip: nextIp() })).body.toString(), /action="\/logout"/, 'not on the login page');
+    assert.equal((await request(s.port, 'GET', '/logout', { ip, headers: { Cookie: cookie } })).headers['set-cookie'], undefined, 'a link cannot sign anybody out');
+    const foreign = await request(s.port, 'POST', '/logout', { ip, headers: { Cookie: cookie, Origin: 'https://evil.example', 'Sec-Fetch-Site': 'cross-site' } });
+    assert.equal(foreign.status, 403);
+    assert.equal(foreign.headers['set-cookie'], undefined);
+    const out = await request(s.port, 'POST', '/logout', { ip, headers: { Cookie: cookie, ...FORM } });
+    assert.equal(out.status, 303);
+    assert.equal(out.headers.location, '/login');
+    assert.match(String(out.headers['set-cookie']), /^__Host-wortschatz=; Path=\/; Max-Age=0; HttpOnly; SameSite=Lax; Secure$/);
+  });
+
+  it('keeps what is behind the password out of shared caches', async () => {
+    const ip = nextIp();
+    const cookie = cookieOf(await signIn(ip, PASSWORD));
+    for (const target of ['/', '/checksums.txt']) {
+      const res = await request(s.port, 'GET', target, { ip, headers: { Cookie: cookie } });
+      assert.equal(res.headers['cache-control'], 'private, no-cache', target);
+      assert.match(res.headers.vary, /Cookie, Authorization/, target);
+    }
+    assert.match((await request(s.port, 'GET', '/robots.txt', { ip })).headers['cache-control'], /^public/);
+  });
+});
+
+describe('password guesses per day', () => {
+  let s;
+  before(async () => {
+    s = await startServer({ SITE_PASSWORD: 'Test-Pw8', PASSWORD_GUESSES_PER_DAY: '3' });
+  });
+  after(() => s.close());
+
+  it('allows only so many wrong passwords a day, however slowly they come', async () => {
+    const ip = nextIp();
+    const wrong = () => request(s.port, 'POST', '/login', { ip, headers: FORM, body: 'weiter=%2F&passwort=falsch-xxx' });
+    assert.deepEqual([(await wrong()).status, (await wrong()).status, (await wrong()).status, (await wrong()).status], [401, 401, 401, 429]);
+    const right = await request(s.port, 'POST', '/login', { ip, headers: FORM, body: 'weiter=%2F&passwort=Test-Pw8' });
+    assert.equal(right.status, 429, 'answered like any other guess');
+    assert.ok(Number(right.headers['retry-after']) > 3600);
+    assert.equal((await request(s.port, 'POST', '/login', { ip: nextIp(), headers: FORM, body: 'weiter=%2F&passwort=Test-Pw8' })).status, 303);
+  });
+});
+
+describe('floods', () => {
+  /** A server of its own, closed again even when a check fails (open sockets would keep the tests running). */
+  const using = async (env, options, run) => {
+    const s = await startServer(env, options);
+    try {
+      await run(s);
+    } finally {
+      await s.close();
+    }
+  };
+
+  const firstVisit = async (port, ip) => {
+    // What a browser with a retina screen loads on a first visit, compressed.
+    const encoded = { 'Accept-Encoding': 'br', 'Sec-Fetch-Site': 'same-origin' };
+    const page = await request(port, 'GET', '/', { ip, headers: encoded });
+    const html = zlib.brotliDecompressSync(page.body).toString();
+    const wanted = [
+      ...[...html.matchAll(/(?:src|href)="(\/assets\/[^"]+\.(?:css|js)[^"]*)"/g)].map((match) => match[1]),
+      ...[...html.matchAll(/(\/assets\/img\/[^"\s,]+) 2x/g)].map((match) => match[1]),
+      ...[...html.matchAll(/<img[^>]+src="(\/assets\/[^"]+)"/g)].map((match) => match[1]),
+      '/assets/img/noise.png',
+      '/favicon.ico',
+    ];
+    const answers = [page];
+    for (const asset of new Set(wanted)) answers.push(await request(port, 'GET', asset, { ip, headers: encoded }));
+    return answers;
+  };
+
+  it('lets a whole class of 60 visit at once from one address', () =>
+    using({}, {}, async (s) => {
+      const ip = nextIp();
+      const answers = (await Promise.all(Array.from({ length: 60 }, () => firstVisit(s.port, ip)))).flat();
+      assert.ok(answers.length >= 60 * 6, `${answers.length} requests: as many as real browsers make`);
+      const refused = answers.filter((answer) => answer.status !== 200);
+      assert.equal(refused.length, 0, refused.map((answer) => answer.status).join(' '));
+    }));
+
+  it('keeps refused and missing pages small', () =>
+    using({}, {}, async (s) => {
+      const missing = await request(s.port, 'GET', '/gibt-es-nicht', { ip: nextIp() });
+      assert.equal(missing.status, 404);
+      assert.ok(missing.body.length < 5000, `${missing.body.length} bytes`);
+    }));
+
+  it('limits the bytes per address, also when each request stays within the limits', () =>
+    using({ SITE_BANDWIDTH_PER_IP_MBIT: '0.0125' }, {}, async (s) => {
+      // 1.5 KB/s, 400 KB in reserve.
+      const ip = nextIp();
+      let fetched = 0;
+      let last;
+      do {
+        last = await request(s.port, 'GET', '/assets/img/og.png', { ip });
+        if (last.status === 200) fetched += 1;
+      } while (last.status === 200 && fetched < 900);
+      assert.equal(last.status, 429);
+      assert.ok(last.body.length < 80);
+      const size = (await request(s.port, 'GET', '/assets/img/og.png', { ip: nextIp() })).body.length + 1200;
+      assert.ok(fetched * size >= 400_000 && (fetched - 2) * size < 400_000, `${fetched} images of ${size} bytes`);
+      assert.equal((await request(s.port, 'GET', '/assets/img/og.png', { ip: nextIp() })).status, 200, 'others go on');
+    }));
+
+  it('protects the upload when many addresses each stay within their limits', () =>
+    using({ SITE_BANDWIDTH_MBIT: '1' }, {}, async (s) => {
+      // 125 KB/s, 1 MB in reserve, and as much again for addresses that got little so far.
+      let last;
+      let fetched = 0;
+      do {
+        last = await request(s.port, 'GET', '/assets/img/og.png', { ip: nextIp() });
+        fetched += 1;
+      } while (last.status === 200 && fetched < 900);
+      assert.equal(last.status, 503);
+      assert.ok(last.body.length < 80);
+      assert.ok(Number(last.headers['retry-after']) > 0);
+      assert.equal((await request(s.port, 'GET', '/healthz')).status, 200, 'the health check from this machine still works');
+    }));
+
+  it('sends away those who got a lot first when the upload runs short', () =>
+    using({ SITE_BANDWIDTH_MBIT: '2' }, {}, async (s) => {
+      // 250 KB/s, 2 MB in reserve. The greedy address gets 2 MB, more than the 1 MB of a light one.
+      const greedy = nextIp();
+      let answer;
+      do {
+        answer = await request(s.port, 'GET', '/assets/img/og.png', { ip: greedy });
+      } while (answer.status === 200);
+      assert.equal(answer.status, 503, 'its own allowance is not used up, but the upload is');
+      assert.equal((await request(s.port, 'GET', '/', { ip: nextIp() })).status, 200, "a visitor's first page still gets through");
+    }));
+
+  it('lets running downloads finish while pages are refused', () =>
+    using({ SITE_BANDWIDTH_MBIT: '0.1', BANDWIDTH_PER_DOWNLOAD_MBIT: '1' }, {}, async (s) => {
+      // 300 KB at 125 KB/s: about two seconds. Pages: 12.5 KB/s, 100 KB in reserve.
+      const ip = nextIp();
+      const location = (await link(s.port, ip)).headers.location;
+      const download = request(s.port, 'GET', location, { ip });
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      let page;
+      let asked = 0;
+      do {
+        page = await request(s.port, 'GET', '/assets/img/og.png', { ip: nextIp() });
+        asked += 1;
+      } while (page.status === 200 && asked < 900);
+      assert.equal(page.status, 503);
+      const file = await download;
+      assert.equal(file.status, 200);
+      assert.equal(sha(file.body), sha(s.files.mac));
+    }));
+
+  it('charges a response at once, even if the client never reads it', async () => {
+    // A file too big for the socket buffers: nobody reading means the response never finishes.
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'wortschatz-big-'));
+    await fs.cp(PUBLIC_DIR, root, { recursive: true });
+    await fs.writeFile(path.join(root, 'assets/img/big.png'), crypto.randomBytes(4_500_000));
+    try {
+      await using({ PUBLIC_DIR: root, SITE_BANDWIDTH_PER_IP_MBIT: '0.0125' }, {}, async (s) => {
+        const ip = nextIp();
+        const socket = net.connect(s.port, '127.0.0.1');
+        socket.on('error', () => {});
+        socket.pause();
+        socket.write(`GET /assets/img/big.png HTTP/1.1\r\nHost: ${HOST}\r\nX-Forwarded-For: ${ip}\r\n\r\n`);
+        // The limit answers as soon as the response is under way.
+        let answer;
+        for (let i = 0; i < 100 && answer?.status !== 429; i += 1) {
+          await new Promise((resolve) => setTimeout(resolve, 20));
+          answer = await request(s.port, 'GET', '/healthz', { ip });
+        }
+        assert.equal(answer.status, 429);
+        socket.destroy();
+      });
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps the slow lane inside the bandwidth limit', () =>
+    using({ BANDWIDTH_TOTAL_MBIT: '8', DAILY_TRAFFIC_GB_PER_IP: '0.0001', DAILY_TRAFFIC_SLOW_MBIT: '100' }, { macSize: 2_000_000 }, async (s) => {
+      // 1 MB/s for everything: 100 KB fast, or not, the file takes about two seconds anyway.
+      const one = nextIp();
+      const two = nextIp();
+      const started = Date.now();
+      const [a, b] = await Promise.all([one, two].map(async (ip) => {
+        const { location } = (await link(s.port, ip)).headers;
+        return request(s.port, 'GET', location, { ip });
+      }));
+      assert.equal(a.status, 200);
+      assert.equal(b.status, 200);
+      assert.ok(Date.now() - started > 3000, `${Date.now() - started} ms for 4 MB at 1 MB/s`);
+    }));
+
+  it('keeps refusals out of every cache', () =>
+    using({ RATE_REQUEST_BURST: '5', RATE_REQUESTS_PER_SECOND: '0.02' }, {}, async (s) => {
+      const asked = await request(s.port, 'GET', '/assets/css/site.css', { ip: nextIp(), headers: { 'Sec-Fetch-Site': 'cross-site', 'Sec-Fetch-Mode': 'no-cors' } });
+      assert.equal(asked.status, 403);
+      assert.equal(asked.headers['cache-control'], 'no-store');
+      const ip = nextIp();
+      let last;
+      for (let i = 0; i < 7; i += 1) last = await request(s.port, 'GET', '/healthz', { ip });
+      assert.equal(last.status, 429);
+      assert.equal(last.headers['cache-control'], 'no-store');
+    }));
+
+  it('closes the connection after refusing a body it did not read', () =>
+    using({}, {}, async (s) => {
+      for (const [method, target] of [['POST', '/'], ['PUT', '/'], ['POST', '/logout']]) {
+        const socket = net.connect(s.port, '127.0.0.1');
+        socket.on('error', () => {});
+        const closed = new Promise((resolve) => socket.on('close', resolve));
+        socket.write(`${method} ${target} HTTP/1.1\r\nHost: ${HOST}\r\nX-Forwarded-For: ${nextIp()}\r\nContent-Length: 500\r\n\r\nx`);
+        socket.resume();
+        const started = Date.now();
+        await closed;
+        assert.ok(Date.now() - started < 5000, `${method} ${target}: ${Date.now() - started} ms`);
+      }
+    }));
+
+  it('closes a timed-out connection even if the client goes on sending, and stays silent to one that never sent anything', () =>
+    using({}, { serverOptions: { requestTimeout: 500, headersTimeout: 500, connectionsCheckingInterval: 100 } }, async (s) => {
+      const silent = net.connect(s.port, '127.0.0.1');
+      const heard = [];
+      silent.on('data', (data) => heard.push(data));
+      silent.on('error', () => {});
+      await new Promise((resolve) => silent.on('close', resolve));
+      assert.equal(heard.length, 0, 'no answer without a question');
+
+      const stubborn = net.connect({ port: s.port, host: '127.0.0.1', allowHalfOpen: true });
+      stubborn.on('error', () => {});
+      const answer = new Promise((resolve) => stubborn.once('data', (data) => resolve(data.toString('latin1'))));
+      const closed = new Promise((resolve) => stubborn.on('close', resolve));
+      stubborn.write(`POST /download/mac HTTP/1.1\r\nHost: ${HOST}\r\nX-Forwarded-For: ${nextIp()}\r\nOrigin: ${ORIGIN}\r\nSec-Fetch-Site: same-origin\r\nContent-Type: ${FORM['Content-Type']}\r\nContent-Length: 900\r\n\r\nw`);
+      const drip = setInterval(() => stubborn.write('x'), 100);
+      assert.match(await answer, /^HTTP\/1\.1 408/);
+      await closed;
+      clearInterval(drip);
+    }));
+
+  it('writes no log line per refused request', async () => {
+    let lines = 0;
+    const stream = { write: () => { lines += 1; } };
+    await using({ ACCESS_LOG: '1', RATE_REQUEST_BURST: '5', RATE_REQUESTS_PER_SECOND: '0.02' }, { logger: createLogger('info', { stdout: stream, stderr: stream }) }, async (s) => {
+      const before = lines;
+      const ip = nextIp();
+      for (let i = 0; i < 100; i += 1) await request(s.port, 'GET', '/', { ip });
+      assert.ok(lines - before <= 6, `${lines - before} lines`);
+    });
+  });
+
+  it('caps the log lines when many addresses come at once', async () => {
+    let lines = 0;
+    const stream = { write: () => { lines += 1; } };
+    await using({ ACCESS_LOG: '1' }, { logger: createLogger('info', { stdout: stream, stderr: stream }) }, async (s) => {
+      const before = lines;
+      const started = Date.now();
+      // In batches: the system refuses too many new connections at the same instant.
+      for (let batch = 0; batch < 15; batch += 1) {
+        await Promise.all(Array.from({ length: 40 }, () => request(s.port, 'GET', '/healthz', { ip: nextIp() })));
+      }
+      const allowed = 200 + 20 * ((Date.now() - started) / 1000) + 5;
+      assert.ok(lines - before <= allowed, `${lines - before} lines for 600 requests, ${allowed} allowed`);
+    });
+  });
+
+  it('shortens long addresses in the log', async () => {
+    const seen = [];
+    const stream = { write: (line) => seen.push(JSON.parse(line)) };
+    await using({ ACCESS_LOG: '1' }, { logger: createLogger('info', { stdout: stream, stderr: stream }) }, async (s) => {
+      await request(s.port, 'GET', `/${'a'.repeat(1500)}`, { ip: nextIp() });
+      let line;
+      for (let i = 0; i < 500 && !line; i += 1) {
+        line = seen.find((entry) => entry.msg === 'request');
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      assert.ok(line.path.length <= 80, String(line.path.length));
+    });
+  });
+
+  it('holds only a few unfinished form posts per address, and drops them when time is up', () =>
+    using({}, { serverOptions: { requestTimeout: 2000, headersTimeout: 2000, connectionsCheckingInterval: 100 } }, async (s) => {
+      const post = (ip) => {
+        const socket = net.connect(s.port, '127.0.0.1');
+        socket.on('error', () => {});
+        const closed = new Promise((resolve) => socket.on('close', resolve));
+        const answer = new Promise((resolve) => socket.once('data', (data) => resolve(data.toString('latin1'))));
+        socket.write(`POST /download/mac HTTP/1.1\r\nHost: ${HOST}\r\nX-Forwarded-For: ${ip}\r\nOrigin: ${ORIGIN}\r\nSec-Fetch-Site: same-origin\r\nContent-Type: ${FORM['Content-Type']}\r\nContent-Length: 900\r\n\r\nwebsite=`);
+        return { socket, closed, answer };
+      };
+      const ip = nextIp();
+      const posts = Array.from({ length: 9 }, () => post(ip));
+      assert.match(await Promise.race(posts.map((item) => item.answer)), /^HTTP\/1\.1 429/, 'nine at once from one address');
+      const network = Array.from({ length: 9 }, (_, i) => post(`2001:db8:99:${i}00::1`));
+      assert.match(await Promise.race(network.map((item) => item.answer)), /^HTTP\/1\.1 429/, 'an IPv6 /48 counts as one');
+      assert.equal((await request(s.port, 'GET', '/datenschutz', { ip: nextIp() })).status, 200, 'pages are not affected');
+      const started = Date.now();
+      await Promise.all([...posts, ...network].map((item) => item.closed));
+      // Far below the 60 s after which idle connections go anyway.
+      assert.ok(Date.now() - started < 20_000, `${Date.now() - started} ms`);
+    }));
+
+  it('makes room at the connection limit by closing idle connections', () =>
+    using({}, {}, async (s) => {
+      s.server.maxConnections = 20;
+      const sockets = [];
+      try {
+        for (let i = 0; i < 20; i += 1) {
+          await new Promise((resolve) => {
+            const socket = net.connect(s.port, '127.0.0.1', () => {
+              socket.write(`GET /healthz HTTP/1.1\r\nHost: ${HOST}\r\n\r\n`);
+            });
+            socket.on('error', () => {});
+            socket.once('data', resolve);
+            sockets.push(socket);
+          });
+        }
+        // Full now: the first new connection is dropped and clears the idle ones.
+        let answer = null;
+        for (let i = 0; i < 100 && answer?.status !== 200; i += 1) {
+          answer = await request(s.port, 'GET', '/healthz').catch(() => null);
+          if (answer?.status !== 200) await new Promise((resolve) => setTimeout(resolve, 50));
+        }
+        assert.equal(answer?.status, 200);
+      } finally {
+        sockets.forEach((socket) => socket.destroy());
+      }
+    }));
 });

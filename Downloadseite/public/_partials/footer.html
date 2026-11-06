@@ -6,6 +6,7 @@
         <a href="/datenschutz">Datenschutz</a>
         <a href="/checksums.txt">Prüfsummen</a>
         {{#site.contactEmail}}<a href="{{site.mailto}}">Kontakt</a>{{/site.contactEmail}}
+        {{#site.login}}{{^login}}<form method="post" action="/logout"><button class="footer-logout" type="submit">Abmelden</button></form>{{/login}}{{/site.login}}
       </nav>
       <p class="footer-copy">© {{site.year}} Wortschatz{{#site.operator}}, {{site.operator}}{{/site.operator}}</p>
     </div>

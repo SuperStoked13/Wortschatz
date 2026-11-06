@@ -1,6 +1,8 @@
 using Avalonia;
 using Avalonia.Automation;
 using Avalonia.Controls;
+using Avalonia.Input;
+using Avalonia.VisualTree;
 using Avalonia.Layout;
 using Avalonia.LogicalTree;
 using Avalonia.Media;
@@ -53,6 +55,14 @@ public sealed class FlashcardsStage : Grid
         Children.Add(_emptyHost);
         Grid.SetRow(_barHost, 1);
         Children.Add(_barHost);
+        // Phone: a tap anywhere turns the card, a swipe anywhere sorts it (not only on the card itself).
+        if (AppDevice.IsPhone)
+        {
+            AddHandler(PointerPressedEvent, OnStagePressed, Avalonia.Interactivity.RoutingStrategies.Bubble);
+            AddHandler(PointerMovedEvent, OnStageMoved, Avalonia.Interactivity.RoutingStrategies.Bubble);
+            AddHandler(PointerReleasedEvent, OnStageReleased, Avalonia.Interactivity.RoutingStrategies.Bubble);
+            AddHandler(PointerCaptureLostEvent, OnStageCaptureLost, Avalonia.Interactivity.RoutingStrategies.Bubble);
+        }
         SizeChanged += (_, e) =>
         {
             // The stage's size in 16-point steps, so a live resize does not rebuild it on every frame.
@@ -66,12 +76,59 @@ public sealed class FlashcardsStage : Grid
 
     DeckPhase Phase => _c.Phase;
 
+    // MARK: Swipes beside the card (phone)
+
+    Point? _stagePress;
+    bool _stageDragging;
+
+    void OnStagePressed(object? sender, PointerPressedEventArgs e)
+    {
+        // The card, its buttons and the action bar handle their own presses.
+        if (e.Handled || Phase != DeckPhase.Card) return;
+        if (e.Source is Visual v && _barHost.IsVisualAncestorOf(v)) return;
+        _stagePress = e.GetPosition(null);
+        _stageDragging = false;
+        e.Pointer.Capture(this);
+        e.Handled = true;
+    }
+
+    void OnStageMoved(object? sender, PointerEventArgs e)
+    {
+        if (_stagePress is not { } start) return;
+        var delta = e.GetPosition(null) - start;
+        if (!_stageDragging && Math.Sqrt(delta.X * delta.X + delta.Y * delta.Y) < 6) return;
+        _stageDragging = true;
+        _c.Drag(new FlashcardDrag.Changed(delta.X, Motion.Now()));
+    }
+
+    void OnStageReleased(object? sender, PointerReleasedEventArgs e)
+    {
+        if (_stagePress is null) return;
+        _stagePress = null;
+        e.Pointer.Capture(null);
+        if (_stageDragging)
+        {
+            _stageDragging = false;
+            _c.Drag(new FlashcardDrag.Ended(Motion.Now()));
+        }
+        else if (Phase == DeckPhase.Card) _c.Flip();
+    }
+
+    void OnStageCaptureLost(object? sender, PointerCaptureLostEventArgs e)
+    {
+        if (_stagePress is null) return;
+        _stagePress = null;
+        if (!_stageDragging) return;
+        _stageDragging = false;
+        _c.SwipeCancelled();
+    }
+
     // MARK: Layout
 
-    double ColumnWidth => Math.Min(760, _size.Width - 2 * 32);
+    double ColumnWidth => Math.Min(760, _size.Width - 2 * (AppDevice.IsPhone ? 4 : 32));
 
     /// <summary>The card sits a little below the top row in tall windows and close to it in short ones.</summary>
-    double TopInset => Math.Max(20, Math.Min(112, (_size.Height - 560) / 2)) * 0.75;
+    double TopInset => AppDevice.IsPhone ? 24 : Math.Max(20, Math.Min(112, (_size.Height - 560) / 2)) * 0.75;
 
     /// <summary>The card's height: what is left above the action bar, in an index-card shape.</summary>
     double CardHeight
@@ -170,52 +227,59 @@ public sealed class FlashcardsStage : Grid
     /// <summary>
     /// The floating bar (Mac: FlashcardsActionBar): ↶ Zurück on the left; on a card ← "Lerne ich noch", → "Weiss ich"
     /// (with this round's counts) and "Umdrehen ↵"; after a round "Weiter mit N Karten ↵"; at the end "Lernen" and
-    /// "Nochmal von vorne ↵". It always ends with the Enter action.
+    /// "Nochmal von vorne ↵". It always ends with the Enter action. In narrow windows the sort buttons drop their titles
+    /// (Mac: ViewThatFits with the compact bar).
     /// </summary>
     Control ActionBar()
     {
         var deck = _c.Deck;
+        var previous = _counts;
+        _counts = Phase == DeckPhase.Card ? (deck.LearningCount, deck.KnownInRound) : (-1, -1);
+        return new ViewThatFits(compact => BarRow(deck, previous, compact));
+    }
+
+    Control BarRow(FlashcardDeck deck, (int Learning, int Known) previous, bool compact)
+    {
         var undo = StudyChrome.FloatingIconButton(IconName.Undo, "Letzte Karte zurückholen (Rücktaste)", _c.Undo);
         undo.IsEnabled = deck.CanUndo;
         var trailing = new List<Control?>();
         switch (Phase)
         {
             case DeckPhase.Card:
-                var learning = SortButton(FlashcardVerdict.StillLearning, deck.LearningCount, _counts.Learning);
-                var known = SortButton(FlashcardVerdict.Know, deck.KnownInRound, _counts.Known);
-                _counts = (deck.LearningCount, deck.KnownInRound);
-                trailing.Add(learning);
-                trailing.Add(known);
+                trailing.Add(SortButton(FlashcardVerdict.StillLearning, deck.LearningCount, previous.Learning, compact));
+                trailing.Add(SortButton(FlashcardVerdict.Know, deck.KnownInRound, previous.Known, compact));
                 trailing.Add(StudyChrome.Floating(Ui.Primary("Umdrehen", _c.Flip, "↵", height: 44)));
                 break;
             case DeckPhase.RoundDone:
-                _counts = (-1, -1);
                 trailing.Add(StudyChrome.Floating(Ui.Secondary("Zurück zum Lernset", _c.Exit, keyHint: "Esc", height: 44)));
                 trailing.Add(StudyChrome.Floating(Ui.Primary(FlashcardCopy.NextRoundAction(deck), _c.NextRound, "↵", height: 44)));
                 break;
             case DeckPhase.Finished:
-                _counts = (-1, -1);
                 var learn = StudyChrome.Floating(Ui.Secondary("Lernen", _c.OpenLearn, IconName.Sparkles, height: 44));
                 ToolTip.SetTip(learn, "Die Begriffe jetzt abfragen, damit sie als gemeistert zählen");
                 trailing.Add(learn);
                 trailing.Add(StudyChrome.Floating(Ui.Primary("Nochmal von vorne", () => _c.Restart(), "↵", height: 44)));
                 break;
         }
-        var bar = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*,Auto"), Width = ColumnWidth, Margin = new Thickness(0, 12, 0, 20) };
-        bar.HorizontalAlignment = HorizontalAlignment.Center;
+        // Phone, after a round or at the end: the two actions share the width, like the other study screens.
+        if (AppDevice.IsPhone && Phase != DeckPhase.Card) return StudyActionBarView.Create(null, trailing);
+        // At most the column's width (the margins keep it there); its natural width decides the compact form.
+        var bar = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*,Auto"), ColumnSpacing = AppDevice.IsPhone ? 6 : 12, MaxWidth = 760, Margin = AppDevice.IsPhone ? new Thickness(0, 8, 0, 12) : new Thickness(32, 12, 32, 20) };
         bar.Children.Add(undo);
-        var right = Ui.H(12, trailing.ToArray());
+        var right = Ui.H(AppDevice.IsPhone ? 6 : 12, trailing.ToArray());
         Grid.SetColumn(right, 2);
         bar.Children.Add(right);
         foreach (var b in bar.GetLogicalDescendants().OfType<Button>()) b.Focusable = false;
+        if (AppDevice.IsPhone) StudyActionBarView.RegisterPhoneBar(bar);
         return bar;
     }
 
     /// <summary>
     /// "← ↺ Lerne ich noch 3" and "✓ Weiss ich 5 →": glass buttons with the verdict's colour on the symbol and the count,
-    /// the arrow key on the side the card goes to (Mac: FlashcardSortButton). The count pops when it grows.
+    /// the arrow key on the side the card goes to (Mac: FlashcardSortButton); compact without the title. The count pops
+    /// when it grows.
     /// </summary>
-    Control SortButton(FlashcardVerdict verdict, int count, int previous)
+    Control SortButton(FlashcardVerdict verdict, int count, int previous, bool compact)
     {
         var palette = verdict.Palette();
         var badge = new Border
@@ -229,11 +293,11 @@ public sealed class FlashcardsStage : Grid
         var row = Ui.H(8,
             verdict == FlashcardVerdict.StillLearning ? Ui.KeyCap("←") : null,
             Icons.Icon(verdict.Icon(), 17, palette.Fill, 2.6),
-            Ui.Text(verdict.Title(), 14.5, FontWeight.Medium),
+            compact ? null : Ui.Text(verdict.Title(), 14.5, FontWeight.Medium),
             badge,
             verdict == FlashcardVerdict.Know ? Ui.KeyCap("→") : null);
         row.VerticalAlignment = VerticalAlignment.Center;
-        var button = new WsButton(row, ButtonKind.Glass, 44, padding: new Thickness(14, 0));
+        var button = new WsButton(row, ButtonKind.Glass, 44, padding: new Thickness(compact ? 10 : 14, 0));
         button.Click += (_, _) => _c.Sort(verdict);
         ToolTip.SetTip(button, $"{verdict.Title()} ({(verdict == FlashcardVerdict.Know ? "→" : "←")})");
         AutomationProperties.SetName(button, $"{verdict.Title()}: {FlashcardCopy.Cards(count)}");
@@ -281,7 +345,8 @@ public sealed class FlashcardsStage : Grid
 
         var tiles = new List<Control> { StatTile.Create("Weiss ich", $"{deck.KnownCount}", IconName.Check, P.Success.Fill) };
         if (!finished) tiles.Add(StatTile.Create("Lerne ich noch", $"{deck.LearningCount}", IconName.Repeat, P.Learning.Fill));
-        tiles.Add(StatTile.Create(deck.Round == 1 ? "Runde" : "Runden", $"{deck.Round}", IconName.Repeat, P.Info.Fill));
+        // Its own symbol (Mac: arrow.trianglehead.2.clockwise), not the one of "Lerne ich noch".
+        tiles.Add(StatTile.Create(deck.Round == 1 ? "Runde" : "Runden", $"{deck.Round}", IconName.RotateCcw, P.Info.Fill));
         var row = StatTile.Row(12, tiles.ToArray());
         row.MaxWidth = 620;
 

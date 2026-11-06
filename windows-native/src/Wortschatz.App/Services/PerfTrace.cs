@@ -22,7 +22,7 @@ public static class PerfTrace
     }
 
     /// <summary>Logs the time from <paramref name="started"/> until the window's next layout pass is done.</summary>
-    public static void UntilLayout(Window window, long started, string what)
+    public static void UntilLayout(Avalonia.Layout.Layoutable window, long started, string what)
     {
         if (!Enabled) return;
         void Done(object? sender, EventArgs e)

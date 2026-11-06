@@ -2911,12 +2911,22 @@ main,
   gap: 8px 22px;
 }
 
-.footer-links a {
+.footer-links a,
+.footer-logout {
   color: var(--text-2);
   text-decoration: none;
 }
 
-.footer-links a:hover {
+.footer-logout {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  cursor: pointer;
+}
+
+.footer-links a:hover,
+.footer-logout:hover {
   color: var(--text);
   text-decoration: underline;
 }

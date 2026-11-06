@@ -563,19 +563,39 @@ public sealed class LibraryStore
             }
         }
         catch (Exception) { primaryCorrupt = true; }
-        var backups = backend.LoadBackups();
+        // The primary document is missing or unreadable: fall back to the newest readable backup. The backups and
+        // setting the damaged file aside are best effort: an error there never keeps the library from opening.
+        List<byte[]> backups;
+        try { backups = backend.LoadBackups(); }
+        catch (Exception) { backups = []; }
         for (int index = 0; index < backups.Count; index++)
         {
             if (ParseDocument(backups[index]) is not { } json) continue;
-            if (primaryCorrupt) backend.PreserveCorrupt();
+            if (primaryCorrupt) PreserveCorrupt(backend);
             return (StoreSanitizer.Document(json, fallbackNow, makeID), new LoadRecovery(LoadRecoveryKind.FromBackup, index));
         }
         if (primaryCorrupt)
         {
-            backend.PreserveCorrupt();
+            PreserveCorrupt(backend);
             return (new LibraryDocument(), LoadRecovery.Reset);
         }
         return (new LibraryDocument(), LoadRecovery.None);
+    }
+
+    static void PreserveCorrupt(IStorageBackend backend)
+    {
+        try { backend.PreserveCorrupt(); }
+        catch (Exception) { }
+    }
+
+    /// <summary>
+    /// Deletes the backups and a set-aside damaged copy (after "Alle Daten löschen", Mac: SettingsWipeSheet). Best effort,
+    /// never throws.
+    /// </summary>
+    public void DiscardBackups()
+    {
+        try { Backend.DiscardBackups(); }
+        catch (Exception) { }
     }
 
     static JSONValue? ParseDocument(byte[] data)
@@ -592,12 +612,36 @@ public sealed class LibraryStore
 
     static JSONValue? ObjectState(JSONValue? value) => value is { IsObject: true } ? value : null;
 
-    static LibraryStoreError SaveError(Exception error)
+    /// <summary>The error of a failed backend write: a full disk (or exhausted quota) becomes Quota, anything else Io.</summary>
+    internal static LibraryStoreError SaveError(Exception error)
     {
         if (error is LibraryStoreError e) return e;
-        if (error is IOException io && (io.HResult & 0xFFFF) is 0x70 or 0x27) // ERROR_DISK_FULL, ERROR_HANDLE_DISK_FULL
-            return new LibraryStoreError(LibraryStoreErrorCode.Quota, StoreMessages.DiskFull);
+        if (IsOutOfSpace(error)) return new LibraryStoreError(LibraryStoreErrorCode.Quota, StoreMessages.DiskFull);
         return new LibraryStoreError(LibraryStoreErrorCode.Io, StoreMessages.Io);
+    }
+
+    /// <summary>
+    /// Whether the disk is full or the user's disk quota is used up, also when the error is wrapped in another one
+    /// (InnerException, AggregateException; Mac: isOutOfSpace with NSUnderlyingErrorKey).
+    /// </summary>
+    public static bool IsOutOfSpace(Exception? error)
+    {
+        for (var e = error; e is not null; e = e.InnerException)
+        {
+            if (e is AggregateException aggregate && aggregate.InnerExceptions.Any(IsOutOfSpace)) return true;
+            if (e is IOException && IsOutOfSpaceCode(e.HResult)) return true;
+        }
+        return false;
+    }
+
+    static bool IsOutOfSpaceCode(int hresult)
+    {
+        // Windows: HRESULT_FROM_WIN32 of ERROR_HANDLE_DISK_FULL (39), ERROR_DISK_FULL (112), ERROR_DISK_QUOTA_EXCEEDED
+        // (1295) and ERROR_NOT_ENOUGH_QUOTA (1816).
+        if ((uint)hresult >> 16 == 0x8007) return (hresult & 0xFFFF) is 0x27 or 0x70 or 0x50F or 0x718;
+        // Elsewhere .NET reports the raw errno: ENOSPC (28) and EDQUOT (122 on Linux, 69 on macOS).
+        if (OperatingSystem.IsWindows()) return false;
+        return hresult == 28 || hresult == (OperatingSystem.IsMacOS() || OperatingSystem.IsIOS() ? 69 : 122);
     }
 
     /// <summary>

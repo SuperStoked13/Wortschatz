@@ -172,6 +172,13 @@ public sealed class FlashcardSwipe
 /// Two-finger swipes left and right on the touchpad move the current flashcard (Mac: FlashcardScrollMonitor). A gesture
 /// that starts mostly sideways belongs to the card until the fingers lift; any other one scrolls as usual.
 /// </summary>
+/// <remarks>
+/// The tail of a gesture: a precision touchpad keeps sending wheel events for a moment after the fingers lift (inertia,
+/// decaying deltas). The Mac swallows these momentum events of a gesture the card owned; Windows marks nothing, so once
+/// the card's gesture has ended every event that follows closely is treated as its tail and swallowed – otherwise it
+/// would start a new swipe on the next card and push it. The tail ends with a pause (TailGap), after TailMax, or as soon
+/// as the events stop looking like inertia: they turn round, go mostly up or down, or grow again (fingers push anew).
+/// </remarks>
 public sealed class FlashcardScrollMonitor(FlashcardsController controller)
 {
     enum Axis { Undecided, Horizontal, Vertical }
@@ -180,43 +187,49 @@ public sealed class FlashcardScrollMonitor(FlashcardsController controller)
     const double EndDelay = 0.12;
     /// <summary>Points per wheel unit (Avalonia: 1 = one notch; touchpads send fractions).</summary>
     const double PointsPerUnit = 50;
-
     Axis _axis = Axis.Undecided;
     Vector _pending;
-    double _lastEvent;
+    double _lastEvent = double.NegativeInfinity;
     int _serial;
+    /// <summary>The sideways direction of the card's gesture (+1 right, -1 left), for its tail.</summary>
+    double _direction;
+    readonly FlashcardScrollTail _tail = new();
 
     public bool IsEnabled { get; set; }
 
-    /// <summary>Whether the wheel event moved the card (and must not scroll anything).</summary>
+    /// <summary>Whether the wheel event moved the card or belonged to its gesture (and must not scroll anything).</summary>
     public bool Handle(PointerWheelEventArgs e)
     {
         double now = Motion.Now();
-        if (now - _lastEvent > EndDelay * 2 && _axis != Axis.Horizontal)
+        double gap = now - _lastEvent;
+        _lastEvent = now;
+        // Avalonia: +X moves the content to the right (the fingers' way), so the card goes where scrolled content would.
+        double dx = e.Delta.X * PointsPerUnit, dy = e.Delta.Y * PointsPerUnit;
+        if (_tail.Swallows(dx, dy, now, gap)) return true;
+        if (gap > EndDelay * 2 && _axis != Axis.Horizontal)
         {
             _axis = Axis.Undecided;
             _pending = default;
         }
-        _lastEvent = now;
-        // Avalonia: +X moves the content to the right (the fingers' way), so the card goes where scrolled content would.
-        double dx = e.Delta.X * PointsPerUnit, dy = e.Delta.Y * PointsPerUnit;
         switch (_axis)
         {
             case Axis.Vertical:
                 return false;
             case Axis.Horizontal:
+                if (Math.Abs(dx) > 0.5) _direction = Math.Sign(dx);
                 controller.SwipeMoved(dx, now);
                 ScheduleEnd();
                 return true;
             default:
                 _pending += new Vector(dx, dy);
-                if (Math.Abs(_pending.X) + Math.Abs(_pending.Y) < 6) return Math.Abs(_pending.X) > Math.Abs(_pending.Y);
+                if (Math.Abs(_pending.X) + Math.Abs(_pending.Y) < 6) return IsEnabled && Math.Abs(_pending.X) > Math.Abs(_pending.Y);
                 if (!IsEnabled || Math.Abs(_pending.X) <= Math.Abs(_pending.Y) * 1.2 || !controller.SwipeBegan(now))
                 {
                     _axis = Axis.Vertical;
                     return false;
                 }
                 _axis = Axis.Horizontal;
+                _direction = Math.Sign(_pending.X);
                 controller.SwipeMoved(_pending.X, now);
                 ScheduleEnd();
                 return true;
@@ -230,6 +243,7 @@ public sealed class FlashcardScrollMonitor(FlashcardsController controller)
         if (_axis == Axis.Horizontal) controller.SwipeCancelled();
         _axis = Axis.Undecided;
         _pending = default;
+        _tail.Clear();
     }
 
     void ScheduleEnd()
@@ -241,6 +255,8 @@ public sealed class FlashcardScrollMonitor(FlashcardsController controller)
             if (now - _lastEvent < EndDelay) return true;
             _axis = Axis.Undecided;
             _pending = default;
+            // What still comes now is the gesture's inertia: it must not move the next card.
+            _tail.Begin(_direction, now);
             controller.SwipeEnded(now);
             return false;
         });

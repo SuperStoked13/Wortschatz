@@ -6,10 +6,25 @@ import Foundation
 // multiple choice), 1 = familiar (asked written), 2 = mastered (not asked any more). A correct
 // answer moves the card up one stage, a wrong one sends it back to stage 0.
 //
-// The session works in rounds over an active batch of up to `roundSize` unmastered cards: one
-// question per card in shuffled order, plus one retry at the end of the round for a card answered
-// wrong. The next round drops the mastered cards from the batch and refills it (stage-1 cards
-// first, then stage-0 cards in order) until every card in scope is mastered.
+// Spacing (Abstand, since 1.4): a card comes back only after at least MIN_GAP (10) other
+// questions – fewer only when fewer cards are left – and at the latest after about MAX_WAIT (15);
+// in between, the longer it waits the likelier it is picked, mixed with new cards (at most
+// MAX_REPEATS questions in a row of cards asked before while there are new ones, no new card while
+// MAX_LEARNING cards are being learned unless twice as many repeats came in a row). So a new card
+// is asked, ~10–15 questions later asked again, and gone once both answers were right. A wrong
+// answer sends it back to stage 0; it too comes back only after the gap (no retry at the end of
+// the round any more). New cards are taken stage-1 cards first, then stage-0 cards, in `order`.
+//
+// A round is the next `roundSize` questions (after it the checkpoint shows the interim result).
+// They are planned when the round starts, as if every answer were right (`planRound`); an actual
+// answer adjusts the card's later questions in the round to its new stage (`followStage`).
+//
+// Rechecks (Nachkontrolle, opt-in via `createLearn(…, recheck: true)`, only for sessions with
+// more than RECHECK_MIN_CARDS (60) cards): a card answered wrong in this session is asked once
+// more RECHECK_GAP to RECHECK_WAIT (30–50) questions after it was mastered; wrong again, it is
+// learned again. They live in `state.recheck` (`LearnRecheck`). At the end of a session, when
+// nothing else is left to ask, a recheck that could not come at least MIN_GAP questions after the
+// card was mastered is dropped (`dropLateRechecks`).
 //
 // Every function takes a `LearnState` and returns a NEW state (value semantics, inputs are never
 // changed). Like the JS, each function first repairs its input (`copyState`), so states restored
@@ -23,7 +38,8 @@ import Foundation
 //   UTF-16 code units. Card ids are ASCII `uid()`s, so this never matters in practice. Option
 //   texts are compared exactly (as JS does), via `Grading.JSText`.
 // - Counts are `Int`. `copyState(_: JSONValue)` rounds fractional counts up (which keeps every
-//   comparison with 0 and 1 the engine makes) and caps them at 2^53.
+//   comparison with 0 and 1 the engine makes) and caps them at 2^53. `clock`, `lastAt` and
+//   `repeats` beyond 2^53 count as missing (JS keeps any integer).
 // - Cards are typed: a side that is not a string in JS (a number, `null`) is a `String` here, so
 //   callers convert raw JSON cards first (`Card(json:)` turns numbers into text).
 
@@ -44,10 +60,12 @@ public struct Choice: Codable, Sendable, Equatable, Hashable {
 }
 
 /// A queued question as stored in the state (`state.queue[]`). `choices` is present only for
-/// `.mc`; `retryChoices` (options for a re-queue after a miss) only when multiple choice is
-/// possible. Absent keys are omitted, like JS.
+/// `.mc`; `retryChoices` (options for when the question has to be asked at stage 0 after all) only
+/// when multiple choice is possible. Absent keys are omitted, like JS.
 public struct LearnQueueQuestion: Codable, Sendable, Equatable, Hashable {
-    /// "<round>.1:<cardId>" (main question) or "<round>.2:<cardId>" (retry after a miss).
+    /// "<round>.<kind>:<cardId>", kind 1 = learning, 3 = repetition question, 4 = recheck; a
+    /// card's n-th question of the same round (n ≥ 2) is "<round>.<kind>.<n>:<cardId>". (".2:" was
+    /// the retry after a miss before 1.4.)
     public var qid: String
     public var cardId: String
     public var type: QuestionType
@@ -92,7 +110,7 @@ public struct LearnRoundRecord: Codable, Sendable, Equatable, Hashable {
     public var round: Int
     public var answered: Int
     public var correct: Int
-    /// The round's batch.
+    /// The cards answered in the round, in the order of their first answer.
     public var cardIds: [String]
 
     public init(round: Int, answered: Int, correct: Int, cardIds: [String]) {
@@ -136,13 +154,12 @@ public struct LearnSessionOptions: Codable, Sendable, Equatable, Hashable {
     }
 }
 
-/// `state.review`: repetition questions (Wiederholungsfragen, an option of the Mac app that the
-/// web app does not have). The cards that were mastered when the session started are asked once
-/// more, a few per round next to the cards being learned (a whole round once nothing is left to
-/// learn), the ones answered longest ago first. A wrong answer sends a card back to stage 0, so
-/// it is learned again like any other.
+/// `state.review`: repetition questions (Wiederholungsfragen). The cards that were mastered when
+/// the session started are asked once more, mixed in among the new cards (about every third), the
+/// ones answered longest ago first. A wrong answer sends a card back to stage 0, so it is learned
+/// again like any other.
 public struct LearnReview: Codable, Sendable, Equatable, Hashable {
-    /// Mastered cards still to be asked again, the most overdue first.
+    /// Mastered cards still to be asked again (not queued yet), the most overdue first.
     public var due: [String]
     /// cardId → whether its repetition question was answered right (the first answer counts).
     public var results: [String: Bool]
@@ -150,6 +167,18 @@ public struct LearnReview: Codable, Sendable, Equatable, Hashable {
     public init(due: [String] = [], results: [String: Bool] = [:]) {
         self.due = due
         self.results = results
+    }
+}
+
+/// `state.recheck`: rechecks (Nachkontrolle). A card answered wrong in the session waits here once
+/// it is mastered, until its recheck is planned 30–50 questions later; a wrong recheck sends it
+/// back to stage 0.
+public struct LearnRecheck: Codable, Sendable, Equatable, Hashable {
+    /// Mastered cards waiting for their recheck (not queued yet), in the order they were mastered.
+    public var due: [String]
+
+    public init(due: [String] = []) {
+        self.due = due
     }
 }
 
@@ -174,12 +203,14 @@ public struct LearnState: Codable, Sendable, Equatable, Hashable {
     public var initiallyMastered: [String]
     /// cardId → true once answered (ever).
     public var seen: [String: Bool]
-    /// The current batch (≤ roundSize unmastered cards).
-    public var active: [String]
     public var round: Int
     public var queue: [LearnQueueQuestion]
-    /// cardId → true when its retry was queued this round.
-    public var retried: [String: Bool]
+    /// Answers given in the session (the number of the next question); never goes back.
+    public var clock: Int
+    /// cardId → `clock` value of its last answer in the session.
+    public var lastAt: [String: Int]
+    /// How many of the last answers in a row were to cards asked before in the session.
+    public var repeats: Int
     public var roundLog: [LearnRoundLogEntry]
     public var rounds: [LearnRoundRecord]
     public var answered: Int
@@ -192,16 +223,19 @@ public struct LearnState: Codable, Sendable, Equatable, Hashable {
     public var finishedAt: Double?
     /// Active study time (gaps > 5 min are not counted).
     public var elapsedMs: Double
-    /// The repetition questions; nil without them (always for the web app's states). Encoded
-    /// only when present, so states without them stay key for key those of the web app.
+    /// The repetition questions; nil without them. Encoded only when present, so states without
+    /// them stay key for key those of the web app.
     public var review: LearnReview?
+    /// The rechecks; nil without them (encoded only when present).
+    public var recheck: LearnRecheck?
 
     public init(
         v: Int = 1, subset: StudySubset, answerWith: AnswerWith, learn: LearnSessionOptions, order: [String],
-        stage: [String: Int], initiallyMastered: [String], seen: [String: Bool], active: [String], round: Int,
-        queue: [LearnQueueQuestion], retried: [String: Bool], roundLog: [LearnRoundLogEntry],
-        rounds: [LearnRoundRecord], answered: Int, correct: Int, misses: [String: Int], last: LearnLastAnswer?,
-        startedAt: Double, updatedAt: Double, finishedAt: Double?, elapsedMs: Double, review: LearnReview? = nil
+        stage: [String: Int], initiallyMastered: [String], seen: [String: Bool], round: Int,
+        queue: [LearnQueueQuestion], clock: Int = 0, lastAt: [String: Int] = [:], repeats: Int = 0,
+        roundLog: [LearnRoundLogEntry], rounds: [LearnRoundRecord], answered: Int, correct: Int,
+        misses: [String: Int], last: LearnLastAnswer?, startedAt: Double, updatedAt: Double, finishedAt: Double?,
+        elapsedMs: Double, review: LearnReview? = nil, recheck: LearnRecheck? = nil
     ) {
         self.v = v
         self.subset = subset
@@ -211,10 +245,11 @@ public struct LearnState: Codable, Sendable, Equatable, Hashable {
         self.stage = stage
         self.initiallyMastered = initiallyMastered
         self.seen = seen
-        self.active = active
         self.round = round
         self.queue = queue
-        self.retried = retried
+        self.clock = clock
+        self.lastAt = lastAt
+        self.repeats = repeats
         self.roundLog = roundLog
         self.rounds = rounds
         self.answered = answered
@@ -226,6 +261,7 @@ public struct LearnState: Codable, Sendable, Equatable, Hashable {
         self.finishedAt = finishedAt
         self.elapsedMs = elapsedMs
         self.review = review
+        self.recheck = recheck
     }
 
     /// A repaired state from any JSON value (`LearnEngine.copyState(json)`): never fails. Extra
@@ -235,8 +271,9 @@ public struct LearnState: Codable, Sendable, Equatable, Hashable {
     }
 
     enum CodingKeys: String, CodingKey {
-        case v, subset, answerWith, learn, order, stage, initiallyMastered, seen, active, round, queue, retried,
-            roundLog, rounds, answered, correct, misses, last, startedAt, updatedAt, finishedAt, elapsedMs, review
+        case v, subset, answerWith, learn, order, stage, initiallyMastered, seen, round, queue, clock, lastAt,
+            repeats, roundLog, rounds, answered, correct, misses, last, startedAt, updatedAt, finishedAt, elapsedMs,
+            review, recheck
     }
 
     public func encode(to encoder: any Encoder) throws {
@@ -249,10 +286,11 @@ public struct LearnState: Codable, Sendable, Equatable, Hashable {
         try c.encode(stage, forKey: .stage)
         try c.encode(initiallyMastered, forKey: .initiallyMastered)
         try c.encode(seen, forKey: .seen)
-        try c.encode(active, forKey: .active)
         try c.encode(round, forKey: .round)
         try c.encode(queue, forKey: .queue)
-        try c.encode(retried, forKey: .retried)
+        try c.encode(clock, forKey: .clock)
+        try c.encode(lastAt, forKey: .lastAt)
+        try c.encode(repeats, forKey: .repeats)
         try c.encode(roundLog, forKey: .roundLog)
         try c.encode(rounds, forKey: .rounds)
         try c.encode(answered, forKey: .answered)
@@ -264,6 +302,7 @@ public struct LearnState: Codable, Sendable, Equatable, Hashable {
         try c.encodeNullable(finishedAt, forKey: .finishedAt)
         try c.encode(elapsedMs, forKey: .elapsedMs)
         try c.encodeIfPresent(review, forKey: .review)
+        try c.encodeIfPresent(recheck, forKey: .recheck)
     }
 }
 
@@ -279,6 +318,21 @@ public enum LearnEngine {
     public static let idleGapMs: Double = 5 * 60 * 1000
     /// The stage of a mastered card (`MASTERY_STREAK`).
     public static let masteredStage = Mastery.MASTERY_STREAK
+    /// Spacing: other questions at least between two questions of a card (fewer only when fewer
+    /// cards are left) …
+    public static let MIN_GAP = 10
+    /// … and after how many a waiting card is asked for sure.
+    public static let MAX_WAIT = 15
+    /// The same for rechecks, counted from the answer that mastered the card.
+    public static let RECHECK_GAP = 30
+    public static let RECHECK_WAIT = 50
+    /// At most this many questions in a row of cards asked before while there are new cards.
+    public static let MAX_REPEATS = 3
+    /// No new card while this many cards are being learned (unless 2 × MAX_REPEATS repeats came
+    /// in a row).
+    public static let MAX_LEARNING = 10
+    /// Rechecks only in sessions with more cards than this.
+    public static let RECHECK_MIN_CARDS = 60
 
     /// The public view of a question (`current(state)`): `choices` only for `.mc`.
     public struct Question: Codable, Sendable, Equatable, Hashable {
@@ -439,16 +493,17 @@ public enum LearnEngine {
         min(Mastery.normalizeProgress(progress).streak, masteredStage)
     }
 
-    /// `createLearn(cards, { answerWith, learn }, { subset, progress, rng, now })`.
+    /// `createLearn(cards, { answerWith, learn }, { subset, progress, rng, now, review, recheck })`.
     ///
     /// Cards without an id, repeated ids (the first one wins) and cards with an empty side are
     /// skipped; options come from every askable card of `cards`, not only from the scope. A
     /// non-finite `now` becomes 0. `retype` is a UI option and not part of the state.
-    /// `review` (Mac only) adds repetition questions for the cards mastered already
-    /// (`LearnReview`); without it the session is the web app's, rng draw for rng draw.
+    /// `review` adds repetition questions for the cards mastered already (`LearnReview`),
+    /// `recheck` rechecks (`LearnRecheck`; only in sessions with more than RECHECK_MIN_CARDS cards).
     public static func createLearn(
         _ cards: [Card], answerWith: AnswerWith, learn: LearnOptions, subset: StudySubset = .all,
-        progress: ProgressMap = [:], rng: RNG = systemRNG(), now: Double = TimeUtil.nowMs(), review: Bool = false
+        progress: ProgressMap = [:], rng: RNG = systemRNG(), now: Double = TimeUtil.nowMs(), review: Bool = false,
+        recheck: Bool = false
     ) -> LearnState {
         let sub = normalizeSubset(subset)
         let selected = cardList(cards).filter { askable($0) && cardInSubset($0, sub, progress) }
@@ -466,13 +521,13 @@ public enum LearnEngine {
         let mastered = order.filter { (stage[$0] ?? 0) >= masteredStage }
         var s = LearnState(
             v: 1, subset: sub, answerWith: answerWith, learn: normalizeLearn(learn), order: order, stage: stage,
-            initiallyMastered: mastered, seen: seen, active: [], round: 1,
-            queue: [], retried: [:], roundLog: [], rounds: [], answered: 0, correct: 0, misses: [:], last: nil,
-            startedAt: at, updatedAt: at, finishedAt: nil, elapsedMs: 0,
-            review: review ? LearnReview(due: mostOverdueFirst(mastered, progress: progress)) : nil)
-        fillBatch(&s)
-        let reviews = takeReviews(&s)
-        s.queue = buildQueue(s, cards, rng, reviews: reviews)
+            initiallyMastered: mastered, seen: seen, round: 1, queue: [], roundLog: [], rounds: [], answered: 0,
+            correct: 0, misses: [:], last: nil, startedAt: at, updatedAt: at, finishedAt: nil, elapsedMs: 0,
+            // The most overdue mastered cards are asked again first.
+            review: review ? LearnReview(due: mostOverdueFirst(mastered, progress: progress)) : nil,
+            recheck: recheck && order.count > RECHECK_MIN_CARDS ? LearnRecheck() : nil)
+        let queue = planRound(&s, cards, rng)
+        s.queue = queue
         markFinished(&s, at)
         return s
     }
@@ -480,11 +535,11 @@ public enum LearnEngine {
     /// `createLearn` with full study options (reads `answerWith` and `learn`).
     public static func createLearn(
         _ cards: [Card], options: StudyOptions, subset: StudySubset = .all, progress: ProgressMap = [:],
-        rng: RNG = systemRNG(), now: Double = TimeUtil.nowMs(), review: Bool = false
+        rng: RNG = systemRNG(), now: Double = TimeUtil.nowMs(), review: Bool = false, recheck: Bool = false
     ) -> LearnState {
         createLearn(
             cards, answerWith: options.answerWith, learn: options.learn, subset: subset, progress: progress, rng: rng,
-            now: now, review: review)
+            now: now, review: review, recheck: recheck)
     }
 
     // MARK: - Repair
@@ -571,22 +626,34 @@ public enum LearnEngine {
             }
             review = LearnReview(due: ids(r["due"]), results: results)
         }
+        // Only sessions with rechecks carry the key.
+        let recheck = src["recheck"]?.objectValue.map { LearnRecheck(due: ids($0["due"])) }
 
         let learnSrc = src["learn"]?.objectValue ?? [:]
         let roundSize = learnSrc["roundSize"]?.finiteNumber.map { Int(max(-1, min($0.rounded(.down), 1e15))) } ?? 0
         let answered = countValue(src["answered"])
         let startedAt = src["startedAt"]?.finiteNumber ?? 0
+        // Sessions stored before spacing (1.4) have no clock: their answer count stands in for it
+        // (`Math.floor(answered)`, not the rounded-up count).
+        let clock =
+            src["clock"]?.integerValue.flatMap { $0 >= 0 ? $0 : nil }
+            ?? src["answered"]?.finiteNumber.map { Int(max(0, min($0, Double(maxSafeInteger))).rounded(.down)) } ?? 0
+        var lastAt: [String: Int] = [:]
+        for (k, x) in src["lastAt"]?.objectValue ?? [:] where known.contains(k) {
+            if let at = x.integerValue, at >= 0 { lastAt[k] = at }
+        }
         return LearnState(
             v: 1, subset: StudySubset(json: src["subset"] ?? .null),
             answerWith: src["answerWith"]?.stringValue.flatMap(AnswerWith.init(rawValue:)) ?? .term,
             learn: normalizeLearn(
                 roundSize: roundSize, mc: learnSrc["mc"] != .bool(false), written: learnSrc["written"] != .bool(false)),
             order: order, stage: stage, initiallyMastered: ids(src["initiallyMastered"]), seen: trueMap(src["seen"]),
-            active: ids(src["active"]), round: round, queue: queue, retried: trueMap(src["retried"]),
+            round: round, queue: queue, clock: clock, lastAt: lastAt,
+            repeats: src["repeats"]?.integerValue.flatMap { $0 >= 0 ? $0 : nil } ?? 0,
             roundLog: roundLog, rounds: rounds, answered: answered, correct: min(answered, countValue(src["correct"])),
             misses: misses, last: last, startedAt: startedAt, updatedAt: src["updatedAt"]?.finiteNumber ?? startedAt,
             finishedAt: src["finishedAt"]?.numberValue, elapsedMs: max(0, src["elapsedMs"]?.finiteNumber ?? 0),
-            review: review)
+            review: review, recheck: recheck)
     }
 
     /// `copyState` of learn.js on a typed state: `order` keeps each non-empty id once, every
@@ -620,8 +687,10 @@ public enum LearnEngine {
             v: 1, subset: normalizeSubset(state.subset), answerWith: state.answerWith,
             learn: normalizeLearn(roundSize: state.learn.roundSize, mc: state.learn.mc, written: state.learn.written),
             order: order, stage: stage, initiallyMastered: ids(state.initiallyMastered),
-            seen: state.seen.filter { known.contains($0.key) && $0.value }, active: ids(state.active), round: round,
-            queue: queue, retried: state.retried.filter { known.contains($0.key) && $0.value },
+            seen: state.seen.filter { known.contains($0.key) && $0.value }, round: round, queue: queue,
+            clock: state.clock >= 0 ? min(state.clock, maxSafeInteger) : answered,
+            lastAt: state.lastAt.filter { known.contains($0.key) && $0.value >= 0 },
+            repeats: clampCount(state.repeats),
             roundLog: state.roundLog.compactMap { e in
                 guard known.contains(e.cardId) else { return nil }
                 var entry = e
@@ -646,7 +715,8 @@ public enum LearnEngine {
             finishedAt: state.finishedAt, elapsedMs: state.elapsedMs.isFinite ? max(0, state.elapsedMs) : 0,
             review: state.review.map { r in
                 LearnReview(due: ids(r.due), results: r.results.filter { known.contains($0.key) })
-            })
+            },
+            recheck: state.recheck.map { LearnRecheck(due: ids($0.due)) })
     }
 
     // MARK: - Asking and answering
@@ -657,8 +727,9 @@ public enum LearnEngine {
         return publicQuestion(q)
     }
 
-    /// Answers the current question (no-op when the round is over). A miss is asked once more
-    /// at the end of the round, as multiple choice when possible.
+    /// Answers the current question (no-op when the round is over). A miss comes back like any
+    /// card, after the gap (planned in a later round); the card's later questions in this round
+    /// follow its new stage.
     public static func answer(_ state: LearnState, correct: Bool, now: Double = TimeUtil.nowMs()) -> LearnState {
         var s = copyState(state)
         guard let q = s.queue.first else { return s }
@@ -675,19 +746,15 @@ public enum LearnEngine {
             s.misses[id, default: 0] += 1
         }
         s.queue.removeFirst()
+        s.repeats = s.lastAt[id] != nil ? s.repeats + 1 : 0
+        s.lastAt[id] = s.clock
+        s.clock += 1
         s.roundLog.append(
             LearnRoundLogEntry(qid: q.qid, cardId: id, type: q.type, ask: q.ask, correct: correct, stageAfter: stageAfter))
         s.last = LearnLastAnswer(qid: q.qid, cardId: id, type: q.type, ask: q.ask, correct: correct, stageBefore: stageBefore)
 
-        if !correct && s.retried[id] != true {
-            s.retried[id] = true
-            var retry = LearnQueueQuestion(qid: retryQid(s.round, id), cardId: id, type: .written, ask: q.ask)
-            if s.learn.mc, let options = q.retryChoices {
-                retry.type = .mc
-                retry.choices = options
-            }
-            s.queue.append(retry)
-        }
+        followStage(&s, id)
+        if stageBefore < masteredStage { noteRecheck(&s, id) }
         if isReviewQuestion(q.qid), var review = s.review {
             // The first answer to a mastered card's repetition question counts; a miss means it
             // is learned again (stage 0), so it no longer counts as mastered before the session.
@@ -700,8 +767,8 @@ public enum LearnEngine {
     }
 
     /// "Ich hatte recht": the last answer (if it was wrong) becomes correct: the card's stage is
-    /// stageBefore + 1 and its retry in this round is dropped. Idempotent; a no-op after
-    /// `nextRound`.
+    /// stageBefore + 1 and its later questions in this round follow that stage. Idempotent; a no-op
+    /// after `nextRound`.
     public static func override(_ state: LearnState, now: Double = TimeUtil.nowMs()) -> LearnState {
         var s = copyState(state)
         guard let l = s.last, !l.correct else { return s }
@@ -715,9 +782,8 @@ public enum LearnEngine {
             s.roundLog[i].correct = true
             s.roundLog[i].stageAfter = stageAfter
         }
-        let before = s.queue.count
-        s.queue.removeAll { $0.cardId == id }
-        if s.queue.count < before { s.retried[id] = nil }
+        followStage(&s, id)
+        if l.stageBefore < masteredStage { noteRecheck(&s, id) }
         s.last?.correct = true
         if isReviewQuestion(l.qid), var review = s.review {
             // The repetition question was right after all: the card is still mastered.
@@ -761,11 +827,11 @@ public enum LearnEngine {
             counts: CheckpointCounts(fresh: c.fresh, learning: c.learning, mastered: c.mastered, total: c.total))
     }
 
-    /// Closes the finished round into `rounds`, drops mastered cards from the batch, refills it
-    /// and builds the next round's questions. When every card is mastered the final round is
-    /// closed and the session stays finished (its roundLog is kept for the checkpoint). No-op
-    /// mid-round. Scope cards missing from `cards` (deleted) are removed; nil keeps every card
-    /// (JS: a non-array `cards`) and builds written questions only.
+    /// Closes the finished round into `rounds` and plans the next round's questions
+    /// (`planRound`). When every card is mastered (and every repetition question and recheck
+    /// asked) the final round is closed and the session stays finished (its roundLog is kept for
+    /// the checkpoint). No-op mid-round. Scope cards missing from `cards` (deleted) are removed;
+    /// nil keeps every card (JS: a non-array `cards`) and builds written questions only.
     public static func nextRound(
         _ state: LearnState, cards: [Card]?, rng: RNG = systemRNG(), now: Double = TimeUtil.nowMs()
     ) -> LearnState {
@@ -775,6 +841,7 @@ public enum LearnEngine {
             let present = Set(cardList(cards).map(\.id))
             for id in s.order where !present.contains(id) { dropCard(&s, id, refill: nil, rng: rng) }
         }
+        dropLateRechecks(&s)
         if isComplete(s) {
             if !s.roundLog.isEmpty && !roundIsClosed(s) { archiveRound(&s) }
             markFinished(&s, now)
@@ -788,11 +855,9 @@ public enum LearnEngine {
             s.round += 1
         }
         s.roundLog = []
-        s.retried = [:]
         s.last = nil
-        fillBatch(&s)
-        let reviews = takeReviews(&s)
-        s.queue = buildQueue(s, cards ?? [], rng, reviews: reviews)
+        let queue = planRound(&s, cards ?? [], rng)
+        s.queue = queue
         return s
     }
 
@@ -823,18 +888,16 @@ public enum LearnEngine {
 
     // MARK: - Repetition questions
 
-    /// Whether question `qid` is a repetition question ("<round>.3:<cardId>").
+    /// Whether question `qid` is a repetition question ("<round>.3:<cardId>" or
+    /// "<round>.3.<n>:<cardId>", JS `/^\d+\.3(\.\d+)?:/`).
     public static func isReviewQuestion(_ qid: String) -> Bool {
-        guard let colon = qid.firstIndex(of: ":") else { return false }
-        let head = qid[..<colon]
-        guard head.hasSuffix(".3") else { return false }
-        let round = head.dropLast(2).unicodeScalars
-        return !round.isEmpty && round.allSatisfy { $0.value >= 0x30 && $0.value <= 0x39 }
+        questionKind(qid) == .review
     }
 
-    /// How many repetition questions a round asks next to the cards being learned.
-    public static func reviewsPerRound(_ roundSize: Int) -> Int {
-        max(1, roundSize / 3)
+    /// Whether question `qid` is a recheck ("<round>.4:<cardId>" or "<round>.4.<n>:<cardId>", JS
+    /// `/^\d+\.4(\.\d+)?:/`).
+    public static func isRecheckQuestion(_ qid: String) -> Bool {
+        questionKind(qid) == .recheck
     }
 
     /// The repetition questions so far; nil for a session without them.
@@ -849,7 +912,7 @@ public enum LearnEngine {
 
     // MARK: - Changes
 
-    /// Removes a card from the session (deleted mid-session): its stage, batch slot, questions,
+    /// Removes a card from the session (deleted mid-session): its stage, spacing, questions,
     /// current-round answers and misses, and its options in other questions. With `cards` (the
     /// set's current cards) each lost option is replaced by another wrong option from the set
     /// where one is left, in the same place. Unknown ids are a no-op.
@@ -899,10 +962,12 @@ public enum LearnEngine {
 
     /// Brings the session in line with `progress` (answers given in Write mode or elsewhere):
     /// every stage becomes min(streak, 2) and `seen` follows whether the card was ever answered.
-    /// A card that is mastered now leaves the batch and this round's queue; a card whose stage
-    /// changed otherwise keeps its queued questions, switched to the type of its new stage; a card
-    /// no longer mastered is studied again from the next round on. A finished session is left as
-    /// it is.
+    /// A card that is mastered now leaves this round's queue; a card whose stage changed otherwise
+    /// keeps its queued questions, switched to the type of its new stage; a card no longer mastered
+    /// is studied again. A queued repetition question or recheck of a card that is no longer
+    /// mastered (missed elsewhere) becomes an ordinary question: the card is learned instead, so it
+    /// neither shows as a repetition nor counts in `reviewStats`, and it leaves the cards waiting
+    /// for a recheck. A finished session is left as it is.
     public static func syncProgress(_ state: LearnState, progress: ProgressMap, now: Double = TimeUtil.nowMs())
         -> LearnState
     {
@@ -920,11 +985,16 @@ public enum LearnEngine {
         }
         for id in changed {
             if (s.stage[id] ?? 0) >= masteredStage {
-                s.active.removeAll { $0 == id }
                 s.queue.removeAll { $0.cardId == id }
             } else {
                 s.initiallyMastered.removeAll { $0 == id }
-                s.queue = s.queue.map { $0.cardId == id ? retype(s, $0) : $0 }
+                s.recheck?.due.removeAll { $0 == id }
+                s.queue = s.queue.map { q in
+                    guard q.cardId == id else { return q }
+                    var learn = q
+                    learn.qid = asLearnQid(q.qid)
+                    return retype(s, learn)
+                }
             }
         }
         finishEarly(&s, now)
@@ -1107,9 +1177,52 @@ public enum LearnEngine {
 
     // MARK: - Internals: questions
 
-    private static func mainQid(_ round: Int, _ cardId: String) -> String { "\(round).1:\(cardId)" }
-    private static func retryQid(_ round: Int, _ cardId: String) -> String { "\(round).2:\(cardId)" }
-    private static func reviewQid(_ round: Int, _ cardId: String) -> String { "\(round).3:\(cardId)" }
+    /// The kind of a question, the digit after the round in its qid.
+    private enum QuestionKind: Int {
+        case learn = 1, review = 3, recheck = 4
+    }
+
+    /// "<round>.<kind>:<cardId>"; a card's n-th question in the round (n ≥ 2)
+    /// "<round>.<kind>.<n>:<cardId>".
+    private static func questionId(_ round: Int, _ kind: QuestionKind, _ cardId: String, _ n: Int) -> String {
+        n > 1 ? "\(round).\(kind.rawValue).\(n):\(cardId)" : "\(round).\(kind.rawValue):\(cardId)"
+    }
+
+    private static func isDigit(_ c: Unicode.Scalar) -> Bool { c.value >= 0x30 && c.value <= 0x39 }
+
+    /// The kind of a qid matching JS `/^\d+\.K(\.\d+)?:/` for a one-digit K (`REVIEW_QID`,
+    /// `RECHECK_QID`); nil otherwise (also for kinds that are no `QuestionKind`).
+    private static func questionKind(_ qid: String) -> QuestionKind? {
+        var rest = qid.unicodeScalars[...]
+        func digits() -> Bool {
+            let n = rest.prefix(while: isDigit).count
+            rest = rest.dropFirst(n)
+            return n > 0
+        }
+        guard digits(), rest.first == ".", let k = rest.dropFirst().first, isDigit(k) else { return nil }
+        rest = rest.dropFirst(2)
+        if rest.first == "." {
+            rest = rest.dropFirst()
+            guard digits() else { return nil }
+        }
+        guard rest.first == ":" else { return nil }
+        return QuestionKind(rawValue: Int(k.value) - 0x30)
+    }
+
+    /// A repetition question or recheck asked as an ordinary learning question (its card is
+    /// learned): JS `qid.replace(/^(\d+)\.[34]/, '$1.1')`.
+    private static func asLearnQid(_ qid: String) -> String {
+        let scalars = Array(qid.unicodeScalars)
+        var i = 0
+        while i < scalars.count && isDigit(scalars[i]) { i += 1 }
+        guard i > 0, i + 1 < scalars.count, scalars[i] == ".", scalars[i + 1] == "3" || scalars[i + 1] == "4" else {
+            return qid
+        }
+        var out = String.UnicodeScalarView(scalars[...i])
+        out.append("1")
+        out.append(contentsOf: scalars[(i + 2)...])
+        return String(out)
+    }
 
     private static func publicQuestion(_ q: LearnQueueQuestion) -> Question {
         Question(qid: q.qid, cardId: q.cardId, type: q.type, ask: q.ask, choices: q.type == .mc ? q.choices : nil)
@@ -1124,72 +1237,190 @@ public enum LearnEngine {
     }
 
     /// Stage 0 → multiple choice, stage 1 → written; a disabled type falls back to the other one,
-    /// and multiple choice needs at least two options. `retryChoices` holds the options for a
-    /// re-queue after a wrong answer, which is always asked at stage 0.
-    private static func makeQuestion(_ s: LearnState, _ card: Card, _ pool: [Card], _ qid: String, _ rng: RNG)
-        -> LearnQueueQuestion
-    {
+    /// and multiple choice needs at least two options. `retryChoices` holds the options for when
+    /// the question has to be asked at stage 0 after all (a wrong answer earlier in the round).
+    private static func makeQuestion(
+        _ s: LearnState, _ card: Card, _ stage: Int, _ pool: [Card], _ qid: String, _ rng: RNG
+    ) -> LearnQueueQuestion {
         let ask = pickAsk(s.answerWith, rng)
         let choices = s.learn.mc ? buildChoices(pool, card: card, ask: ask, rng: rng) : []
         let canMc = choices.count >= 2
-        let type: QuestionType =
-            (s.stage[card.id] ?? 0) == 0 ? (canMc ? .mc : .written) : (s.learn.written || !canMc ? .written : .mc)
+        let type: QuestionType = stage == 0 ? (canMc ? .mc : .written) : (s.learn.written || !canMc ? .written : .mc)
         var q = LearnQueueQuestion(qid: qid, cardId: card.id, type: type, ask: ask)
         if type == .mc { q.choices = choices }
         if canMc { q.retryChoices = buildChoices(pool, card: card, ask: ask, rng: rng) }
         return q
     }
 
-    /// Keeps the batch's unmastered cards and refills it up to roundSize: stage-1 cards first,
-    /// then stage-0 cards, each in `order`.
-    private static func fillBatch(_ s: inout LearnState) {
-        let inOrder = Set(s.order)
-        s.active = s.active.filter { inOrder.contains($0) && (s.stage[$0] ?? 0) < masteredStage }
-        var inBatch = Set(s.active)
+    /// The planning state of a round (`p` in planRound of learn.js): stages and last answers as
+    /// if every answer were right, and the repetition questions and rechecks not planned yet.
+    private struct Plan {
+        var stage: [String: Int]
+        var lastAt: [String: Int]
+        var repeats: Int
+        var reviewDue: [String]
+        var recheckDue: [String]
+    }
+
+    /// A card that was asked before (or waits for its recheck): it may come once it has waited
+    /// `min` other questions and comes for sure once it has waited `max`.
+    private struct Waiting {
+        let id: String
+        let kind: QuestionKind
+        let wait: Int
+        let min: Int
+        let max: Int
+    }
+
+    /// Of `list`, the entry with the highest score; ties go to the one earlier in `order`
+    /// (`index`). nil for an empty list.
+    private static func best(_ list: [Waiting], _ index: [String: Int], score: (Waiting) -> Int) -> Waiting? {
+        var top: Waiting?
+        for e in list {
+            guard let t = top else {
+                top = e
+                continue
+            }
+            if score(e) > score(t) || (score(e) == score(t) && (index[e.id] ?? .max) < (index[t.id] ?? .max)) {
+                top = e
+            }
+        }
+        return top
+    }
+
+    /// The card asked at question number `t` (the session's answer count when it is asked) in
+    /// the plan `p`: (id, kind), or nil when no card needs a question any more (`nextPick`).
+    ///
+    /// Waiting cards (learning cards asked before, and rechecks) may come once they have waited
+    /// `min` other questions; once they have waited `max` they come for sure (the longest overdue
+    /// first). In between, the card that is furthest past its `min` comes with a chance that grows
+    /// with every question it waits – (wait - min + 1) in (max - min + 1) – otherwise a new card
+    /// comes. New cards: learning cards not asked yet in this session (stage-1 cards first) and
+    /// repetition questions (about every third one while there are both).
+    ///
+    /// Two limits keep the mix: after MAX_REPEATS questions in a row of cards asked before, a new
+    /// card comes (even before an overdue one); while MAX_LEARNING cards are being learned (asked,
+    /// not mastered yet) new cards come only by that rule, after twice as many. Only when no card
+    /// may come yet, the card that has waited longest comes early.
+    private static func nextPick(_ s: LearnState, _ p: Plan, _ t: Int, _ rng: RNG, _ index: [String: Int])
+        -> (id: String, kind: QuestionKind)?
+    {
+        let learning = s.order.filter { (p.stage[$0] ?? 0) < masteredStage }
+        // Cards that can fill a learning card's gap: the learning cards and the repetition
+        // questions (rechecks wait 30 questions and more, so they do not count here).
+        let toLearn = learning.count + p.reviewDue.count
+        let open = toLearn + p.recheckDue.count
+        if open == 0 { return nil }
+        var waiting: [Waiting] = []
+        var fresh: [String] = []
         for want in [1, 0] {
-            for id in s.order {
-                if s.active.count >= s.learn.roundSize { return }
-                if !inBatch.contains(id) && s.stage[id] == want {
-                    s.active.append(id)
-                    inBatch.insert(id)
+            for id in learning {
+                if let last = p.lastAt[id] {
+                    if want == 1 {
+                        waiting.append(
+                            Waiting(id: id, kind: .learn, wait: t - last - 1, min: min(MIN_GAP, toLearn - 1), max: MAX_WAIT))
+                    }
+                } else if p.stage[id] == want {
+                    fresh.append(id)
                 }
             }
         }
+        let inFlight = waiting.count
+        for id in p.recheckDue {
+            // A recheck without a known last answer is overdue.
+            let wait = p.lastAt[id].map { t - $0 - 1 } ?? RECHECK_WAIT
+            // Fewer open cards bring it closer, but never closer than a learning card's gap.
+            let least = max(MIN_GAP, min(RECHECK_GAP, open - 1))
+            waiting.append(Waiting(id: id, kind: .recheck, wait: wait, min: least, max: RECHECK_WAIT))
+        }
+        let ready = waiting.filter { $0.wait >= $0.min }
+        let hasNew = !fresh.isEmpty || !p.reviewDue.isEmpty
+        func takeNew() -> (id: String, kind: QuestionKind) {
+            if let first = fresh.first, let review = p.reviewDue.first {
+                return randomIndex(rng, 3) == 0 ? (review, .review) : (first, .learn)
+            }
+            if let first = fresh.first { return (first, .learn) }
+            return (p.reviewDue[0], .review)
+        }
+        func pick(_ w: Waiting?) -> (id: String, kind: QuestionKind)? { w.map { ($0.id, $0.kind) } }
+        if ready.isEmpty {
+            if hasNew { return takeNew() }
+            // Nothing may come yet: the learning card that has waited longest comes early (a
+            // recheck only when nothing is left to learn – it would check nothing so soon).
+            let learn = waiting.filter { $0.kind == .learn }
+            return pick(best(learn.isEmpty ? waiting : learn, index) { $0.wait })
+        }
+        if !hasNew { return pick(best(ready, index) { $0.wait - $0.max }) }
+        let full = inFlight >= MAX_LEARNING
+        if p.repeats >= (full ? 2 * MAX_REPEATS : MAX_REPEATS) { return takeNew() }
+        let forced = ready.filter { $0.wait >= $0.max }
+        if !forced.isEmpty { return pick(best(forced, index) { $0.wait - $0.max }) }
+        guard let c = best(ready, index, score: { $0.wait - $0.min }) else { return takeNew() }
+        if full || randomIndex(rng, c.max - c.min + 1) < c.wait - c.min + 1 { return (c.id, c.kind) }
+        return takeNew()
     }
 
-    /// The round's questions: one per card of the batch in shuffled order, with the repetition
-    /// questions `reviews` mixed in among them.
-    private static func buildQueue(_ s: LearnState, _ cards: [Card], _ rng: RNG, reviews: [String] = [])
-        -> [LearnQueueQuestion]
-    {
+    /// Plans the round's `roundSize` questions (fewer when the session ends sooner), as if every
+    /// answer were right (`planRound`). Planned repetition questions and rechecks leave
+    /// `review.due` / `recheck.due`; cards there that are no longer mastered (answered wrong
+    /// elsewhere) are learned instead and leave too.
+    private static func planRound(_ s: inout LearnState, _ cards: [Card], _ rng: RNG) -> [LearnQueueQuestion] {
         let all = cardList(cards)
         var byId: [String: Card] = [:]
-        for card in all { byId[card.id] = card }
+        for card in all where byId[card.id] == nil { byId[card.id] = card }
         let pool = all.filter(askable)
-        func question(_ id: String, _ qid: String) -> LearnQueueQuestion {
-            makeQuestion(s, byId[id] ?? Card(id: id, term: "", definition: ""), pool, qid, rng)
+        var index: [String: Int] = [:]
+        for (i, id) in s.order.enumerated() { index[id] = i }
+        let stage = s.stage
+        func mastered(_ id: String) -> Bool { index[id] != nil && (stage[id] ?? 0) >= masteredStage }
+        var p = Plan(
+            stage: s.stage, lastAt: s.lastAt, repeats: s.repeats, reviewDue: s.review?.due.filter(mastered) ?? [],
+            recheckDue: s.recheck?.due.filter(mastered) ?? [])
+        var asked: [String: Int] = [:]
+        var queue: [LearnQueueQuestion] = []
+        var k = 0
+        while k < s.learn.roundSize {
+            let t = s.clock + k
+            k += 1
+            guard let pick = nextPick(s, p, t, rng, index) else { break }
+            let (id, kind) = pick
+            asked[id, default: 0] += 1
+            let card = byId[id] ?? Card(id: id, term: "", definition: "")
+            queue.append(
+                makeQuestion(s, card, p.stage[id] ?? 0, pool, questionId(s.round, kind, id, asked[id] ?? 1), rng))
+            p.repeats = p.lastAt[id] != nil ? p.repeats + 1 : 0
+            p.lastAt[id] = t
+            switch kind {
+            case .review: p.reviewDue.removeAll { $0 == id }
+            case .recheck: p.recheckDue.removeAll { $0 == id }
+            case .learn: p.stage[id] = min((p.stage[id] ?? 0) + 1, masteredStage)
+            }
         }
-        if reviews.isEmpty {
-            return shuffled(s.active, rng).map { question($0, mainQid(s.round, $0)) }
-        }
-        let entries = s.active.map { (id: $0, isReview: false) } + reviews.map { (id: $0, isReview: true) }
-        return shuffled(entries, rng).map { e in
-            question(e.id, e.isReview ? reviewQid(s.round, e.id) : mainQid(s.round, e.id))
-        }
+        if s.review != nil { s.review?.due = p.reviewDue }
+        if s.recheck != nil { s.recheck?.due = p.recheckDue }
+        return queue
     }
 
-    /// Takes the next round's repetition questions off `review.due`: a few next to the cards
-    /// being learned (`reviewsPerRound`), a whole round once nothing is left to learn. Cards that
-    /// are no longer mastered (answered wrong elsewhere) are learned instead and leave the list.
-    private static func takeReviews(_ s: inout LearnState) -> [String] {
-        guard var review = s.review else { return [] }
-        let inOrder = Set(s.order)
-        review.due.removeAll { !inOrder.contains($0) || (s.stage[$0] ?? 0) < masteredStage }
-        let count = s.active.isEmpty ? s.learn.roundSize : reviewsPerRound(s.learn.roundSize)
-        let picks = Array(review.due.prefix(count))
-        review.due.removeFirst(picks.count)
-        s.review = review
-        return picks
+    /// After an answer (or a correction) the card's later questions in this round follow its
+    /// stage: learning questions of a mastered card go, the others are asked at the new stage
+    /// (`followStage`).
+    private static func followStage(_ s: inout LearnState, _ id: String) {
+        let mastered = (s.stage[id] ?? 0) >= masteredStage
+        let state = s
+        s.queue = s.queue
+            .filter { $0.cardId != id || !mastered || isReviewQuestion($0.qid) || isRecheckQuestion($0.qid) }
+            .map { $0.cardId == id ? retype(state, $0) : $0 }
+    }
+
+    /// A card mastered by a right answer after it was answered wrong in this session waits for
+    /// its recheck (unless one is queued already) (`noteRecheck`).
+    private static func noteRecheck(_ s: inout LearnState, _ id: String) {
+        guard var recheck = s.recheck, (s.stage[id] ?? 0) >= masteredStage, (s.misses[id] ?? 0) > 0 else { return }
+        if recheck.due.contains(id) || s.queue.contains(where: { $0.cardId == id && isRecheckQuestion($0.qid) }) {
+            return
+        }
+        recheck.due.append(id)
+        s.recheck = recheck
     }
 
     /// Cards by when they were last answered, the longest ago (or never) first; ties keep their
@@ -1247,9 +1478,17 @@ public enum LearnEngine {
             || review.due.contains { (s.stage[$0] ?? 0) >= masteredStage }
     }
 
-    /// The session's goal is reached: everything mastered, every repetition question asked.
+    /// Rechecks are queued or still to come for cards that are still mastered.
+    private static func recheckPending(_ s: LearnState) -> Bool {
+        guard let recheck = s.recheck else { return false }
+        return s.queue.contains { isRecheckQuestion($0.qid) }
+            || recheck.due.contains { (s.stage[$0] ?? 0) >= masteredStage }
+    }
+
+    /// The session's goal is reached: everything mastered, every repetition question and recheck
+    /// asked.
     private static func isComplete(_ s: LearnState) -> Bool {
-        allMastered(s) && !reviewPending(s)
+        allMastered(s) && !reviewPending(s) && !recheckPending(s)
     }
 
     /// Adds active time since the last update; gaps longer than `idleGapMs` (pause, sleeping
@@ -1262,7 +1501,23 @@ public enum LearnEngine {
         s.updatedAt = now
     }
 
+    /// Once nothing but rechecks is left to ask (every card mastered, no repetition question
+    /// pending, only rechecks queued), a waiting recheck that would come fewer than MIN_GAP
+    /// questions after the answer that mastered its card is dropped: asked right away it would
+    /// check nothing.
+    private static func dropLateRechecks(_ s: inout LearnState) {
+        guard let recheck = s.recheck, !recheck.due.isEmpty, allMastered(s), !reviewPending(s) else { return }
+        if s.queue.contains(where: { !isRecheckQuestion($0.qid) }) { return }
+        let ahead = s.queue.count
+        let due = recheck.due.filter { id in
+            guard let last = s.lastAt[id] else { return true }
+            return s.clock + ahead - last - 1 >= MIN_GAP
+        }
+        if due.count != recheck.due.count { s.recheck = LearnRecheck(due: due) }
+    }
+
     private static func markFinished(_ s: inout LearnState, _ now: Double) {
+        dropLateRechecks(&s)
         if s.finishedAt == nil && isComplete(s) { s.finishedAt = now.isFinite ? now : s.updatedAt }
     }
 
@@ -1281,11 +1536,13 @@ public enum LearnEngine {
         return last.round == s.round
     }
 
+    /// The round's tally; `cardIds` = the cards answered in it, in the order of their first answer.
     private static func archiveRound(_ s: inout LearnState) {
+        var seen = Set<String>()
         s.rounds.append(
             LearnRoundRecord(
                 round: s.round, answered: s.roundLog.count, correct: s.roundLog.count { $0.correct },
-                cardIds: s.active))
+                cardIds: s.roundLog.map(\.cardId).filter { seen.insert($0).inserted }))
     }
 
     /// The set's askable cards without the removed one, and every card by id: the source of
@@ -1320,15 +1577,15 @@ public enum LearnEngine {
         s.order.removeAll { $0 == id }
         s.stage[id] = nil
         s.seen[id] = nil
-        s.retried[id] = nil
+        s.lastAt[id] = nil
         s.misses[id] = nil
         s.initiallyMastered.removeAll { $0 == id }
-        s.active.removeAll { $0 == id }
         if var review = s.review {
             review.due.removeAll { $0 == id }
             review.results[id] = nil
             s.review = review
         }
+        s.recheck?.due.removeAll { $0 == id }
         // Its questions go; other questions lose it as an option (refilled when possible; mc
         // needs two options to stay mc).
         s.queue = s.queue.filter { $0.cardId != id }.map { q in

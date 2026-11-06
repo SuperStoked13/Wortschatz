@@ -7,7 +7,7 @@ namespace Wortschatz.App.Services;
 /// flashcard decks and exam settings per set, the window size. Stored as preferences.json next to the library.
 /// The theme and study options live in the library (LibraryStore.GetSettings), like on the Mac and the web.
 /// </summary>
-public sealed class AppPreferences
+public sealed partial class AppPreferences
 {
     readonly string? _path;
     JsonObjectMap _data;
@@ -66,6 +66,13 @@ public sealed class AppPreferences
         set => Set("learn.review", value);
     }
 
+    /// <summary>"Nachkontrolle nach Fehlern" (Learn options; the same for every set; on by default). Mac key: learn.recheck.</summary>
+    public bool LearnRecheck
+    {
+        get => Get("learn.recheck")?.BoolValue ?? true;
+        set => Set("learn.recheck", value);
+    }
+
     /// <summary>The intro hint of Lernen was closed (Mac key: learn.introHintDismissed).</summary>
     public bool LearnIntroHintDismissed
     {
@@ -113,6 +120,39 @@ public sealed class AppPreferences
     public string TermFilter(string setId) => Get($"termFilter.{setId}")?.StringValue ?? "all";
 
     public void SaveTermFilter(string setId, string filter) => Set($"termFilter.{setId}", filter == "all" ? null : (JSONValue)filter);
+
+    /// <summary>Words the spell checker no longer reports ("fr:kevinou"; Mac key: spellcheck.ignoredWords).</summary>
+    public IReadOnlyList<string> IgnoredSpellings
+    {
+        get => Get("spellcheck.ignoredWords")?.ArrayValue?.Select(v => v.StringValue).OfType<string>().ToList() ?? [];
+        set => Set("spellcheck.ignoredWords", value.Count == 0 ? null : JSONValue.Array(value.Select(w => (JSONValue)w)));
+    }
+
+    /// <summary>The voice chosen per language in Einstellungen › Allgemein ("fr" → SAPI token id). Mac key: speechVoices.</summary>
+    public IReadOnlyDictionary<Lang, string> SpeechVoices
+    {
+        get
+        {
+            var result = new Dictionary<Lang, string>();
+            if (Get("speechVoices")?.ObjectValue is { } map)
+                foreach (var (key, value) in map)
+                    if (EnumRaw.Parse<Lang>(key) is { } lang && value.StringValue is { Length: > 0 } id) result[lang] = id;
+            return result;
+        }
+        set
+        {
+            var map = new JsonObjectMap();
+            foreach (var (lang, id) in value) map[lang.Raw()] = id;
+            Set("speechVoices", map.Count == 0 ? null : JSONValue.Object(map));
+        }
+    }
+
+    /// <summary>The open tab of the settings (Mac key: settings.selectedTab).</summary>
+    public int SettingsTab
+    {
+        get => (int)(Get("settings.selectedTab")?.FiniteNumber ?? 0);
+        set => Set("settings.selectedTab", value == 0 ? null : (JSONValue)value);
+    }
 
     /// <summary>The earlier WebView app still has to be removed after the takeover (see EarlierApp).</summary>
     public bool EarlierAppRemovePending

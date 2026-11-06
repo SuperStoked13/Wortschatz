@@ -14,6 +14,7 @@ public enum IconName
     App, Minimize, Maximize, Restore, Close, Search, Home, Plus, Flame, Gear, Play, Target, Trophy, ChevronLeft, ChevronRight,
     Speaker, Sliders, Star, StarFilled, Check, CheckCircle, X, Pencil, Trash, Cards, Keyboard, Book, Upload, Download, Copy, Shuffle,
     Undo, Sparkles, Stack, Magnifier, Clock, Moon, Sun, Exam, Info, Repeat, RotateCcw, PartyPopper, Lightbulb, Warning, Octagon, More,
+    Hand, EqualCircle, Menu, Camera,
 }
 
 public static class Icons
@@ -28,8 +29,13 @@ public static class Icons
         [IconName.Search] = ("M11 4a7 7 0 1 1 0 14a7 7 0 1 1 0-14zM20 20l-3.5-3.5", false),
         [IconName.Home] = ("M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6h-6v6H4a1 1 0 0 1-1-1z", false),
         [IconName.Plus] = ("M12 5v14M5 12h14", false),
+        // Three lines: the library drawer on a phone.
+        [IconName.Menu] = ("M4 6.5h16M4 12h16M4 17.5h16", false),
+        // A camera: "Foto aufnehmen" on a phone.
+        [IconName.Camera] = ("M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3zM12 10a3 3 0 1 1 0 6a3 3 0 1 1 0-6z", false),
         [IconName.Flame] = ("M12 2.5c1.2 3.2 5.5 5.3 5.5 10.6a5.5 5.5 0 0 1-11 0c0-2.2 1.1-3.8 2.2-4.9.3 1.6 1.1 2.7 2.2 3.3 0-3.3 0-6.3 1.1-9z", true),
-        [IconName.Gear] = ("M12 9a3 3 0 1 1 0 6a3 3 0 1 1 0-6zM12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M5.3 18.7l2.1-2.1M16.6 7.4l2.1-2.1", false),
+        // A cog with teeth (Lucide "settings"); the earlier circle with rays read as a sun.
+        [IconName.Gear] = ("M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2zM12 9a3 3 0 1 1 0 6a3 3 0 1 1 0-6z", false),
         [IconName.Play] = ("M8 5v14l11-7z", true),
         [IconName.Target] = ("M12 3.5a8.5 8.5 0 1 1 0 17a8.5 8.5 0 1 1 0-17zM12 7.5a4.5 4.5 0 1 1 0 9a4.5 4.5 0 1 1 0-9z", false),
         [IconName.Trophy] = ("M8 21h8M12 17v4M7 4h10v5a5 5 0 0 1-10 0zM17 5h3v2a3 3 0 0 1-3 3M7 5H4v2a3 3 0 0 0 3 3", false),
@@ -66,6 +72,8 @@ public static class Icons
         [IconName.Warning] = ("m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3M12 9v4M12 17h.01", false),
         [IconName.Octagon] = ("M12 16h.01M12 8v4M15.312 2a2 2 0 0 1 1.414.586l4.688 4.688A2 2 0 0 1 22 8.688v6.624a2 2 0 0 1-.586 1.414l-4.688 4.688a2 2 0 0 1-1.414.586H8.688a2 2 0 0 1-1.414-.586l-4.688-4.688A2 2 0 0 1 2 15.312V8.688a2 2 0 0 1 .586-1.414l4.688-4.688A2 2 0 0 1 8.688 2z", false),
         [IconName.More] = ("M5 12h.01M12 12h.01M19 12h.01", false),
+        [IconName.Hand] = ("M18 11V6a2 2 0 0 0-2-2a2 2 0 0 0-2 2M14 10V4a2 2 0 0 0-2-2a2 2 0 0 0-2 2v2M10 10.5V6a2 2 0 0 0-2-2a2 2 0 0 0-2 2v8M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15", false),
+        [IconName.EqualCircle] = ("M12 3a9 9 0 1 1 0 18a9 9 0 1 1 0-18zM8.5 10h7M8.5 14h7", false),
         [IconName.Info] = ("M12 3a9 9 0 1 1 0 18a9 9 0 1 1 0-18zM12 11v5M12 8h.01", false),
     };
 

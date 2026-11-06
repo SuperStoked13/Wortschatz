@@ -691,7 +691,9 @@ public class LearnFlowTests
         Assert.True(d.Announced("Noch nicht ganz – tippe die richtige Antwort genau ab."));
         d.Type("le chemin");
         d.Press(KeyInput.Return);
-        // The retry of the miss comes next (multiple choice).
+        // No retry at the end of the round any more: the only card comes back in the next round (multiple choice).
+        Assert.Equal(Phase.Checkpoint, d.State.Phase);
+        d.Press(KeyInput.Return);
         Assert.Equal(Phase.Mc, d.State.Phase);
     }
 
@@ -728,7 +730,8 @@ public class LearnFlowTests
     [Fact]
     public void ACheckpointFollowsEachRound()
     {
-        var d = new Driver(MakeSet(MakeCards(3)));
+        // A round is roundSize questions (3 here: each card once, then the checkpoint).
+        var d = new Driver(MakeSet(MakeCards(3)), options: Options(roundSize: 3));
         for (int i = 0; i < 3; i++)
         {
             d.AnswerByKeys(correct: true);
@@ -769,7 +772,7 @@ public class LearnFlowTests
     [Fact]
     public void TheFinishScreenCelebratesAndReturnIsFertig()
     {
-        var d = new Driver(MakeSet(MakeCards(2)));
+        var d = new Driver(MakeSet(MakeCards(2)), options: Options(roundSize: 2));
         int guardCount = 0;
         while (d.State.Phase != Phase.Finished && guardCount++ < 40)
         {
@@ -833,10 +836,11 @@ public class LearnFlowTests
             ("mc wrong", () => { var d = new Driver(six); d.AnswerByKeys(false); return d; }, "Weiter", 1, d => d.State.Phase == Phase.Mc),
             ("mc don't know", () => { var d = new Driver(six); d.Press(KeyInput.DigitKey(0)); return d; }, "Weiter", 1, d => d.State.Phase == Phase.Mc),
             ("written correct", () => { var d = Written(); d.AnswerByKeys(true); return d; }, "Weiter", 1, d => d.State.Phase == Phase.Finished || d.State.Phase == Phase.Checkpoint),
-            ("written wrong", () => { var d = Written(); d.AnswerByKeys(false); return d; }, "Weiter", 1, d => d.State.Phase == Phase.Mc),
+            // The only card of the subset: a miss comes back in the next round, after the checkpoint.
+            ("written wrong", () => { var d = Written(); d.AnswerByKeys(false); return d; }, "Weiter", 1, d => d.State.Phase == Phase.Checkpoint),
             ("copy, empty", () => { var d = Written(true); d.AnswerByKeys(false); return d; }, "Weiter", 0, d => d.State.Phase == Phase.Copy && d.State.Rejections == 1),
-            ("copy, typed", () => { var d = Written(true); d.AnswerByKeys(false); d.Type("le chemin"); return d; }, "Weiter", 1, d => d.State.Phase == Phase.Mc),
-            ("checkpoint", () => { var d = new Driver(MakeSet(MakeCards(2))); Play(d, p => p == Phase.Checkpoint); return d; }, "Weiter zu Runde 2", 1,
+            ("copy, typed", () => { var d = Written(true); d.AnswerByKeys(false); d.Type("le chemin"); return d; }, "Weiter", 1, d => d.State.Phase == Phase.Checkpoint),
+            ("checkpoint", () => { var d = new Driver(MakeSet(MakeCards(2)), options: Options(roundSize: 2)); Play(d, p => p == Phase.Checkpoint); return d; }, "Weiter zu Runde 2", 1,
                 d => d.State.Phase == Phase.Written),
             ("finished", () => { var d = new Driver(MakeSet(MakeCards(2))); Play(d, p => p == Phase.Finished); return d; }, "Fertig", 0,
                 d => d.Navigated.SequenceEqual([Flow.Destination.Set])),
@@ -1111,7 +1115,7 @@ public class LearnFlowTests
         int transitions = d.State.Transitions;
         d.Send(new Event.PromptAnswered(true));
         Assert.Equal(3, d.State.Session?.Learn.RoundSize);
-        Assert.Equal(3, d.State.Session?.Active.Count);
+        Assert.Equal(3, d.State.Session?.Queue.Count);
         Assert.Equal(transitions + 1, d.State.Transitions);
 
         // Direction and question types need a restart too.
@@ -1174,7 +1178,8 @@ public class LearnFlowTests
         Assert.Single(d.Scheduled);
         d.Send(new Event.Restart());
         d.Send(new Event.PromptAnswered(true));
-        Assert.Equal(Phase.Mc, d.State.Phase);
+        // The card answered right before (stage 1) comes first, written; the new ones follow as multiple choice.
+        Assert.Equal(Phase.Written, d.State.Phase);
         Assert.Equal(0, d.State.Session?.Answered);
         Assert.Equal(d.Now, d.State.Session?.StartedAt);
         Assert.Single(d.Progress); // the progress stays

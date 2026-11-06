@@ -1,138 +1,396 @@
 using Avalonia;
+using Avalonia.Automation;
 using Avalonia.Controls;
-using Avalonia.Controls.Templates;
 using Avalonia.Input;
-using Avalonia.Input.Platform;
+using Avalonia.Interactivity;
 using Avalonia.Layout;
 using Avalonia.Media;
-using Avalonia.Platform.Storage;
 using Avalonia.Threading;
 using Avalonia.VisualTree;
 using Wortschatz.App.DesignSystem;
-using Wortschatz.App.Features.Study;
+using Wortschatz.App.Services;
 using Wortschatz.Core;
 
 namespace Wortschatz.App.Features.Editor;
 
 /// <summary>
-/// "Neues Lernset" / "Lernset bearbeiten" (Mac: EditorSheet.swift, SetEditorModel.swift, SetEditorCardList.swift,
-/// SetEditorMetaSection.swift and the import panel ImportPanelView/ImportDetectionPanel): title, description and
-/// languages, "Vokabelliste importieren" (paste or open a TXT/CSV file; VocabParser recognises term and translation
-/// and the languages, with a preview), and the card list. Ctrl+Enter saves, Esc cancels.
-/// Not yet on Windows: PDF and photo import (the Mac uses PDFKit and Vision for those).
+/// "Neues Lernset" / "Lernset bearbeiten" (Mac: EditorSheet.swift, SetEditorModel.swift, SetEditorChrome.swift,
+/// SetEditorMetaSection.swift; the card list in SetEditorCardList.cs, the import panel in ImportPanel.cs): title,
+/// description and languages with "⇄", the import panel, the card rows with duplicate and completeness checks, undo,
+/// the floating save bar, and saving through the store. Ctrl+Enter / Ctrl+S save, Esc cancels (or stops a running
+/// import first), Ctrl+Z / Ctrl+Shift+Z undo and redo list changes.
 /// </summary>
-public sealed class SetEditorScreen : Screen
+public sealed partial class SetEditorScreen : Screen
 {
-    sealed class Draft
-    {
-        public string? Id;
-        public string Term = "";
-        public string Definition = "";
-        public bool Starred;
-    }
-
     readonly string? _setId;
     readonly bool _openFile;
-    readonly List<Draft> _drafts = [];
-    readonly HashSet<Draft> _invalid = [];
-    bool _titleMissing;
-    string _baseline = "";
-    readonly TextBox _title, _description, _importText;
-    readonly ComboBox _termLang, _defLang;
-    readonly ItemsControl _cardList = new() { ItemsPanel = new FuncTemplate<Panel?>(() => new VirtualizingStackPanel()) };
-    readonly StackPanel _importResult = new() { Spacing = 10 };
-    readonly TextBlock _countLabel = Ui.Text("", 14, FontWeight.SemiBold);
-    bool _importOpen;
-    bool _swap;
-    ParseResult? _parsed;
-    DispatcherTimer? _parseTimer;
-    Control? _importBody;
 
-    public SetEditorScreen(AppModel model, MainWindow window, string? setId, bool startWithImport, bool openFile = false) : base(model, window)
+    string _title = "", _details = "";
+    Lang _termLang, _defLang;
+    /// <summary>The learner picked the language (an existing set's languages count as picked).</summary>
+    bool _termTouched, _defTouched;
+    /// <summary>The picker was filled from the recognised list ("Automatisch erkannt").</summary>
+    bool _termDetected, _defDetected;
+    /// <summary>The title came from a file name.</summary>
+    bool _titleFromFile;
+    /// <summary>A save was attempted: errors show from now on.</summary>
+    bool _attempted;
+    /// <summary>Saved or discarded: the editor is going away.</summary>
+    bool _closed;
+    double _loadedAt;
+    string _baseline = "";
+    bool _activated;
+
+    // Controls (made by Build).
+    TextBox _titleBox = null!, _detailsBox = null!;
+    ComboBox _termBox = null!, _defBox = null!;
+    Control _termDetectedLabel = null!, _defDetectedLabel = null!;
+    Control _titleError = null!, _titleNote = null!;
+    readonly Border _capsuleHost = new();
+    ScrollViewer _scroll = null!;
+    Control _dropOverlay = null!;
+    readonly StackPanel _status = new() { Orientation = Orientation.Horizontal, Spacing = 6, VerticalAlignment = VerticalAlignment.Center };
+    WsButton _saveButton = null!, _cancelButton = null!;
+
+    public SetEditorScreen(AppModel model, MainView window, string? setId, bool startWithImport, bool openFile = false) : base(model, window)
     {
         _setId = setId;
         _openFile = openFile;
         var set = setId is null ? null : model.Set(setId);
-        _title = Ui.Field("Titel, z. B. «Unité 3 – Les personnes»", set?.Title ?? "", 22, 52);
-        _title.FontWeight = FontWeight.Bold;
-        _description = Ui.Field("Beschreibung (freiwillig)", set?.Description ?? "", 14, 40);
-        _termLang = LangBox(set?.TermLang ?? Lang.Fr);
-        _defLang = LangBox(set?.DefLang ?? Lang.De);
-        // The rows' placeholders and writing direction follow the languages.
-        _termLang.SelectionChanged += (_, _) => { if (_activated) FillCards(); };
-        _defLang.SelectionChanged += (_, _) => { if (_activated) FillCards(); };
-        if (set is not null)
-            foreach (var c in set.Cards) _drafts.Add(new Draft { Id = c.Id, Term = c.Term, Definition = c.Definition, Starred = c.Starred });
-        while (_drafts.Count < 3) _drafts.Add(new Draft());
+        _title = set?.Title ?? "";
+        _details = set?.Description ?? "";
+        _termLang = set?.TermLang ?? Lang.Fr;
+        _defLang = set?.DefLang ?? Lang.De;
+        _termTouched = _defTouched = set is not null;
+        _loadedAt = set?.UpdatedAt ?? 0;
+        SetRows(set?.Cards.Select(Draft.FromCard) ?? []);
         _importOpen = startWithImport || set is null;
-        _importText = Ui.Field("Liste hier einfügen – eine Zeile pro Begriff, z. B. «la maison – das Haus» oder abwechselnd Begriff und Übersetzung", "", 14, 150);
-        _importText.AcceptsReturn = true;
-        _importText.TextWrapping = TextWrapping.Wrap;
-        _importText.VerticalContentAlignment = VerticalAlignment.Top;
-        _importText.MaxHeight = 260;
-        _importText.TextChanged += (_, _) => ScheduleParse();
-        _cardList.ItemTemplate = new FuncDataTemplate<Draft>((d, _) => d is null ? new Border() : CardRow(d, _drafts.IndexOf(d)), supportsRecycling: false);
-        _title.TextChanged += (_, _) =>
-        {
-            if (_titleMissing && JSCompat.Trim(_title.Text ?? "").Length > 0)
-            {
-                _titleMissing = false;
-                _title.BorderBrush = WsTheme.B(WsTheme.P.Hairline);
-            }
-        };
         _baseline = Fingerprint();
+        CheckDuplicates();
     }
 
-    /// <summary>What the editor would save, to tell whether anything changed (Mac: fingerprint/baseline).</summary>
-    string Fingerprint() => string.Join("\u0001", new[] { _title.Text ?? "", _description.Text ?? "", $"{LangOf(_termLang)}", $"{LangOf(_defLang)}" }
-        .Concat(_drafts.Where(d => IsFilled(d)).Select(d => $"{d.Id}\u0002{d.Term}\u0002{d.Definition}\u0002{d.Starred}")));
-
-    static bool IsFilled(Draft d) => JSCompat.Trim(d.Term).Length > 0 || JSCompat.Trim(d.Definition).Length > 0;
-    static bool IsComplete(Draft d) => JSCompat.Trim(d.Term).Length > 0 && JSCompat.Trim(d.Definition).Length > 0;
-
-    /// <summary>Unsaved changes (also: text waiting in the import box).</summary>
-    bool IsDirty => Fingerprint() != _baseline || JSCompat.Trim(_importText.Text ?? "").Length > 0;
+    /// <summary>The toasts stay above the save bar.</summary>
+    public override double ToastClearance => 76;
 
     bool IsNew => _setId is null;
+    bool IsEditing => !IsNew;
+    string SaveLabel => SetEditorCopy.SaveLabel(IsEditing);
+    bool IsTitleEmpty => JSCompat.Trim(_title).Length == 0;
 
-    static ComboBox LangBox(Lang selected)
-    {
-        var box = new ComboBox { MinWidth = 190 };
-        foreach (var lang in Labels.LANG_ORDER) box.Items.Add(new ComboBoxItem { Content = Labels.LangName(lang) });
-        box.SelectedIndex = Array.IndexOf(Labels.LANG_ORDER, selected);
-        return box;
-    }
+    /// <summary>What the editor would save, to tell whether anything changed (Mac: fingerprint/baseline).</summary>
+    string Fingerprint() => string.Join("\u0001", new[] { JSCompat.Trim(_title), JSCompat.Trim(_details), $"{_termLang}", $"{_defLang}" }
+        .Concat(_drafts.Where(d => d.IsFilled).Select(d => $"{d.Id}\u0002{d.TrimmedTerm}\u0002{d.TrimmedDefinition}\u0002{d.Starred}")));
 
-    static Lang LangOf(ComboBox box) => box.SelectedIndex >= 0 ? Labels.LANG_ORDER[box.SelectedIndex] : Lang.Other;
+    /// <summary>Unsaved changes (also: text waiting in the import box).</summary>
+    bool IsDirty => !_closed && (Fingerprint() != _baseline || HasImportText);
+
+    // MARK: Layout
 
     protected override Control Build()
     {
         var p = WsTheme.P;
-        foreach (var c in new Control[] { _title, _description, _termLang, _defLang, _importText, _cardList, _importResult, _countLabel })
-            Detach(c);
-
-        var header = Ui.Row(
-            Ui.V(4, Ui.Eyebrow(IsNew ? "Neues Lernset" : "Lernset bearbeiten"),
-                Ui.Text(IsNew ? "Tippe deine Vokabeln ein oder importiere eine ganze Liste." : "Ändere Begriffe, ergänze neue oder importiere eine weitere Liste.",
-                    15, color: p.TextSecondary, wrap: TextWrapping.Wrap)),
-            Ui.H(10, Ui.Secondary("Abbrechen", Cancel, keyHint: "Esc"), Ui.Primary(IsNew ? "Erstellen" : "Sichern", Save, "Ctrl ↵", height: 40)));
-
-        var langs = Ui.H(18,
-            Ui.V(6, Ui.Eyebrow("Begriff"), _termLang),
-            Ui.Text("→", 18, FontWeight.Bold, p.TextTertiary),
-            Ui.V(6, Ui.Eyebrow("Definition"), _defLang));
-        if (langs.Children[1] is Control arrow) arrow.Margin = new Thickness(0, 20, 0, 0);
-        var meta = Ui.Glass(Ui.V(12, _title, _description, langs), 22, new Thickness(20), strong: true);
-
-        var content = new StackPanel { Spacing = 18, Margin = new Thickness(34, 14, 34, 24) };
-        content.Children.Add(header);
-        content.Children.Add(meta);
-        content.Children.Add(ImportPanel());
-        content.Children.Add(Ui.Row(Ui.H(10, Ui.Text("Karten", 18, FontWeight.Bold), _countLabel),
-            Ui.Secondary("Karte hinzufügen", () => AddRow(focus: true), IconName.Plus)));
+        var content = new StackPanel { Spacing = 0, Margin = AppDevice.IsPhone ? new Thickness(8, 4, 8, 24) : new Thickness(34, 14, 34, 28), MaxWidth = ContentWidth };
+        content.Children.Add(Header());
+        content.Children.Add(Spaced(MetaSection(), 22));
+        content.Children.Add(Spaced(ImportPanel(), 18));
+        content.Children.Add(Spaced(CardsHeader(), 30));
+        var columns = Spaced(ColumnHeader(pinned: false), 8);
+        // Phone: each card shows its two fields one under the other, with their language as placeholder: no columns.
+        columns.IsVisible = !AppDevice.IsPhone;
+        content.Children.Add(columns);
+        Detach(_cardList);
         content.Children.Add(_cardList);
+        content.Children.Add(Spaced(CardsFooter(), 4));
         FillCards();
-        return Ui.Scroll(content);
+
+        _scroll = Ui.Scroll(content);
+        _scroll.ScrollChanged += (_, _) => UpdatePinnedHeader();
+
+        var stage = new Grid();
+        stage.Children.Add(_scroll);
+        _pinnedHeader = PinnedHeader();
+        stage.Children.Add(_pinnedHeader);
+        _dropOverlay = DropOverlay();
+        stage.Children.Add(_dropOverlay);
+
+        var root = new Grid { RowDefinitions = new RowDefinitions("*,Auto") };
+        root.Children.Add(stage);
+        var bar = ActionBar();
+        Grid.SetRow(bar, 1);
+        root.Children.Add(bar);
+        HookDrops(root);
+        UpdateStats();
+        UpdateMetaErrors();
+        UpdateLanguages(rows: false);
+        return root;
+    }
+
+    const double ContentWidth = 980;
+
+    /// <summary>A new set (not editing an existing one).</summary>
+    public bool IsNewSet => IsNew;
+
+    /// <summary>Nothing typed, imported or changed yet.</summary>
+    public bool IsUntouched => !IsDirty && _importCts is null;
+
+    /// <summary>Imports what another app shared (Android "Teilen"): text into the import box, files through the import.</summary>
+    public void TakePendingImport()
+    {
+        if (!IsNew || Model.PendingImport is not { } shared) return;
+        Model.PendingImport = null;
+        if (shared.Text is { Length: > 0 } text) ImportSetText(text, append: true);
+        if (shared.Sources.Count > 0) ImportSources(shared.Sources.ToList());
+    }
+
+    static Control Spaced(Control c, double top)
+    {
+        c.Margin = new Thickness(c.Margin.Left, top, c.Margin.Right, c.Margin.Bottom);
+        return c;
+    }
+
+    /// <summary>"Neues Lernset" / "Lernset bearbeiten" with the language pair (Mac: SetEditorHeader).</summary>
+    Control Header()
+    {
+        var p = WsTheme.P;
+        var heading = Ui.Text(IsEditing ? "Lernset bearbeiten" : "Neues Lernset", AppDevice.IsPhone ? 22 : 28, FontWeight.Bold, font: WsTheme.Prompt);
+        heading.TextWrapping = TextWrapping.Wrap;
+        AutomationProperties.SetHeadingLevel(heading, 1);
+        var lead = Ui.Text(IsEditing ? "Ändere Begriffe, ergänze neue oder importiere eine weitere Liste."
+            : AppDevice.ReadsPhotos ? "Tippe deine Vokabeln ein oder importiere eine ganze Liste – aus Text, Datei oder Foto."
+            : "Tippe deine Vokabeln ein oder importiere eine ganze Liste – aus Text oder Datei.", 15, color: p.TextSecondary, wrap: TextWrapping.Wrap);
+        Detach(_capsuleHost);
+        _capsuleHost.VerticalAlignment = VerticalAlignment.Top;
+        _capsuleHost.Margin = new Thickness(0, 10, 0, 0);
+        var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto"), ColumnSpacing = 16 };
+        // Phone: the heading is already in the bar on top; the lead and the language pair stay.
+        if (AppDevice.IsPhone) _capsuleHost.Margin = new Thickness(0, 1, 0, 0);
+        grid.Children.Add(AppDevice.IsPhone ? lead : Ui.V(4, heading, lead));
+        Grid.SetColumn(_capsuleHost, 1);
+        grid.Children.Add(_capsuleHost);
+        return grid;
+    }
+
+    /// <summary>Titel, Beschreibung and the language pickers "Ich lerne" ⇄ "Übersetzung" (Mac: SetEditorMetaSection).</summary>
+    Control MetaSection()
+    {
+        var p = WsTheme.P;
+        _titleBox = Field(SetEditorCopy.TitlePlaceholder, _title, 20, maxLines: 2);
+        _titleBox.FontWeight = FontWeight.SemiBold;
+        AutomationProperties.SetName(_titleBox, "Titel");
+        _titleBox.TextChanged += (_, _) => SetTitle(_titleBox.Text ?? "");
+        OnKeys(_titleBox, e =>
+        {
+            if (e.Key is Key.Enter or Key.Return && e.KeyModifiers is KeyModifiers.None or KeyModifiers.Alt)
+            {
+                if (e.KeyModifiers == KeyModifiers.None) Submit(Field_.Title);
+                return true;
+            }
+            return false;
+        });
+        _titleError = ErrorLabel(SetEditorCopy.TitleMissing);
+        var note = Ui.H(6, Icons.Icon(IconName.Sparkles, 14, p.AccentText, 2), Ui.Text(SetEditorCopy.TitleFromFile, 13, color: p.AccentText, wrap: TextWrapping.Wrap));
+        _titleNote = note;
+
+        _detailsBox = Field(SetEditorCopy.DescriptionPlaceholder, _details, 14, maxLines: 4);
+        AutomationProperties.SetName(_detailsBox, "Beschreibung");
+        _detailsBox.TextChanged += (_, _) => SetDetails(_detailsBox.Text ?? "");
+        OnKeys(_detailsBox, e =>
+        {
+            if (e.Key is Key.Enter or Key.Return && e.KeyModifiers == KeyModifiers.None)
+            {
+                Submit(Field_.Description);
+                return true;
+            }
+            return e.Key is Key.Enter or Key.Return && e.KeyModifiers == KeyModifiers.Alt && InsertLineBreak(_detailsBox);
+        });
+
+        _termBox = LangBox(SetEditorCopy.TermLanguages, _termLang, "Ich lerne");
+        _defBox = LangBox(SetEditorCopy.DefinitionLanguages, _defLang, "Übersetzung");
+        _termBox.SelectionChanged += (_, _) => { if (!_settingLangs) SetTermLang(SetEditorCopy.TermLanguages[Math.Max(0, _termBox.SelectedIndex)]); };
+        _defBox.SelectionChanged += (_, _) => { if (!_settingLangs) SetDefLang(SetEditorCopy.DefinitionLanguages[Math.Max(0, _defBox.SelectedIndex)]); };
+        _termDetectedLabel = DetectedLabel();
+        _defDetectedLabel = DetectedLabel();
+        var flip = Ui.IconButton(IconName.Repeat, "Begriffe und Definitionen tauschen", FlipSides, 38);
+        if (flip.Chrome.Child is Border holder) holder.Child = EditorGlyphs.Swap(16, p.TextSecondary);
+        flip.Margin = new Thickness(0, 22, 0, 0);
+        flip.VerticalAlignment = VerticalAlignment.Top;
+        Control langs;
+        if (AppDevice.IsPhone)
+        {
+            // Phone: the two languages side by side as on the PC (reads like «FR → DE»), sharing the width, the swap
+            // button between them (one under the other they left a gap and the button floated beside the first).
+            _termBox.MinWidth = _defBox.MinWidth = 0;
+            _termBox.HorizontalAlignment = _defBox.HorizontalAlignment = HorizontalAlignment.Stretch;
+            flip.Width = flip.Height = 34;
+            flip.Margin = new Thickness(0, 24, 0, 0);
+            var row = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto,*"), ColumnSpacing = 6 };
+            row.Children.Add(Ui.V(6, Label("Ich lerne"), _termBox, _termDetectedLabel));
+            Grid.SetColumn(flip, 1);
+            row.Children.Add(flip);
+            var second = Ui.V(6, Label("Übersetzung"), _defBox, _defDetectedLabel);
+            Grid.SetColumn(second, 2);
+            row.Children.Add(second);
+            langs = row;
+        }
+        else langs = Ui.H(14,
+            Ui.V(6, Label("Ich lerne"), _termBox, _termDetectedLabel),
+            flip,
+            Ui.V(6, Label("Übersetzung"), _defBox, _defDetectedLabel));
+
+        var body = Ui.V(16,
+            Ui.V(6, Label("Titel"), _titleBox, _titleError, _titleNote),
+            Ui.V(6, Label("Beschreibung"), _detailsBox),
+            langs);
+        return Ui.Glass(body, 22, AppDevice.IsPhone ? new Thickness(14, 14) : new Thickness(20, 18), strong: true);
+
+        static TextBlock Label(string text) => Ui.Text(text, 13, FontWeight.Medium, WsTheme.P.TextSecondary);
+
+        static Control DetectedLabel()
+        {
+            var p = WsTheme.P;
+            var label = Ui.H(4, Icons.Icon(IconName.Sparkles, 12, p.AccentText, 2.2), Ui.Text(SetEditorCopy.Detected, 12, FontWeight.Medium, p.AccentText));
+            label.Opacity = 0;
+            AutomationProperties.SetAccessibilityView(label, AccessibilityView.Raw);
+            return label;
+        }
+    }
+
+    static ComboBox LangBox(IReadOnlyList<Lang> langs, Lang selected, string name)
+    {
+        var box = new ComboBox { MinWidth = 190 };
+        foreach (var lang in langs) box.Items.Add(new ComboBoxItem { Content = Labels.LangName(lang) });
+        box.SelectedIndex = Math.Max(0, langs.ToList().IndexOf(selected));
+        AutomationProperties.SetName(box, name);
+        return box;
+    }
+
+    /// <summary>A text field of the editor: wraps, grows up to <paramref name="maxLines"/>, Enter is handled by the editor.</summary>
+    static TextBox Field(string placeholder, string text, double fontSize, int maxLines)
+    {
+        var box = Ui.Field(placeholder, text, fontSize, fontSize >= 18 ? 48 : 42);
+        box.AcceptsReturn = true;
+        box.TextWrapping = TextWrapping.Wrap;
+        box.MaxLines = maxLines;
+        box.VerticalContentAlignment = VerticalAlignment.Center;
+        return box;
+    }
+
+    /// <summary>A red "⚠ message" line (Mac: the field box's error).</summary>
+    static Control ErrorLabel(string text)
+    {
+        var p = WsTheme.P;
+        var t = Ui.Text(text, 13, FontWeight.Medium, p.Failure.Text, TextWrapping.Wrap);
+        var row = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*"), ColumnSpacing = 6 };
+        var icon = Icons.Icon(IconName.Warning, 14, p.Failure.Text, 2);
+        icon.VerticalAlignment = VerticalAlignment.Top;
+        icon.Margin = new Thickness(0, 1, 0, 0);
+        row.Children.Add(icon);
+        Grid.SetColumn(t, 1);
+        row.Children.Add(t);
+        row.IsVisible = false;
+        return row;
+    }
+
+    static void SetErrorText(Control label, string? text)
+    {
+        label.IsVisible = text is not null;
+        if (text is not null && label is Grid g && g.Children.OfType<TextBlock>().FirstOrDefault() is { } t) t.Text = text;
+    }
+
+    /// <summary>Handles keys of a field before the field does (tunnel): the handler returns true when it took the key.</summary>
+    static void OnKeys(TextBox box, Func<KeyEventArgs, bool> handler) =>
+        box.AddHandler(InputElement.KeyDownEvent, (_, e) => { if (!e.Handled && handler(e)) e.Handled = true; }, RoutingStrategies.Tunnel);
+
+    /// <summary>Alt+Enter: a line break at the caret (Mac: ⌥↩ in a vertical text field).</summary>
+    static bool InsertLineBreak(TextBox box)
+    {
+        var text = box.Text ?? "";
+        int start = Math.Min(box.SelectionStart, box.SelectionEnd), end = Math.Max(box.SelectionStart, box.SelectionEnd);
+        start = Math.Clamp(start, 0, text.Length);
+        end = Math.Clamp(end, start, text.Length);
+        box.Text = text[..start] + "\n" + text[end..];
+        box.CaretIndex = start + 1;
+        return true;
+    }
+
+    /// <summary>The floating glass bar at the bottom: count and what still blocks saving, "Abbrechen", the save button (Mac: SetEditorActionBar).</summary>
+    Control ActionBar()
+    {
+        var p = WsTheme.P;
+        _cancelButton = Ui.Secondary("Abbrechen", Cancel, keyHint: "Esc", height: 40);
+        _saveButton = Ui.Primary(SaveLabel, Save, "Ctrl ↵", height: 40);
+        Detach(_status);
+        var capsule = new Border
+        {
+            Child = _status,
+            MinHeight = 40,
+            Padding = new Thickness(16, 0),
+            CornerRadius = new CornerRadius(20),
+            Background = WsTheme.B(p.GlassStrong),
+            BorderBrush = WsTheme.B(p.GlassBorder),
+            BorderThickness = new Thickness(1),
+            HorizontalAlignment = HorizontalAlignment.Left,
+            ClipToBounds = true,
+        };
+        AutomationProperties.SetName(capsule, "Status");
+        var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto,Auto"), ColumnSpacing = AppDevice.IsPhone ? 6 : 10, Margin = AppDevice.IsPhone ? new Thickness(8, 6, 8, 10) : new Thickness(34, 8, 34, 14), MaxWidth = ContentWidth };
+        if (AppDevice.IsPhone) capsule.Padding = new Thickness(12, 0);
+        grid.Children.Add(capsule);
+        Grid.SetColumn(_cancelButton, 1);
+        grid.Children.Add(_cancelButton);
+        Grid.SetColumn(_saveButton, 2);
+        grid.Children.Add(_saveButton);
+        return grid;
+    }
+
+    /// <summary>The status line and the buttons' tooltips (Mac: SetEditorActionBar.status, .help).</summary>
+    void UpdateActionBar(Stats stats)
+    {
+        if (_saveButton is null) return;
+        var p = WsTheme.P;
+        var blocker = SetEditorCopy.Readiness(IsTitleEmpty, stats.Complete);
+        var extras = new List<string>();
+        if (stats.Duplicates > 0) extras.Add($"{stats.Duplicates} doppelt");
+        if (stats.Invalid > 0) extras.Add($"{stats.Invalid} unvollständig");
+        if (stats.Typos > 0) extras.Add($"{stats.Typos} Tippfehler?");
+        _status.Children.Clear();
+        _status.Children.Add(Ui.Text(Labels.Plural(stats.Filled, "Karte", "Karten"), 13.5, FontWeight.SemiBold));
+        _status.Children.Add(Ui.Text(Labels.LangPair(_termLang, _defLang), 13.5, color: p.TextSecondary));
+        if (blocker is not null || extras.Count > 0)
+        {
+            _status.Children.Add(Ui.Text("·", 13.5, color: p.TextTertiary));
+            _status.Children.Add(blocker is not null ? Ui.Text(blocker, 13.5, color: p.TextSecondary) : Ui.Text(string.Join(" · ", extras), 13.5, color: p.Warning.Text));
+        }
+        var statusText = string.Join(" ", _status.Children.OfType<TextBlock>().Select(t => t.Text));
+        if (_status.Parent is Control capsule) AutomationProperties.SetHelpText(capsule, statusText);
+        ToolTip.SetTip(_saveButton, blocker is not null ? $"{blocker} – {SaveLabel} zeigt, was fehlt" : $"{SaveLabel} (Ctrl+Enter oder Ctrl+S)");
+        ToolTip.SetTip(_cancelButton, _importCts is not null ? "Import abbrechen (Esc)" : "Ohne Speichern schliessen (Esc)");
+    }
+
+    /// <summary>Shown while files are dragged over the editor (Mac: SetEditorDropOverlay).</summary>
+    static Control DropOverlay()
+    {
+        var p = WsTheme.P;
+        var grid = new Grid { IsHitTestVisible = false, IsVisible = false };
+        grid.Children.Add(new Border { Background = new SolidColorBrush(p.Accent, 0.06) });
+        grid.Children.Add(new Avalonia.Controls.Shapes.Rectangle
+        {
+            RadiusX = 22, RadiusY = 22, StrokeThickness = 2.5, Margin = new Thickness(10),
+            Stroke = WsTheme.B(p.Accent), StrokeDashArray = [4, 2.8],
+        });
+        var icon = Icons.Icon(IconName.Download, 30, p.Accent, 2);
+        icon.HorizontalAlignment = HorizontalAlignment.Center;
+        var title = Ui.Text("Datei loslassen zum Importieren", 20, FontWeight.Bold);
+        title.HorizontalAlignment = HorizontalAlignment.Center;
+        var note = Ui.Text("Text, CSV, PDF oder Foto – mehrere Dateien gehen auch.", 14, color: p.TextSecondary);
+        note.HorizontalAlignment = HorizontalAlignment.Center;
+        var card = Ui.Glass(Ui.V(8, icon, title, note), 22, new Thickness(40, 28), strong: true);
+        card.HorizontalAlignment = HorizontalAlignment.Center;
+        // Opaque, so the page never shows through the text.
+        card.Background = WsTheme.B(p.Dark ? Palette.Hex(0x2E3142) : Palette.Hex(0xFBFBFE));
+        card.VerticalAlignment = VerticalAlignment.Center;
+        grid.Children.Add(card);
+        return grid;
     }
 
     static void Detach(Control c)
@@ -142,331 +400,217 @@ public sealed class SetEditorScreen : Screen
         else if (c.Parent is ContentControl cc) cc.Content = null;
     }
 
-    // MARK: Cards
+    // MARK: Title, description, languages
 
-    /// <summary>
-    /// Shows the rows. The list virtualizes (only the rows on screen exist), so showing it again after a change is cheap
-    /// even for 300 cards; the row numbers come from the draft's position when a row is made.
-    /// </summary>
-    void FillCards()
+    void SetTitle(string value)
     {
-        _cardList.ItemsSource = _drafts.ToList();
-        UpdateCount();
-    }
-
-    /// <summary>Scrolls the row of <paramref name="d"/> into view and focuses its term (or definition) field.</summary>
-    void FocusRow(Draft d, bool definition = false)
-    {
-        int index = _drafts.IndexOf(d);
-        if (index < 0) return;
-        Dispatcher.UIThread.Post(() =>
+        if (value == _title) return;
+        if (SetEditorCopy.PasteShapeOf(SetEditorCopy.InsertedText(_title, value), rowIsEmpty: false) is SetEditorCopy.PasteShape.List list)
         {
-            _cardList.ScrollIntoView(index);
+            // The field gets its old text back; the list goes to the import box.
+            var old = _title;
             Dispatcher.UIThread.Post(() =>
             {
-                if (_cardList.ContainerFromIndex(index) is not { } container) return;
-                var fields = container.GetVisualDescendants().OfType<TextBox>().ToList();
-                if (fields.Count < 2) return;
-                var field = definition ? fields[1] : fields[0];
-                field.BringIntoView();
-                field.Focus();
-            }, DispatcherPriority.Loaded);
-        }, DispatcherPriority.Loaded);
-    }
-
-    void UpdateCount()
-    {
-        int filled = _drafts.Count(d => JSCompat.Trim(d.Term).Length > 0 || JSCompat.Trim(d.Definition).Length > 0);
-        _countLabel.Text = Labels.Plural(filled, "Karte", "Karten");
-        _countLabel.Foreground = WsTheme.B(WsTheme.P.TextTertiary);
-    }
-
-    Control CardRow(Draft d, int index)
-    {
-        var p = WsTheme.P;
-        var term = Ui.Field($"Begriff · {Labels.LangName(LangOf(_termLang))}", d.Term, 15, 42);
-        var def = Ui.Field($"Definition · {Labels.LangName(LangOf(_defLang))}", d.Definition, 15, 42);
-        if (LangOf(_termLang).IsRTL()) term.FlowDirection = FlowDirection.RightToLeft;
-        if (LangOf(_defLang).IsRTL()) def.FlowDirection = FlowDirection.RightToLeft;
-        void MarkInvalid()
-        {
-            bool invalid = _invalid.Contains(d);
-            term.BorderBrush = WsTheme.B(invalid && JSCompat.Trim(d.Term).Length == 0 ? p.Failure.Fill : p.Hairline);
-            def.BorderBrush = WsTheme.B(invalid && JSCompat.Trim(d.Definition).Length == 0 ? p.Failure.Fill : p.Hairline);
-        }
-        MarkInvalid();
-        void Changed()
-        {
-            if (_invalid.Contains(d) && (IsComplete(d) || !IsFilled(d))) _invalid.Remove(d);
-            MarkInvalid();
-            UpdateCount();
-        }
-        term.TextChanged += (_, _) => { d.Term = term.Text ?? ""; Changed(); };
-        def.TextChanged += (_, _) => { d.Definition = def.Text ?? ""; Changed(); };
-        def.KeyDown += (_, e) =>
-        {
-            // Enter in the last definition adds a card (like tabbing on in Quizlet).
-            if (e.Key is Key.Enter or Key.Return && e.KeyModifiers == KeyModifiers.None && _drafts.IndexOf(d) == _drafts.Count - 1)
-            {
-                AddRow(focus: true);
-                e.Handled = true;
-            }
-        };
-        WsButton? star = null;
-        star = Ui.IconButton(d.Starred ? IconName.StarFilled : IconName.Star, d.Starred ? "Markierung entfernen" : "Markieren", () =>
-        {
-            d.Starred = !d.Starred;
-            // Only the star changes: the icon is swapped in place.
-            if (star?.Chrome.Child is Border holder)
-            {
-                holder.Child = Icons.Icon(d.Starred ? IconName.StarFilled : IconName.Star, 18, d.Starred ? p.Star : p.TextTertiary);
-                ToolTip.SetTip(star, d.Starred ? "Markierung entfernen" : "Markieren");
-            }
-        }, 32, ButtonKind.Plain, d.Starred ? p.Star : p.TextTertiary);
-        var delete = Ui.IconButton(IconName.Trash, "Karte löschen", () =>
-        {
-            if (!_drafts.Remove(d)) return;
-            _invalid.Remove(d);
-            if (_drafts.Count == 0) _drafts.Add(new Draft());
-            FillCards();
-        }, 32, ButtonKind.Plain, p.TextTertiary);
-        var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("28,*,*,Auto,Auto"), ColumnSpacing = 10 };
-        grid.Children.Add(Ui.Text($"{index + 1}", 13, FontWeight.SemiBold, p.TextTertiary, align: TextAlignment.Right));
-        Grid.SetColumn(term, 1);
-        grid.Children.Add(term);
-        Grid.SetColumn(def, 2);
-        grid.Children.Add(def);
-        Grid.SetColumn(star, 3);
-        grid.Children.Add(star);
-        Grid.SetColumn(delete, 4);
-        grid.Children.Add(delete);
-        var row = Ui.Glass(grid, 16, new Thickness(10, 8), shadow: false);
-        row.Margin = new Thickness(0, 0, 0, 6);
-        return row;
-    }
-
-    void AddRow(bool focus)
-    {
-        var d = new Draft();
-        _drafts.Add(d);
-        FillCards();
-        if (focus) FocusRow(d);
-    }
-
-    // MARK: Import
-
-    Control ImportPanel()
-    {
-        var p = WsTheme.P;
-        var toggle = Ui.Clickable(Ui.Row(
-            Ui.H(12, new Border { Width = 38, Height = 38, CornerRadius = new CornerRadius(12), Background = WsTheme.B(p.AccentSoft), Child = Icons.Icon(IconName.Download, 19, p.Accent) },
-                Ui.V(2, Ui.Text("Vokabelliste importieren", 16, FontWeight.Bold),
-                    Ui.Text("Text einfügen oder Datei öffnen – Begriff, Übersetzung und Sprachen werden automatisch erkannt.", 13, color: p.TextTertiary, wrap: TextWrapping.Wrap))),
-            Icons.Icon(_importOpen ? IconName.ChevronLeft : IconName.ChevronRight, 18, p.TextTertiary)), () =>
-            {
-                _importOpen = !_importOpen;
-                ReplaceImportPanel();
-                if (_importOpen) Dispatcher.UIThread.Post(() => _importText.Focus(), DispatcherPriority.Input);
-            }, "Vokabelliste importieren", 16, padding: new Thickness(4));
-        if (toggle.Chrome.Child is Grid tg && tg.Children[0] is StackPanel sp && sp.Children[0] is Border icon) icon.Child!.HorizontalAlignment = HorizontalAlignment.Center;
-        var body = Ui.V(14, toggle);
-        if (_importOpen)
-        {
-            body.Children.Add(_importText);
-            body.Children.Add(Ui.H(10,
-                Ui.Secondary("Datei öffnen …", () => _ = OpenFile(), IconName.Upload),
-                Ui.Secondary("Aus Zwischenablage", () => _ = Paste(), IconName.Copy),
-                Ui.PlainButton("Text leeren", () => _importText.Text = "")));
-            body.Children.Add(_importResult);
-            RenderImportResult();
-        }
-        _importBody = Ui.Glass(body, 22, new Thickness(16), strong: true);
-        return _importBody;
-    }
-
-    void ScheduleParse()
-    {
-        _parseTimer?.Stop();
-        _parseTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(250) };
-        _parseTimer.Tick += (_, _) =>
-        {
-            _parseTimer?.Stop();
-            var text = _importText.Text ?? "";
-            _parsed = JSCompat.Trim(text).Length == 0 ? null : VocabParser.ParseVocab(text);
-            RenderImportResult();
-        };
-        _parseTimer.Start();
-    }
-
-    IReadOnlyList<(string Term, string Definition)> ParsedPairs =>
-        _parsed is null ? [] : _parsed.Cards.Select(c => _swap ? (c.Definition, c.Term) : (c.Term, c.Definition)).ToList();
-
-    void RenderImportResult()
-    {
-        var p = WsTheme.P;
-        _importResult.Children.Clear();
-        if (_parsed is not { } r) return;
-        var pairs = ParsedPairs;
-        var (termLang, defLang) = _swap ? (r.DefLang, r.TermLang) : (r.TermLang, r.DefLang);
-        if (pairs.Count == 0)
-        {
-            _importResult.Children.Add(Ui.Text("Keine Paare erkannt. Prüfe, ob jede Zeile einen Begriff und eine Übersetzung enthält.", 14, color: p.Warning.Text, wrap: TextWrapping.Wrap));
+                _titleBox.Text = old;
+                DivertList(list.Text);
+            });
             return;
         }
-        var swap = new CheckBox { Content = "Seiten tauschen", IsChecked = _swap };
-        swap.IsCheckedChanged += (_, _) =>
+        var clean = SetEditorCopy.CleanTitle(value);
+        _title = clean;
+        if (clean != value)
         {
-            _swap = swap.IsChecked == true;
-            RenderImportResult();
-        };
-        _importResult.Children.Add(Ui.Row(
-            Ui.H(10, Ui.Chip($"{Labels.LangName(termLang)} → {Labels.LangName(defLang)}"), Ui.Text(Labels.Plural(pairs.Count, "Paar", "Paare") + " erkannt", 14, FontWeight.SemiBold)),
-            swap));
-        foreach (var w in r.Warnings) _importResult.Children.Add(Ui.H(8, Icons.Icon(IconName.Info, 15, p.Warning.Text), Ui.Text(w, 13, color: p.Warning.Text, wrap: TextWrapping.Wrap)));
-        if (r.Skipped.Count > 0) _importResult.Children.Add(Ui.Text($"{Labels.Plural(r.Skipped.Count, "Zeile", "Zeilen")} übersprungen", 13, color: p.TextTertiary));
-        var preview = new StackPanel { Spacing = 2 };
-        foreach (var (term, def) in pairs.Take(8))
-        {
-            var g = new Grid { ColumnDefinitions = new ColumnDefinitions("*,*"), ColumnSpacing = 14, Margin = new Thickness(10, 5) };
-            g.Children.Add(StudyText.InLang(term.Length > 0 ? term : "Begriff fehlt", termLang, 14, FontWeight.SemiBold, term.Length > 0 ? null : p.Failure.Text));
-            var d = StudyText.InLang(def.Length > 0 ? def : "Definition fehlt", defLang, 14, color: def.Length > 0 ? p.TextSecondary : p.Failure.Text);
-            Grid.SetColumn(d, 1);
-            g.Children.Add(d);
-            preview.Children.Add(g);
+            int caret = Math.Min(_titleBox.CaretIndex, clean.Length);
+            _titleBox.Text = clean;
+            _titleBox.CaretIndex = caret;
         }
-        if (pairs.Count > 8) preview.Children.Add(Ui.Text($"… und {pairs.Count - 8} weitere", 13, color: p.TextTertiary));
-        _importResult.Children.Add(Ui.Card(preview, 14, new Thickness(6)));
-        _importResult.Children.Add(Ui.Primary($"{Labels.Plural(pairs.Count, "Karte", "Karten")} übernehmen", ApplyImport, null, IconName.Check, 40));
+        if (_titleFromFile)
+        {
+            _titleFromFile = false;
+            _titleNote.IsVisible = false;
+        }
+        UpdateMetaErrors();
+        UpdateStats();
     }
 
-    /// <summary>The detected languages of the waiting list (after "Seiten tauschen").</summary>
-    (Lang Term, Lang Def) ParsedLangs => _parsed is not { } r ? (LangOf(_termLang), LangOf(_defLang)) : _swap ? (r.DefLang, r.TermLang) : (r.TermLang, r.DefLang);
-
-    /// <summary>"N Karten übernehmen": replaces an empty list, else asks Anhängen / Ersetzen (Mac: applyImport).</summary>
-    void ApplyImport()
+    void SetDetails(string value)
     {
-        var pairs = ParsedPairs;
-        if (pairs.Count == 0) return;
-        int existing = _drafts.Count(IsFilled);
-        if (existing == 0)
+        if (value == _details) return;
+        if (SetEditorCopy.PasteShapeOf(SetEditorCopy.InsertedText(_details, value), rowIsEmpty: false) is SetEditorCopy.PasteShape.List list)
         {
-            TakeOver(append: false);
+            var old = _details;
+            Dispatcher.UIThread.Post(() =>
+            {
+                _detailsBox.Text = old;
+                DivertList(list.Text);
+            });
             return;
         }
-        var question = $"Dein Lernset enthält schon {Labels.Plural(existing, "Karte", "Karten")}. Möchtest du die {Labels.Plural(pairs.Count, "neue Karte", "neuen Karten")} anhängen oder die bisherigen ersetzen?";
-        if (!IsNew) question += "\n\nBeim Ersetzen bleibt der Lernfortschritt für gleiche Begriffe erhalten.";
-        Model.Ask(new PromptRequest("Karten übernehmen", question,
-        [
-            new PromptButton("Anhängen", () => TakeOver(append: true), IsDefault: true),
-            new PromptButton("Ersetzen", () => TakeOver(append: false)),
-            new PromptButton("Abbrechen", IsCancel: true),
-        ]));
+        var clean = SetEditorCopy.CleanDescription(value);
+        _details = clean;
+        if (clean != value)
+        {
+            int caret = Math.Min(_detailsBox.CaretIndex, clean.Length);
+            _detailsBox.Text = clean;
+            _detailsBox.CaretIndex = caret;
+        }
     }
 
-    /// <summary>Takes the waiting list over: appended, or replacing the rows (same terms keep their card and star).</summary>
-    void TakeOver(bool append)
+    bool _settingLangs;
+
+    void SetTermLang(Lang lang)
     {
-        var pairs = ParsedPairs;
-        var (termLang, defLang) = ParsedLangs;
-        var created = pairs.Select(pr => new Draft { Term = pr.Term, Definition = pr.Definition }).ToList();
-        bool hadCards = _drafts.Any(IsFilled);
-        if (append)
+        _termTouched = true;
+        _termDetected = false;
+        if (lang == _termLang)
         {
-            _drafts.RemoveAll(d => !IsFilled(d));
-            _drafts.AddRange(created);
+            UpdateLanguages(rows: false);
+            return;
         }
-        else
+        _termLang = lang;
+        LanguagesChanged();
+    }
+
+    void SetDefLang(Lang lang)
+    {
+        _defTouched = true;
+        _defDetected = false;
+        if (lang == _defLang)
         {
-            if (!IsNew)
+            UpdateLanguages(rows: false);
+            return;
+        }
+        _defLang = lang;
+        LanguagesChanged();
+    }
+
+    void LanguagesChanged()
+    {
+        Reparse();
+        UpdateLanguages(rows: true);
+        CheckSpelling();
+        UpdateStats();
+    }
+
+    /// <summary>"Begriffe und Definitionen tauschen": languages and every row (undoable).</summary>
+    void FlipSides()
+    {
+        Undoable("Seiten tauschen", "Begriffe und Definitionen getauscht", ToastTone.Neutral, includesImport: false, () =>
+        {
+            _termTouched = _defTouched = true;
+            _termDetected = _defDetected = false;
+            (_termLang, _defLang) = (_defLang, _termLang);
+            foreach (var d in _drafts)
             {
-                // Replacing keeps the ids (and the progress) of rows with the same term (Mac: withPreservedIDs).
-                var pool = _drafts.Where(d => d.Id is not null && TermKey(d.Term).Length > 0).GroupBy(d => TermKey(d.Term))
-                    .ToDictionary(g => g.Key, g => new Queue<Draft>(g));
-                foreach (var row in created)
-                {
-                    if (!pool.TryGetValue(TermKey(row.Term), out var matches) || matches.Count == 0) continue;
-                    var match = matches.Dequeue();
-                    row.Id = match.Id;
-                    row.Starred = match.Starred;
-                }
+                (d.Term, d.Definition) = (d.Definition, d.Term);
+                (d.TermSpelling, d.DefSpelling) = (d.DefSpelling, d.TermSpelling);
+                d.Flags = SetEditorCopy.Swapped(d.Flags);
             }
-            _drafts.Clear();
-            _drafts.AddRange(created);
-        }
-        if (_drafts.Count == 0) _drafts.Add(new Draft());
-        _invalid.Clear();
-        // The detected languages apply when the set had no cards yet.
-        if (!hadCards)
-        {
-            _termLang.SelectedIndex = Array.IndexOf(Labels.LANG_ORDER, termLang);
-            _defLang.SelectedIndex = Array.IndexOf(Labels.LANG_ORDER, defLang);
-        }
-        _importText.Text = "";
-        _parseTimer?.Stop();
-        _parsed = null;
-        _importOpen = false;
-        Model.ShowToast(new ToastMessage($"{Labels.Plural(pairs.Count, "Karte", "Karten")} übernommen", ToastTone.Success));
-        Refresh();
-    }
-
-    /// <summary>The key that matches a term to the old row it replaces (Mac: SetEditorCopy.termKey).</summary>
-    static string TermKey(string term) => JSCompat.Lower(TextNormalizer.NormalizeBasic(term)).TrimEnd('.', '!', '?');
-
-    /// <summary>Parses the import box at once (Save right after pasting must not miss the list).</summary>
-    void ParseNow()
-    {
-        if (_parseTimer is null || !_parseTimer.IsEnabled) return;
-        _parseTimer.Stop();
-        var text = _importText.Text ?? "";
-        _parsed = JSCompat.Trim(text).Length == 0 ? null : VocabParser.ParseVocab(text);
-    }
-
-    async Task OpenFile()
-    {
-        var files = await Window.StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
-        {
-            Title = "Vokabelliste öffnen",
-            AllowMultiple = false,
-            FileTypeFilter = [new FilePickerFileType("Text und CSV") { Patterns = ["*.txt", "*.csv", "*.tsv", "*.text"] }, FilePickerFileTypes.All],
         });
-        if (files.Count == 0) return;
-        await using var stream = await files[0].OpenReadAsync();
-        using var reader = new StreamReader(stream);
-        _importText.Text = await reader.ReadToEndAsync();
-        if (!_importOpen)
-        {
-            _importOpen = true;
-            ReplaceImportPanel();
-        }
-        // The file's name becomes the title while there is none (Mac: suggestTitle(fromFileName:)).
-        if (JSCompat.Trim(_title.Text ?? "").Length == 0)
-        {
-            var name = System.IO.Path.GetFileNameWithoutExtension(files[0].Name).Replace('_', ' ').Trim();
-            if (name.Length >= 2) _title.Text = name;
-        }
+        CheckDuplicates();
+        Reparse();
+        FillCards();
+        UpdateLanguages(rows: false);
+        CheckSpelling();
     }
 
-    async Task Paste()
+    /// <summary>Recognised languages fill the pickers the learner has not chosen (Mac: SetEditorModel.detected).</summary>
+    void Detected(ParseResult result)
     {
-        if (Window.Clipboard is not { } clipboard) return;
-        var text = await ClipboardExtensions.TryGetTextAsync(clipboard);
-        if (!string.IsNullOrEmpty(text)) _importText.Text = text;
+        var nextTerm = !_termTouched && SetEditorCopy.IsKnown(result.TermLang) ? result.TermLang : _termLang;
+        var nextDef = !_defTouched && SetEditorCopy.IsKnown(result.DefLang) ? result.DefLang : _defLang;
+        if (nextTerm == nextDef || (nextTerm == _termLang && nextDef == _defLang)) return;
+        if (nextTerm != _termLang) _termDetected = true;
+        if (nextDef != _defLang) _defDetected = true;
+        _termLang = nextTerm;
+        _defLang = nextDef;
+        UpdateLanguages(rows: true);
+        CheckSpelling();
+        UpdateStats();
+    }
+
+    /// <summary>Pickers, "Automatisch erkannt", the language capsule, the column headers and (when asked) the rows.</summary>
+    void UpdateLanguages(bool rows)
+    {
+        if (_termBox is null) return;
+        _settingLangs = true;
+        _termBox.SelectedIndex = SetEditorCopy.TermLanguages.ToList().IndexOf(_termLang);
+        _defBox.SelectedIndex = SetEditorCopy.DefinitionLanguages.ToList().IndexOf(_defLang);
+        _settingLangs = false;
+        _termDetectedLabel.Opacity = _termDetected ? 1 : 0;
+        _defDetectedLabel.Opacity = _defDetected ? 1 : 0;
+        AutomationProperties.SetHelpText(_termBox, _termDetected ? $"{Labels.LangName(_termLang)}, automatisch erkannt" : Labels.LangName(_termLang));
+        AutomationProperties.SetHelpText(_defBox, _defDetected ? $"{Labels.LangName(_defLang)}, automatisch erkannt" : Labels.LangName(_defLang));
+        _capsuleHost.Child = Ui.Chip(Labels.LangPair(_termLang, _defLang));
+        foreach (var header in new[] { _columnHeaderInFlow, _pinnedColumns }) if (header is not null) FillColumnHeader(header);
+        if (rows) FillCards();
+    }
+
+    /// <summary>The first imported file's name becomes the title while there is none (Mac: suggestTitle(fromFileName:)).</summary>
+    void SuggestTitle(string fileName)
+    {
+        if (!IsTitleEmpty) return;
+        var suggestion = SetEditorCopy.TitleFromFileName(fileName);
+        if (suggestion.Length == 0) return;
+        _title = suggestion;
+        _titleBox.Text = suggestion;
+        _titleFromFile = true;
+        _titleNote.IsVisible = true;
+        UpdateMetaErrors();
+        UpdateStats();
+    }
+
+    void UpdateMetaErrors()
+    {
+        if (_titleBox is null) return;
+        var p = WsTheme.P;
+        bool error = _attempted && IsTitleEmpty;
+        SetErrorText(_titleError, error ? SetEditorCopy.TitleMissing : null);
+        _titleBox.BorderBrush = WsTheme.B(error ? p.Failure.Fill : p.Hairline);
+        _titleBox.BorderThickness = new Thickness(error ? 2 : 1);
+        _titleNote.IsVisible = _titleFromFile;
+    }
+
+    // MARK: Keyboard navigation
+
+    enum Field_ { Title, Description, CustomSeparator }
+
+    /// <summary>Enter in a field (Mac: SetEditorModel.submit): title → description → import box or first card.</summary>
+    void Submit(Field_ field)
+    {
+        switch (field)
+        {
+            case Field_.Title:
+                _detailsBox.Focus();
+                break;
+            case Field_.Description:
+                if (_importOpen) FocusImportBox();
+                else if (_drafts.Count > 0) FocusRow(_drafts[0]);
+                break;
+            case Field_.CustomSeparator:
+                ParseNow();
+                break;
+        }
     }
 
     // MARK: Save
 
     /// <summary>
-    /// Ctrl+Enter: takes a list still waiting in the import box over (asking first when the list has cards), checks
-    /// the title and the cards, then creates or updates the set (Mac: SetEditorModel.save).
+    /// Ctrl+Enter / Ctrl+S: takes a list still waiting in the import box over (asking first when the list has cards),
+    /// validates, then creates or updates the set (Mac: SetEditorModel.save).
     /// </summary>
     void Save()
     {
-        if (Model.Prompt is not null) return;
-        ParseNow();
-        int pending = JSCompat.Trim(_importText.Text ?? "").Length > 0 ? ParsedPairs.Count : 0;
+        if (Model.Prompt is not null || _closed) return;
+        if (_importCts is not null)
+        {
+            Model.ShowToast(new ToastMessage("Bitte warte, bis der Import fertig ist."));
+            return;
+        }
+        int pending = PendingCount();
         if (pending > 0)
         {
-            if (!_drafts.Any(IsFilled)) TakeOver(append: false);
+            if (!_drafts.Any(d => d.IsFilled)) TakeOverPending(append: false);
             else
             {
                 var waiting = pending == 1 ? "wartet noch 1 erkanntes Paar" : $"warten noch {pending} erkannte Paare";
@@ -474,7 +618,7 @@ public sealed class SetEditorScreen : Screen
                 [
                     new PromptButton($"{Labels.Plural(pending, "Karte", "Karten")} anhängen", () =>
                     {
-                        TakeOver(append: true);
+                        TakeOverPending(append: true);
                         Commit();
                     }, IsDefault: true),
                     new PromptButton("Ohne Liste", Commit),
@@ -488,90 +632,156 @@ public sealed class SetEditorScreen : Screen
 
     void Commit()
     {
-        if (!Validate()) return;
-        var title = JSCompat.Trim(_title.Text ?? "");
-        var description = JSCompat.Trim(_description.Text ?? "");
-        var cards = _drafts.Where(IsFilled).Select(d => new CardDraft(d.Id, d.Term, d.Definition, d.Starred)).ToList();
+        if (!ValidateAll()) return;
+        var title = JSCompat.Trim(_title);
+        var description = JSCompat.Trim(_details);
+        var cards = _drafts.Where(d => d.IsFilled).Select(d => new CardDraft(d.Id, d.TrimmedTerm, d.TrimmedDefinition, d.Starred)).ToList();
         try
         {
             if (IsNew)
             {
-                var set = Model.CreateSet(title, LangOf(_termLang), LangOf(_defLang), cards, description);
-                _baseline = Fingerprint();
+                var set = Model.CreateSet(title, _termLang, _defLang, cards, description);
+                Close();
                 Model.ShowToast(new ToastMessage("Lernset erstellt", ToastTone.Success));
                 Model.OpenSet(set.Id);
             }
             else
             {
-                Model.Store.UpdateSet(_setId!, new SetPatch(title, description, LangOf(_termLang), LangOf(_defLang), Cards: cards));
+                Model.Store.UpdateSet(_setId!, new SetPatch(title, description, _termLang, _defLang, Cards: cards));
                 Model.Store.Save();
-                _baseline = Fingerprint();
+                Close();
                 Model.ShowToast(new ToastMessage("Änderungen gespeichert", ToastTone.Success));
                 Model.OpenSet(_setId!);
             }
         }
         catch (LibraryStoreError e)
         {
+            _closed = false;
             Model.ShowToast(new ToastMessage(e.Message, ToastTone.Danger, DurationMs: 7000));
         }
     }
 
-    /// <summary>Marks every problem and focuses the first one (Mac: validateAll).</summary>
-    bool Validate()
+    /// <summary>Marks every problem and moves the focus to the first one (Mac: validateAll). The errors stay on screen.</summary>
+    bool ValidateAll()
     {
-        _invalid.Clear();
-        foreach (var d in _drafts) if (IsFilled(d) && !IsComplete(d)) _invalid.Add(d);
-        int complete = _drafts.Count(IsComplete);
-        _titleMissing = JSCompat.Trim(_title.Text ?? "").Length == 0;
-        string? message = _titleMissing ? "Gib deinem Lernset einen Titel."
-            : complete == 0 ? "Füge mindestens eine Karte mit Begriff und Definition hinzu."
-            : _invalid.Count > 0 ? $"{Labels.Plural(_invalid.Count, "Karte ist", "Karten sind")} unvollständig – ergänze Begriff und Definition oder lösche sie."
-            : null;
-        if (message is null) return true;
-        FillCards();
-        _title.BorderBrush = WsTheme.B(_titleMissing ? WsTheme.P.Failure.Fill : WsTheme.P.Hairline);
-        Model.ShowToast(new ToastMessage(message, ToastTone.Warning, DurationMs: 5000));
-        if (_titleMissing) _title.Focus();
-        else FocusFirstIncomplete();
-        return false;
+        _attempted = true;
+        Draft? firstInvalid = null;
+        foreach (var d in _drafts)
+        {
+            bool invalid = d.IsFilled && !d.IsComplete;
+            if (d.IsInvalid != invalid)
+            {
+                d.IsInvalid = invalid;
+                UpdateRow(d);
+            }
+            if (invalid) firstInvalid ??= d;
+        }
+        var stats = ComputeStats();
+        var message = SetEditorCopy.CardsMessage(stats.Complete, stats.Invalid);
+        UpdateStats();
+        UpdateMetaErrors();
+        if (IsTitleEmpty)
+        {
+            _titleBox.Focus();
+            _titleBox.BringIntoView();
+            Announcer.Announce(SetEditorCopy.TitleMissing, important: true);
+        }
+        else if (firstInvalid is not null) FocusRow(firstInvalid, definition: firstInvalid.TrimmedTerm.Length > 0);
+        else if (message is not null)
+        {
+            var d = _drafts.FirstOrDefault(x => !x.IsComplete) ?? _drafts.FirstOrDefault();
+            if (d is not null) FocusRow(d, definition: d.TrimmedTerm.Length > 0);
+        }
+        if (!IsTitleEmpty && message is not null) Announcer.Announce(message, important: true);
+        return !IsTitleEmpty && message is null;
     }
 
-    void FocusFirstIncomplete()
-    {
-        var d = _drafts.FirstOrDefault(x => _invalid.Contains(x)) ?? _drafts.FirstOrDefault(x => !IsComplete(x));
-        if (d is not null) FocusRow(d, definition: JSCompat.Trim(d.Term).Length > 0);
-    }
+    // MARK: Closing
 
-    /// <summary>Esc: asks first when there are unsaved changes (Mac: cancel → .discard).</summary>
+    /// <summary>Esc / "Abbrechen": stops a running import first; asks before throwing changes away (Mac: cancel).</summary>
     void Cancel()
     {
-        if (Model.Prompt is not null) return;
-        if (IsDirty)
+        if (_importCts is not null)
         {
-            Model.Ask(new PromptRequest("Änderungen verwerfen?",
-                IsNew ? "Dein neues Lernset ist noch nicht gespeichert und geht verloren." : "Deine Änderungen an diesem Lernset sind noch nicht gespeichert und gehen verloren.",
-                [
-                    new PromptButton("Verwerfen", Leave, IsDestructive: true),
-                    new PromptButton("Weiter bearbeiten", IsDefault: true, IsCancel: true),
-                ]));
+            CancelImport();
             return;
         }
-        Leave();
+        if (Model.Prompt is not null || _closed) return;
+        if (!AskBeforeLeaving(Leave)) Leave();
+    }
+
+    /// <summary>
+    /// With unsaved changes: «Änderungen verwerfen?» and true (<paramref name="leave"/> runs once confirmed); false when
+    /// there is nothing to lose. Also the leave guard for every other way out (Mac: the editor sheet blocks the window).
+    /// </summary>
+    bool AskBeforeLeaving(Action leave)
+    {
+        if (!IsDirty || Model.Prompt is not null) return false;
+        Model.Ask(new PromptRequest("Änderungen verwerfen?",
+            IsNew ? "Dein neues Lernset ist noch nicht gespeichert und geht verloren." : "Deine Änderungen an diesem Lernset sind noch nicht gespeichert und gehen verloren.",
+            [
+                new PromptButton("Verwerfen", () =>
+                {
+                    Close();
+                    leave();
+                }, IsDestructive: true),
+                new PromptButton("Weiter bearbeiten", IsDefault: true, IsCancel: true),
+            ]));
+        return true;
+    }
+
+    Func<Action, bool>? _leaveGuard;
+
+    void ReleaseLeaveGuard()
+    {
+        if (_leaveGuard is not null && Model.LeaveGuard == _leaveGuard) Model.LeaveGuard = null;
+    }
+
+    /// <summary>Saved or discarded: nothing keeps running, the undo actions and their toasts go (Mac: finish).</summary>
+    void Close()
+    {
+        _closed = true;
+        StopImport(announce: false);
+        ReleaseLeaveGuard();
+        ForgetUndo();
     }
 
     void Leave()
     {
+        Close();
         if (IsNew) Model.ShowOverview();
         else Model.OpenSet(_setId!);
     }
 
-    /// <summary>Opens or closes the import box without rebuilding the card rows.</summary>
-    void ReplaceImportPanel()
+    // MARK: External changes
+
+    /// <summary>
+    /// The library changed while the editor is open (Mac: storeDidChange): a deleted set closes the editor; a set changed
+    /// elsewhere is reloaded when nothing was edited. Otherwise the editor keeps working on its own copy.
+    /// </summary>
+    public override void LibraryChanged()
     {
-        if (_importBody?.Parent is not Panel parent) return;
-        int index = parent.Children.IndexOf(_importBody);
-        foreach (var c in new Control[] { _importText, _importResult }) Detach(c);
-        parent.Children[index] = ImportPanel();
+        if (IsNew || _closed || !_activated) return;
+        if (Model.Set(_setId!) is not { } fresh)
+        {
+            Close();
+            Model.ShowToast(new ToastMessage("Dieses Lernset wurde gelöscht.", ToastTone.Danger));
+            Model.ShowOverview();
+            return;
+        }
+        if (fresh.UpdatedAt == _loadedAt || IsDirty) return;
+        ForgetUndo();
+        _title = fresh.Title;
+        _details = fresh.Description;
+        _termLang = fresh.TermLang;
+        _defLang = fresh.DefLang;
+        SetRows(fresh.Cards.Select(Draft.FromCard));
+        _loadedAt = fresh.UpdatedAt;
+        _baseline = Fingerprint();
+        CheckDuplicates();
+        base.Refresh();
+        CheckSpelling();
+        Model.ShowToast(new ToastMessage("Das Lernset wurde anderswo geändert – die neue Version ist geladen."));
     }
 
     public override void Refresh()
@@ -579,35 +789,226 @@ public sealed class SetEditorScreen : Screen
         if (_activated) base.Refresh();
     }
 
-    /// <summary>The editor works on its own copy (Mac: SetEditorModel): store notifications do not rebuild the form.</summary>
-    public override void LibraryChanged() { }
-
-    bool _activated;
-
     public override void Activate()
     {
         _activated = true;
+        _leaveGuard ??= AskBeforeLeaving;
+        Model.LeaveGuard = _leaveGuard;
+        ImportServices.MissingRecognizer -= OnMissingRecognizer;
+        ImportServices.MissingRecognizer += OnMissingRecognizer;
         base.Refresh();
-        Dispatcher.UIThread.Post(() => (_importOpen && IsNew && !_openFile && JSCompat.Trim(_title.Text ?? "").Length > 0 ? _importText : _title).Focus(), DispatcherPriority.Input);
+        CheckSpelling();
+        // Phone: no field takes the focus by itself (that would open the keyboard over half the screen).
+        if (!AppDevice.IsPhone)
+            Dispatcher.UIThread.Post(() =>
+            {
+                if (_importOpen && IsNew && !_openFile && !IsTitleEmpty) FocusImportBox();
+                else _titleBox.Focus();
+            }, DispatcherPriority.Input);
+        Dispatcher.UIThread.Post(TakePendingImport, DispatcherPriority.Background);
         // Ctrl+O (Mac: ⌘O "Liste importieren…"): the file chooser opens right away.
         if (_openFile) Dispatcher.UIThread.Post(() => _ = OpenFile(), DispatcherPriority.Background);
     }
 
-    public override void Deactivate() => _activated = false;
+    public override void Deactivate()
+    {
+        _activated = false;
+        ReleaseLeaveGuard();
+        ImportServices.MissingRecognizer -= OnMissingRecognizer;
+        StopImport(announce: false);
+        ForgetUndo();
+    }
+
+    // MARK: Keys
 
     public override bool HandleKey(KeyEventArgs e, bool isRepeat)
     {
-        if (isRepeat) return false;
-        if (e.Key is Key.Enter or Key.Return && e.KeyModifiers == KeyModifiers.Control)
+        var mods = e.KeyModifiers;
+        if ((e.Key is Key.Enter or Key.Return && mods == KeyModifiers.Control) || (e.Key == Key.S && mods == KeyModifiers.Control))
         {
-            Save();
+            if (!isRepeat) Save();
             return true;
         }
-        if (e.Key == Key.Escape && e.KeyModifiers == KeyModifiers.None)
+        if (e.Key == Key.Escape && mods == KeyModifiers.None)
         {
+            if (isRepeat) return true;
+            if (CloseFindIfFocused()) return true;
             Cancel();
+            return true;
+        }
+        if (e.Key == Key.Z && mods is KeyModifiers.Control or (KeyModifiers.Control | KeyModifiers.Shift) || (e.Key == Key.Y && mods == KeyModifiers.Control))
+        {
+            bool redo = e.Key == Key.Y || mods.HasFlag(KeyModifiers.Shift);
+            // A text field undoes its own typing first.
+            if (Window.FocusManager?.GetFocusedElement() is TextBox box && (redo ? box.CanRedo : box.CanUndo)) return false;
+            return redo ? RedoChange() : UndoChange();
+        }
+        if (e.Key == Key.F && mods == KeyModifiers.Control)
+        {
+            if (!isRepeat) OpenFind();
+            return true;
+        }
+        if (e.Key == Key.V && mods == KeyModifiers.Control && !Window.TextFieldFocused)
+        {
+            // Ctrl+V of an image or files while no text field takes it (Mac: onPasteCommand).
+            if (!isRepeat) _ = Paste(filesOnly: true);
             return true;
         }
         return false;
     }
+
+    // MARK: Undo
+
+    sealed record UndoState(IReadOnlyList<Draft.Snapshot> Rows, Lang TermLang, Lang DefLang, ImportSnapshot? Import);
+
+    readonly UndoHistory<UndoState> _history = new();
+    readonly List<Guid> _undoToasts = [];
+
+    UndoState CurrentUndoState(bool includesImport) =>
+        new(_drafts.Select(d => d.Snap()).ToList(), _termLang, _defLang, includesImport ? ImportSnap() : null);
+
+    /// <summary>Runs <paramref name="change"/> and offers to undo it: a toast with "Rückgängig" and Ctrl+Z (Mac: undoable).</summary>
+    void Undoable(string actionName, string toast, ToastTone tone, bool includesImport, Action change)
+    {
+        var before = CurrentUndoState(includesImport);
+        change();
+        var record = _history.Register(actionName, before, CurrentUndoState(includesImport));
+        var message = new ToastMessage(toast, tone, "Rückgängig", () =>
+        {
+            if (_closed || !_activated) return;
+            _history.Revert(record);
+            Restore(record.Before);
+        }, DurationMs: 6000);
+        _undoToasts.Add(message.Id);
+        Model.ShowToast(message);
+    }
+
+    bool UndoChange()
+    {
+        if (_history.Undo() is not { } record) return false;
+        Restore(record.Before);
+        Announcer.Announce($"Rückgängig: {record.Name}");
+        return true;
+    }
+
+    bool RedoChange()
+    {
+        if (_history.Redo() is not { } record) return false;
+        Restore(record.After);
+        Announcer.Announce($"Wiederholen: {record.Name}");
+        return true;
+    }
+
+    void Restore(UndoState state)
+    {
+        _drafts.Clear();
+        _drafts.AddRange(state.Rows.Select(Draft.FromSnapshot));
+        bool languagesChanged = state.TermLang != _termLang || state.DefLang != _defLang;
+        _termLang = state.TermLang;
+        _defLang = state.DefLang;
+        if (state.Import is { } panel)
+        {
+            RestoreImport(panel);
+            if (panel.Expanded) ScrollTo(_importPanel, center: false);
+        }
+        else if (languagesChanged) Reparse();
+        CheckDuplicates();
+        FillCards();
+        UpdateLanguages(rows: false);
+        CheckSpelling();
+        UpdateStats();
+    }
+
+    /// <summary>Undo actions and their toasts only make sense while this editor (and this version of the set) is open.</summary>
+    void ForgetUndo()
+    {
+        _history.Clear();
+        foreach (var id in _undoToasts) Model.DismissToast(id);
+        _undoToasts.Clear();
+    }
+
+    // MARK: Focus and scrolling
+
+    /// <summary>Brings <paramref name="target"/> into view: its top at the top of the page, or centred.</summary>
+    void ScrollTo(Control? target, bool center)
+    {
+        if (target is null) return;
+        Dispatcher.UIThread.Post(() =>
+        {
+            if (_scroll?.Content is not Visual content || target.TranslatePoint(new Point(0, 0), content) is not { } point) return;
+            double y = center ? point.Y - (_scroll.Viewport.Height - target.Bounds.Height) / 2 : point.Y - 12;
+            double max = Math.Max(0, _scroll.Extent.Height - _scroll.Viewport.Height);
+            _scroll.Offset = new Vector(_scroll.Offset.X, Math.Clamp(y, 0, max));
+        }, DispatcherPriority.Loaded);
+    }
+
+    // MARK: Drops
+
+    bool _dragInside;
+
+    /// <summary>
+    /// Files or images dropped anywhere on the editor are imported, with the "Datei loslassen" frame while they hover
+    /// (Mac: onDrop on the editor sheet, SetEditorDropOverlay).
+    /// </summary>
+    void HookDrops(Control root)
+    {
+        DragDrop.SetAllowDrop(root, true);
+        static bool Usable(DragEventArgs e) => e.DataTransfer.Contains(DataFormat.File) || e.DataTransfer.Contains(DataFormat.Bitmap);
+        root.AddHandler(DragDrop.DragEnterEvent, (_, e) =>
+        {
+            if (!Usable(e)) return;
+            _dragInside = true;
+            ShowDropOverlay(true);
+        });
+        root.AddHandler(DragDrop.DragOverEvent, (_, e) =>
+        {
+            e.DragEffects = Usable(e) ? DragDropEffects.Copy : DragDropEffects.None;
+        });
+        root.AddHandler(DragDrop.DragLeaveEvent, (_, _) =>
+        {
+            // Moving between the editor's own parts leaves one and enters the next.
+            _dragInside = false;
+            Dispatcher.UIThread.Post(() => { if (!_dragInside) ShowDropOverlay(false); });
+        });
+        root.AddHandler(DragDrop.DropEvent, (_, e) =>
+        {
+            _dragInside = false;
+            ShowDropOverlay(false);
+            if (e.DataTransfer.TryGetFiles() is { } files && Sources(files) is { Count: > 0 } sources)
+            {
+                e.Handled = true;
+                ImportSources(sources);
+                return;
+            }
+            if (e.DataTransfer.TryGetBitmap() is { } bitmap)
+            {
+                // Image data without a file (dragged out of a browser or a photo app).
+                e.Handled = true;
+                using var png = new MemoryStream();
+                bitmap.Save(png);
+                ImportSources([new ImportSource("", "image/png", Data: png.ToArray())]);
+            }
+        });
+    }
+
+    void ShowDropOverlay(bool show)
+    {
+        if (_dropOverlay.IsVisible == show) return;
+        _dropOverlay.IsVisible = show;
+        if (show) Effects.FadeIn(_dropOverlay, Motion.Soft(0.18));
+    }
+
+    // MARK: Snapshot tool
+
+    /// <summary>For the snapshot tool: puts <paramref name="text"/> into the import box and parses it at once.</summary>
+    public void SnapshotImportText(string text)
+    {
+        ImportSetText(text, append: false);
+        ScrollTo(_importPanel, center: false);
+    }
+
+    /// <summary>For the snapshot tool: a save attempt (shows the errors) or the cards section.</summary>
+    public void SnapshotValidate() => ValidateAll();
+
+    public void SnapshotApplyImport() => ApplyImport();
 }

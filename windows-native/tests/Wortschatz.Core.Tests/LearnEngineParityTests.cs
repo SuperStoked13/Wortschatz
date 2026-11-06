@@ -171,7 +171,9 @@ public class LearnEngineParityTests
         var progress = Progress(create["progress"]);
         var s = LearnEngine.CreateLearn(cards ?? [], EnumRaw.ParseJson<AnswerWith>(options["answerWith"]) ?? AnswerWith.Term,
             LearnOptions.FromJson(options["learn"] ?? JSONValue.Null), StudySubset.FromJson(create["subset"] ?? JSONValue.Null),
-            progress, rng, Time(create["now"]));
+            progress, rng, Time(create["now"]),
+            // JS: review === true / recheck === true (anything else is off).
+            review: create["review"]?.BoolValue == true, recheck: create["recheck"]?.BoolValue == true);
         var run = new Replay(s, cards, progress, rng, c.Id);
         var output = new List<JSONValue> { Snapshot(s, progress) };
         foreach (var action in c.Arg(3).ArrayValue ?? []) output.Add(run.Apply(action));

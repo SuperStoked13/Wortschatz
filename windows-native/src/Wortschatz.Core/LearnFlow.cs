@@ -219,6 +219,8 @@ public static partial class LearnFlow
         public StudyOptions Options { get; set; }
         /// <summary>New sessions ask repetition questions (LearnReview); a running session keeps what it was started with.</summary>
         public bool Review { get; set; }
+        /// <summary>New sessions have rechecks (LearnRecheck, Nachkontrolle); a running session keeps what it was started with.</summary>
+        public bool Recheck { get; set; }
         /// <summary>The scope (the session's subset, or the requested one on the message screens).</summary>
         public StudySubset Subset { get; set; }
         /// <summary>AllMastered: the scope's cards (reset by "Fortschritt zurücksetzen und neu lernen").</summary>
@@ -239,6 +241,7 @@ public static partial class LearnFlow
         public Overlay? Overlay { get; set; }
         public StudyOptions? OptionsBeforeOverlay { get; set; }
         public bool? ReviewBeforeOverlay { get; set; }
+        public bool? RecheckBeforeOverlay { get; set; }
         /// <summary>The running auto-advance timer (Effect.ScheduleAutoAdvance), null = none.</summary>
         public int? AutoAdvanceToken { get; set; }
         public int LastToken { get; set; }
@@ -253,7 +256,7 @@ public static partial class LearnFlow
         public int Transitions { get; set; }
 
         public State(Phase phase, LearnState? session, string setId, string setTitle, Lang termLang, Lang defLang, IEnumerable<Card> cards,
-            StudyOptions options, StudySubset subset, bool review = false)
+            StudyOptions options, StudySubset subset, bool review = false, bool recheck = false)
         {
             Phase = phase;
             Session = session;
@@ -265,6 +268,7 @@ public static partial class LearnFlow
             Options = options;
             Subset = subset;
             Review = review;
+            Recheck = recheck;
         }
 
         /// <summary>A copy for the next reduction (lists copied; records are immutable).</summary>
@@ -341,6 +345,8 @@ public static partial class LearnFlow
         public sealed record OptionsChanged(StudyOptions Options) : Event;
         /// <summary>"Wiederholungsfragen" was switched (applies to new sessions; see State.Review).</summary>
         public sealed record ReviewChanged(bool Review) : Event;
+        /// <summary>"Nachkontrolle" was switched (applies to new sessions; see State.Recheck).</summary>
+        public sealed record RecheckChanged(bool Recheck) : Event;
         /// <summary>"Alle wiederholen" on the everything-mastered screen: a session of repetition questions over the scope.</summary>
         public sealed record StartReview : Event;
         /// <summary>The set changed elsewhere (title, languages, cards).</summary>
@@ -429,9 +435,10 @@ public static partial class LearnFlow
     /// session with answers: it asks first.
     /// </summary>
     public static (State State, List<Effect> Effects) Start(VocabSet set, IReadOnlyDictionary<string, CardProgress> progress, StudyOptions options,
-        SavedLearn? saved = null, StudySubset? subset = null, bool forceNew = false, bool review = false, RNG? rng = null, double? now = null)
+        SavedLearn? saved = null, StudySubset? subset = null, bool forceNew = false, bool review = false, RNG? rng = null, double? now = null,
+        bool recheck = false)
     {
-        var state = new State(Phase.Empty, null, set.Id, set.Title, set.TermLang, set.DefLang, set.Cards, options, subset ?? StudySubset.All, review);
+        var state = new State(Phase.Empty, null, set.Id, set.Title, set.TermLang, set.DefLang, set.Cards, options, subset ?? StudySubset.All, review, recheck);
         var m = new Machine(state, new Env(rng, now, progress));
         m.Boot(saved, subset, forceNew);
         return m.Result();

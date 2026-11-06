@@ -1,9 +1,11 @@
 using System.Globalization;
 using Avalonia;
+using Avalonia.Automation;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Layout;
 using Avalonia.Media;
+using Avalonia.Threading;
 using Wortschatz.App.DesignSystem;
 using Wortschatz.Core;
 
@@ -14,7 +16,7 @@ namespace Wortschatz.App.Features.Overview;
 /// about today, the three statistics tiles, the "Weiterlernen" hero (Enter), then "Deine Lernsets" with a sort control
 /// and the grid of set cards behind the dashed "Neues Lernset" card. Without sets: the empty state.
 /// </summary>
-public sealed class OverviewScreen(AppModel model, MainWindow window) : Screen(model, window)
+public sealed class OverviewScreen(AppModel model, MainView window) : Screen(model, window)
 {
     static readonly CultureInfo DeCh = CultureInfo.GetCultureInfo("de-CH");
 
@@ -22,11 +24,12 @@ public sealed class OverviewScreen(AppModel model, MainWindow window) : Screen(m
     {
         var library = Model.Library;
         var now = DateTime.Now;
-        var content = new StackPanel { Spacing = 26, Margin = new Thickness(34, 14, 34, 34), MaxWidth = 1180 };
+        var content = new StackPanel { Spacing = AppDevice.IsPhone ? 18 : 26, Margin = AppDevice.IsPhone ? new Thickness(8, 4, 8, 24) : new Thickness(34, 14, 34, 34), MaxWidth = 1180 };
         if (library.IsEmpty)
         {
-            content.Children.Add(Header(now, "Bereit für ein paar Wörter? Lege dein erstes Lernset an."));
+            content.Children.Add(Header(now, "Schön, dass du da bist. Leg dein erstes Lernset an und starte direkt."));
             content.Children.Add(EmptyLibrary());
+            content.Children.Add(Steps());
             return Ui.Scroll(content);
         }
         content.Children.Add(Header(now, LeadText(library)));
@@ -58,17 +61,94 @@ public sealed class OverviewScreen(AppModel model, MainWindow window) : Screen(m
     Control EmptyLibrary()
     {
         var p = WsTheme.P;
+        WsButton[] actions =
+        [
+            Ui.Primary("Erstes Lernset erstellen", () => Model.OpenEditor(), icon: IconName.Plus),
+            Ui.Secondary("Liste einfügen", () => Model.OpenEditor(startWithImport: true), IconName.Copy),
+            Ui.Secondary("Backup laden", () => _ = Settings.SettingsScreen.ImportBackup(Model, Window), IconName.Upload),
+        ];
+        // Phone: the actions one under the other, across the card.
+        if (AppDevice.IsPhone)
+            foreach (var a in actions)
+            {
+                a.HorizontalAlignment = HorizontalAlignment.Stretch;
+                if (a.Chrome.Child is { } inner) inner.HorizontalAlignment = HorizontalAlignment.Center;
+            }
         var body = Ui.V(14,
             Icons.Icon(IconName.Stack, 40, p.Accent),
             Ui.Text("Noch keine Lernsets", 24, FontWeight.Bold),
-            Ui.Text("Lege dein erstes Lernset an: tippe die Begriffe ein oder füge eine Wörterliste ein – Wortschatz erkennt Begriff und Übersetzung selbst.", 15, color: p.TextSecondary, wrap: TextWrapping.Wrap),
-            Ui.H(10,
-                Ui.Primary("Erstes Lernset erstellen", () => Model.OpenEditor(), icon: IconName.Plus),
-                Ui.Secondary("Liste einfügen", () => Model.OpenEditor(startWithImport: true), IconName.Copy),
-                Ui.Secondary("Backup laden", () => _ = Settings.SettingsScreen.ImportBackup(Model, Window), IconName.Upload)));
+            Ui.Text("Erstelle dein erstes Lernset aus einer Vokabelliste – in wenigen Sekunden kannst du mit Lernen loslegen.", 15, color: p.TextSecondary, wrap: TextWrapping.Wrap),
+            AppDevice.IsPhone ? Ui.V(8, actions) : Ui.H(10, actions));
         body.MaxWidth = 620;
         body.HorizontalAlignment = HorizontalAlignment.Left;
-        return Ui.Hero(body, new Thickness(34, 30));
+        return Ui.Hero(body, AppDevice.IsPhone ? new Thickness(20, 20) : new Thickness(34, 30));
+    }
+
+    static (IconName Icon, string Title, string Text)[] StepTexts =>
+    [
+        (IconName.Copy, "Liste einfügen", AppDevice.ReadsPhotos ? "Wortschatz erkennt Begriffe und Übersetzungen automatisch – auch aus Fotos und PDFs."
+            : "Wortschatz erkennt Begriffe und Übersetzungen automatisch – auch aus PDFs."),
+        (IconName.Sparkles, "Lernen", "Neue Begriffe kommen zuerst als Multiple Choice, danach schreibst du sie selbst – bis alles sitzt."),
+        (IconName.Trophy, "Fortschritt sehen", "Zweimal in Folge richtig – und ein Begriff gilt als gemeistert."),
+    ];
+
+    /// <summary>The three "how it works" steps below the empty state, equally high (Mac: OverviewEmptyState's StepTile).</summary>
+    static Control Steps()
+    {
+        var p = WsTheme.P;
+        // Phone: the steps one under the other.
+        bool phone = AppDevice.IsPhone;
+        var grid = phone
+            ? new Grid { RowDefinitions = new RowDefinitions("Auto,Auto,Auto"), RowSpacing = 10 }
+            : new Grid { ColumnDefinitions = new ColumnDefinitions("*,*,*"), ColumnSpacing = 12 };
+        for (int i = 0; i < StepTexts.Length; i++)
+        {
+            var (icon, title, text) = StepTexts[i];
+            var symbol = new Border { Width = 36, Height = 36, CornerRadius = new CornerRadius(10), Background = WsTheme.B(p.AccentSoft), Child = Icons.Icon(icon, 18, p.AccentText, 2), HorizontalAlignment = HorizontalAlignment.Left };
+            symbol.Child!.HorizontalAlignment = HorizontalAlignment.Center;
+            var heading = Ui.Text($"{i + 1}. {title}", 15.5, FontWeight.Bold);
+            var tile = new Border
+            {
+                Child = Ui.V(8, symbol, heading, Ui.Text(text, 13.5, color: p.TextSecondary, wrap: TextWrapping.Wrap)),
+                Padding = new Thickness(16),
+                CornerRadius = new CornerRadius(18),
+                Background = WsTheme.B(p.Dark ? Palette.Hex(0x1C1E2A, 0.55) : Palette.Hex(0xFFFFFF, 0.55)),
+                BorderBrush = WsTheme.B(p.Hairline),
+                BorderThickness = new Thickness(1),
+            };
+            AutomationProperties.SetName(tile, $"{i + 1}. {title}: {text}");
+            if (phone) Grid.SetRow(tile, i);
+            else Grid.SetColumn(tile, i);
+            grid.Children.Add(tile);
+        }
+        return grid;
+    }
+
+    // MARK: Clock
+
+    DispatcherTimer? _minuteTimer;
+
+    /// <summary>Greeting, date and relative times stay current while the window stays open (Mac: TimelineView(.everyMinute)).</summary>
+    public override void Activate()
+    {
+        base.Activate();
+        _minuteTimer?.Stop();
+        var now = DateTime.Now;
+        // First at the next full minute, then every minute.
+        _minuteTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(60 - now.Second + 0.2) };
+        _minuteTimer.Tick += (_, _) =>
+        {
+            _minuteTimer!.Interval = TimeSpan.FromMinutes(1);
+            // Not while the keyboard is on the page (a rebuild would drop the focus).
+            if (Model.Prompt is null && !View.IsKeyboardFocusWithin) Refresh();
+        };
+        _minuteTimer.Start();
+    }
+
+    public override void Deactivate()
+    {
+        _minuteTimer?.Stop();
+        _minuteTimer = null;
     }
 
     // MARK: Statistics
@@ -102,7 +182,8 @@ public sealed class OverviewScreen(AppModel model, MainWindow window) : Screen(m
         string eyebrow, meta, action;
         IconName eyebrowIcon, actionIcon;
         double? progress = null;
-        if (library.Resume is { } resume)
+        // A resume item always carries its session; the checks keep a half-written library from crashing the page.
+        if (library.Resume is { } resume && (resume.Mode == StudyMode.Learn ? resume.Summary.Learn is not null : resume.Summary.Write is not null))
         {
             summary = resume.Summary;
             if (resume.Mode == StudyMode.Learn && summary.Learn is { } learn)
@@ -146,18 +227,48 @@ public sealed class OverviewScreen(AppModel model, MainWindow window) : Screen(m
             Ui.H(8, Ui.Chip(Labels.LangPair(summary.Set.TermLang, summary.Set.DefLang)), Ui.Text(meta, 14, color: p.TextSecondary)));
         if (progress is { } value)
         {
-            var bar = new ProgressLine(value, p.Accent, 320) { HorizontalAlignment = HorizontalAlignment.Left, Margin = new Thickness(0, 4, 0, 0) };
+            var bar = new ProgressLine(value, p.Accent, AppDevice.IsPhone ? 200 : 320) { HorizontalAlignment = HorizontalAlignment.Left, Margin = new Thickness(0, 4, 0, 0) };
+            AutomationProperties.SetName(bar, "Fortschritt");
+            AutomationProperties.SetHelpText(bar, $"{(int)Math.Round(value * 100)} Prozent");
             text.Children.Add(bar);
         }
         text.VerticalAlignment = VerticalAlignment.Center;
         var button = Ui.Primary(action, ResumeOrOpen, "↵", actionIcon, 48);
+        if (AppDevice.IsPhone)
+        {
+            // Phone: ring and text side by side, the button under them across the card.
+            var top = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*"), ColumnSpacing = 16 };
+            top.Children.Add(gauge);
+            Grid.SetColumn(text, 1);
+            top.Children.Add(text);
+            if (text.Children[1] is TextBlock titleBlock)
+            {
+                titleBlock.FontSize = 20;
+                titleBlock.TextWrapping = TextWrapping.Wrap;
+            }
+            if (text.Children[2] is StackPanel metaRow && metaRow.Children.Count > 1 && metaRow.Children[1] is TextBlock metaText)
+            {
+                metaRow.Children.RemoveAt(1);
+                metaText.TextWrapping = TextWrapping.Wrap;
+                text.Children.Insert(3, metaText);
+            }
+            button.HorizontalAlignment = HorizontalAlignment.Stretch;
+            if (button.Chrome.Child is { } inner) inner.HorizontalAlignment = HorizontalAlignment.Center;
+            var phoneHero = Ui.Hero(Ui.V(16, top, button), new Thickness(18, 18), 26);
+            AutomationProperties.SetName(phoneHero, eyebrow);
+            AutomationProperties.SetHelpText(phoneHero, $"{summary.Set.Title}, {meta}");
+            return phoneHero;
+        }
         var row = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*,Auto"), ColumnSpacing = 24 };
         row.Children.Add(gauge);
         Grid.SetColumn(text, 1);
         row.Children.Add(text);
         Grid.SetColumn(button, 2);
         row.Children.Add(button);
-        return Ui.Hero(row, new Thickness(28, 24));
+        var hero = Ui.Hero(row, new Thickness(28, 24));
+        AutomationProperties.SetName(hero, eyebrow);
+        AutomationProperties.SetHelpText(hero, $"{summary.Set.Title}, {meta}");
+        return hero;
     }
 
     /// <summary>The hero's action (Enter): resume the running session, else open the most recent set.</summary>
@@ -200,7 +311,14 @@ public sealed class OverviewScreen(AppModel model, MainWindow window) : Screen(m
             Fill();
         };
         Fill();
-        var heading = Ui.Row(Ui.H(8, Ui.Text("Deine Lernsets", 20, FontWeight.Bold, font: WsTheme.Prompt), count), sort);
+        var title = Ui.H(8, Ui.Text("Deine Lernsets", 20, FontWeight.Bold, font: WsTheme.Prompt), count);
+        if (AppDevice.IsPhone)
+        {
+            // Phone: the sort choice under the heading, across the width.
+            sort.HorizontalAlignment = HorizontalAlignment.Stretch;
+            return Ui.V(12, title, sort, grid);
+        }
+        var heading = Ui.Row(title, sort);
         return Ui.V(12, heading, grid);
     }
 
@@ -227,7 +345,7 @@ public sealed class OverviewScreen(AppModel model, MainWindow window) : Screen(m
         plus.HorizontalAlignment = HorizontalAlignment.Center;
         var title = Ui.Text("Neues Lernset", 15.5, FontWeight.Bold);
         title.HorizontalAlignment = HorizontalAlignment.Center;
-        var note = Ui.Text("Liste einfügen oder Text- und CSV-Datei importieren", 13, color: p.TextSecondary, wrap: TextWrapping.Wrap, align: TextAlignment.Center);
+        var note = Ui.Text(AppDevice.ReadsPhotos ? "Liste einfügen oder Datei, PDF oder Foto importieren" : "Liste einfügen oder Datei oder PDF importieren", 13, color: p.TextSecondary, wrap: TextWrapping.Wrap, align: TextAlignment.Center);
         note.HorizontalAlignment = HorizontalAlignment.Center;
         var body = Ui.V(10, plus, Ui.V(2, title, note));
         body.VerticalAlignment = VerticalAlignment.Center;
@@ -274,12 +392,15 @@ public sealed class OverviewScreen(AppModel model, MainWindow window) : Screen(m
         var upper = Ui.V(10, top, Ui.StatusBar(summary.Stats.Mastered, summary.Stats.Learning, summary.Stats.Total, 6, null, p.Dark ? p.Track : Palette.Hex(0xDDE0E8)));
         var open = Ui.Clickable(upper, () => Model.OpenSet(set.Id), set.Title, 12, Colors.Transparent, Colors.Transparent);
         ToolTip.SetTip(open, "Öffnet das Lernset");
+        var counts = summary.Stats;
+        AutomationProperties.SetHelpText(open, $"{StudyCopy.Terms(counts.Total)}, {counts.Mastered} gemeistert, {counts.Learning} am Lernen, {counts.Fresh} neu. Öffnet das Lernset");
 
         WsButton quick = summary.Learn is not null
             ? Ui.Primary("Weiterlernen", () => Model.Study(set.Id, StudyMode.Learn), null, IconName.Play, 34)
             : Ui.Secondary("Lernen", () => Model.Study(set.Id, StudyMode.Learn), IconName.Sparkles, height: 34);
         quick.Chrome.Padding = new Thickness(14, 0);
         quick.IsEnabled = !summary.IsEmpty;
+        AutomationProperties.SetHelpText(quick, summary.Learn is not null ? $"{set.Title} weiterlernen" : $"{set.Title} lernen");
         var bottom = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto"), ColumnSpacing = 8 };
         var status = StatusLabel(summary, now);
         status.VerticalAlignment = VerticalAlignment.Center;

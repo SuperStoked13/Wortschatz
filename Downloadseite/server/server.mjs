@@ -2,10 +2,10 @@
 // Wortschatz website: `node server/server.mjs` (Node 20 or newer, no packages needed).
 // Behind Caddy (HTTPS) in production, see deploy/ and README.md.
 
-import http from 'node:http';
 import { createApp } from './lib/app.mjs';
 import { loadConfig } from './lib/config.mjs';
 import { startDuckDns } from './lib/duckdns.mjs';
+import { createHttpServer } from './lib/http.mjs';
 import { createLogger } from './lib/log.mjs';
 
 const [major] = process.versions.node.split('.').map(Number);
@@ -25,28 +25,11 @@ try {
 const log = createLogger(config.logLevel);
 const app = await createApp(config, log);
 
-const server = http.createServer(
-  {
-    headersTimeout: 15_000, // all headers within 15 s (slow-loris)
-    requestTimeout: 30_000, // the whole request within 30 s
-    // Longer than Caddy keeps idle upstream connections (30 s, see deploy/Caddyfile), so
-    // Caddy never reuses a connection that Node is just closing.
-    keepAliveTimeout: 65_000,
-    maxHeaderSize: 16 * 1024,
-    requireHostHeader: true,
-  },
-  app.handle,
-);
-server.maxRequestsPerSocket = 1000;
-server.maxConnections = 2000;
-// A connection that does nothing for a minute (also a stalled download) is closed.
-server.setTimeout(60_000, (socket) => socket.destroy());
-server.on('clientError', (error, socket) => {
-  if (error.code === 'ECONNRESET' || !socket.writable) {
-    socket.destroy();
-    return;
-  }
-  socket.end('HTTP/1.1 400 Bad Request\r\nConnection: close\r\nContent-Length: 0\r\n\r\n');
+const server = createHttpServer(app.handle);
+// A failing accept must not take the whole site down; not being able to listen at all must.
+server.on('error', (error) => {
+  log.error('server', { message: error.message, code: error.code });
+  if (!server.listening) process.exit(1);
 });
 
 const stopDuckDns = startDuckDns(config.duckdns, log);

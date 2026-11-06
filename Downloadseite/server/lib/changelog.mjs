@@ -49,19 +49,21 @@ function isoDate(text) {
 }
 
 export function dateLabel(iso) {
-  return iso ? dateFormat.format(new Date(`${iso}T00:00:00Z`)) : '';
+  const date = new Date(`${iso}T00:00:00Z`);
+  return iso && !Number.isNaN(date.getTime()) ? dateFormat.format(date) : '';
 }
 
 /** "Neu (Mac): Text" → { kind, platforms, text }. Unknown kinds or platforms stay part of the text. */
 function parseChange(line) {
   const match = KIND_RE.exec(line);
   const kind = match?.[1].toLowerCase();
-  if (!match || !KINDS[kind]) return { change: { kind: '', platforms: [], text: line }, known: false };
+  if (!match || !Object.hasOwn(KINDS, kind)) return { change: { kind: '', platforms: [], text: line }, known: false };
   const platforms = [];
   if (match[2] !== undefined) {
     for (const word of match[2].split(/\s*(?:,|\/|\bund\b|&)\s*/i).filter(Boolean)) {
-      const platform = PLATFORM_NAMES[word.toLowerCase()];
-      if (!platform) return { change: { kind: '', platforms: [], text: line }, known: false };
+      const name = word.toLowerCase();
+      if (!Object.hasOwn(PLATFORM_NAMES, name)) return { change: { kind: '', platforms: [], text: line }, known: false };
+      const platform = PLATFORM_NAMES[name];
       if (!platforms.includes(platform)) platforms.push(platform);
     }
   }

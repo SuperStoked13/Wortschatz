@@ -15,9 +15,11 @@
 //   qid; the options are recorded by the full snapshots and by `current`), and checkpoint and
 //   finalStats only when the round is over. 'write' and 'reset' do not touch the session and
 //   record {matches} only.
-// create   = {seed, now, subset?, progress?}: the engine rng is mulberry32(seed), created once per
-//   case and shared by createLearn, nextRound and removeCard (restore: mulberry32(seed)); an action
-//   may carry its own `seed` for a fresh mulberry32.
+// create   = {seed, now, subset?, progress?, review?, recheck?}: the engine rng is mulberry32(seed),
+//   created once per case and shared by createLearn, nextRound and removeCard (restore:
+//   mulberry32(seed)); an action may carry its own `seed` for a fresh mulberry32. review / recheck
+//   are handed to createLearn as they are (only `true` switches repetition questions / rechecks
+//   on; rechecks only in sessions with more than 60 cards); a missing key means the default false.
 // Tracked progress = what db.recordAnswer / db.overrideLastAnswer would store. It starts as the
 //   progress argument (an object, else {}); 'answer' applies applyAnswer(entry of the current card,
 //   correct, T0); 'override' applies applyOverride when that entry's lastResult is 'incorrect' (as
@@ -36,6 +38,15 @@
 // typed API boundary: scenario cards keep string sides only (createLearn never asks a card with a
 // non-string side, and edited card lists below only use strings); buildChoices cards use JS
 // `String(v)` (answerSide's toStr), because its distractors come from every card with an id.
+//
+// The engine plans each round when it starts (spacing since 1.4: a card comes back after 10 to 15
+// other questions, fewer when fewer cards are open; at most 3 repeats in a row while there are new
+// cards; rechecks 30–50 questions after mastering). The scenarios below therefore cover: small
+// sets (gaps of open - 1), large sets (the full gap, the repeat limit, MAX_LEARNING with many
+// wrong answers), a card's later question in the round after a wrong answer or an override,
+// repetition questions mixed in among new cards, rechecks (> 60 cards, wrong again, override,
+// removeCard, sync), stored states with hand-made spacing fields (clock, lastAt, repeats) and
+// states stored before spacing (active, retried, a "1.2:" retry, no clock).
 //
 // Junk deliberately avoided (documented divergences of the typed Swift port, see LearnEngine.swift):
 // fractional counts, numbers beyond 2^53, ids differing only in Unicode normalisation, nested
@@ -127,6 +138,8 @@ class Run {
       const opts = { rng: this.rng, now: create.now };
       if ('subset' in create) opts.subset = create.subset;
       if ('progress' in create) opts.progress = create.progress;
+      if ('review' in create) opts.review = create.review;
+      if ('recheck' in create) opts.recheck = create.recheck;
       this.progress = isObj(create.progress) ? clone(create.progress) : {};
       this.s = createLearn(cards, options, opts);
       this.t = typeof create.now === 'number' ? create.now : T0;
@@ -351,21 +364,27 @@ scenario(null, OPTS, { seed: 1, now: T0 }).emit();
   run.emit();
 }
 
-// a wrong answer is re-queued once
+// a wrong answer: no retry at the end of the round (four cards: a b c d a b c)
 {
   const run = scenario(makeCards(4), OPTS, at(6), [ans(false, T0 + 10 * SEC), ans(true, T0 + 20 * SEC), ans(true, T0 + 30 * SEC), ans(true, T0 + 40 * SEC), ans(false, T0 + 50 * SEC), ans(true, T0 + MIN)]);
   run.emit();
 }
 
-// retries reset in the next round
+// a wrong answer: the card's later question in this round turns multiple choice (three cards:
+// a b c a b c); override turns it back; the card is asked again in the next round
 {
   const cards = makeCards(3);
   const run = scenario(cards, OPTS, at(7));
   const id = current(run.s).cardId;
-  playRound(run, (q) => q.cardId !== id, T0);
+  run.do(ans(false, T0 + SEC));
+  run.do(ov(T0 + 2 * SEC));
+  run.do(ans(true, T0 + 3 * SEC));
+  run.do(ans(true, T0 + 4 * SEC));
+  run.do(ans(false, T0 + 5 * SEC)); // id's later question
+  playRound(run, (q) => q.cardId !== id, T0 + 5 * SEC);
   run.do(nr(T0 + MIN, { seed: 8 }));
-  while (current(run.s).cardId !== id) run.do(ans(true, T0 + MIN + SEC));
-  run.do(ans(false, T0 + MIN + 2 * SEC));
+  playRound(run, () => true, T0 + MIN);
+  run.do(nr(T0 + 2 * MIN, { seed: 9 }));
   run.emit();
 }
 
@@ -439,7 +458,7 @@ scenario(makeCards(3), OPTS, at(6), [ans(true, T0 + SEC), ans(false, T0 + 2 * SE
   const progress = { c1: progressEntry(0, 0, 2, 'incorrect'), c2: progressEntry(2) };
   const run = scenario(makeCards(5), OPTS, { ...at(12), progress });
   const id = run.s.queue.find((q) => q.cardId !== 'c1').cardId;
-  while (current(run.s).cardId !== id) run.do(ans(true, T0 + SEC));
+  while (current(run.s) && current(run.s).cardId !== id) run.do(ans(true, T0 + SEC));
   run.do(ans(false, T0 + 2 * SEC));
   run.emit();
 }
@@ -447,7 +466,7 @@ scenario(makeCards(3), OPTS, at(6), [ans(true, T0 + SEC), ans(false, T0 + 2 * SE
   const cards = makeCards(3);
   const run = scenario(cards, OPTS, at(13));
   const [a, b, c] = run.s.queue.map((q) => q.cardId);
-  playRound(run, planned({ [a]: [false, false], [b]: [false, true], [c]: [true] }), T0);
+  playRound(run, planned({ [a]: [false, false], [b]: [false, true], [c]: [true, true] }), T0);
   run.do(nr(T0 + MIN, { seed: 1 }));
   playRound(run, () => true, T0 + MIN);
   run.do(nr(T0 + 2 * MIN, { seed: 1 }));
@@ -661,6 +680,128 @@ scenario(makeCards(3), OPTS, at(6), [ans(true, T0 + SEC), ans(false, T0 + 2 * SE
   for (const junk of ['junk', 5, [], null]) scenario(four, OPTS, at(42), [sy(T0 + SEC, { progress: junk })]).emit();
 }
 
+// ---------------------------------------------------------------------------
+// Spacing, the mix, repetition questions and rechecks
+
+// Plays a whole session: answers decided by d() < pCorrect (a function: decide(q, s)), some
+// wrong answers overridden, nextRound between rounds; closes the final round.
+function playOut(run, decide, { d = null, pOverride = 0, step = 5 * SEC, guard = 2000 } = {}) {
+  let t = run.t;
+  for (let i = 0; !isFinished(run.s) && i < guard; i++) {
+    t += step;
+    if (isRoundOver(run.s)) run.do(nr(t));
+    else {
+      run.do(ans(decide(current(run.s), run.s) === true, t));
+      if (!run.s.last.correct && d && d() < pOverride) run.do(ov(t + 1));
+    }
+  }
+  run.do(nr(t + MIN));
+  run.t = t + MIN;
+  return run;
+}
+
+// Small sets: every card again after open - 1 others (1, 2, 3, 5 cards), all right or mixed.
+for (const n of [1, 2, 3, 5]) {
+  playOut(scenario(makeCards(n), OPTS, at(60 + n)), () => true).emit();
+  const d = mulberry32(80 + n);
+  playOut(scenario(makeCards(n), { answerWith: 'both', learn: { roundSize: 4 } }, at(70 + n)), () => d() < 0.6, { d, pOverride: 0.3 }).emit();
+}
+
+// Large sets: the full gap, overdue cards, the repeat limit.
+for (const [n, seed, p] of [[25, 91, 1]]) {
+  const d = mulberry32(seed * 3);
+  playOut(new Run(makeCards(n), { answerWith: seed % 2 ? 'term' : 'both', learn: { roundSize: 7, written: seed !== 92 } }, { seed, now: T0 }), () => d() < p, { d, pOverride: 0.15 }).emit();
+}
+
+// MAX_LEARNING: every answer wrong for a while, so that more than 10 cards are being learned.
+{
+  const run = new Run(makeCards(20), { answerWith: 'term', learn: { roundSize: 15 } }, { seed: 94, now: T0 });
+  playOut(run, (q, s) => s.answered >= 45).emit();
+}
+
+// Repetition questions: mastered cards mixed in among new ones, the most overdue first; a missed
+// one is learned again; one missed elsewhere is learned instead; overrides; a deleted card.
+function masteredProgress(cards) {
+  const p = {};
+  cards.forEach((c, i) => {
+    p[c.id] = { correct: 2, incorrect: 0, streak: 2, streakBefore: 1, lastResult: 'correct', lastAnsweredAt: T0 - 100000 + i };
+  });
+  return p;
+}
+{
+  const cards = makeCards(14);
+  const progress = masteredProgress(cards.slice(0, 6));
+  for (const [seed, p] of [[101, 1], [102, 0.7], [103, 0.5]]) {
+    const d = mulberry32(seed);
+    playOut(scenario(cards, OPTS, { ...at(seed), progress, review: true }), () => d() < p, { d, pOverride: 0.3 }).emit();
+  }
+  // Everything mastered: only repetition questions; the first one missed and overridden.
+  const all = masteredProgress(cards);
+  const r = scenario(cards, { answerWith: 'term', learn: { roundSize: 5 } }, { ...at(104), progress: all, review: true }, [ans(false, T0 + SEC), ov(T0 + 2 * SEC), ans(false, T0 + 3 * SEC)]);
+  playOut(r, () => true).emit();
+  // Missed elsewhere (queued and not yet queued), a deleted card, junk option values.
+  const m = scenario(cards, OPTS, { ...at(105), progress, review: true });
+  const queued = m.s.queue.find((q) => /^\d+\.3:/.test(q.qid));
+  m.do(wr(queued.cardId, false));
+  m.do(wr('c6', false));
+  m.do(sy(T0 + SEC));
+  m.do(rm('c5', T0 + 2 * SEC, { cards: cards.filter((c) => c.id !== 'c5') }));
+  playOut(m, () => true).emit();
+  for (const review of ['yes', 1, null, false]) scenario(cards, OPTS, { ...at(106), progress, review }).emit();
+  // "Falsche lernen": chosen cards, some of them mastered.
+  scenario(cards, OPTS, { ...at(107), progress: { ...progress, c8: progressEntry(1) }, subset: { cardIds: ['c2', 'c8', 'c9'] }, review: true }).emit();
+}
+
+// Rechecks: more than 60 cards, some answered wrong; wrong again at the recheck; overrides; a
+// card missed elsewhere while waiting; a deleted card; the last new card (its recheck comes at once).
+{
+  // Large rounds keep the fixture small (fewer full snapshots).
+  const cards = makeCards(61);
+  const big = { answerWith: 'term', learn: { roundSize: 15 } };
+  for (const recheck of [true, 'yes', null]) scenario(makeCards(61), OPTS, { ...at(110), recheck }).emit();
+  scenario(makeCards(60), OPTS, { ...at(110), recheck: true }).emit();
+
+  const base = createLearn(cards, big, { rng: mulberry32(111), now: T0, recheck: true });
+  const [x, y, z] = base.order;
+  const last = base.order[60];
+  const left = { [x]: [false, true, true, false], [y]: [false], [last]: [false] };
+  const run = scenario(cards, big, { ...at(111), recheck: true });
+  playOut(run, (q) => (left[q.cardId] && left[q.cardId].length ? left[q.cardId].shift() : true)).emit();
+
+  // With repetition questions too: x's wrong answers and every wrong recheck answer overridden;
+  // z missed elsewhere while it waits for its recheck; then a waiting card deleted.
+  const familiar = Object.fromEntries(cards.slice(25, 55).map((c) => [c.id, progressEntry(1)]));
+  const o = scenario(cards, { answerWith: 'both', learn: { roundSize: 15 } }, { ...at(112), recheck: true, review: true, progress: { ...familiar, ...masteredProgress(cards.slice(55)) } });
+  const plan = { [x]: [false, true, false], [y]: [false, true, true, false], [z]: [false] };
+  let t = T0;
+  let wrote = false;
+  let removed = false;
+  for (let i = 0; !isFinished(o.s) && i < 1000; i++) {
+    t += 4 * SEC;
+    if (isRoundOver(o.s)) {
+      o.do(nr(t));
+      continue;
+    }
+    const q = current(o.s);
+    const ok = plan[q.cardId] && plan[q.cardId].length ? plan[q.cardId].shift() : true;
+    o.do(ans(ok, t));
+    if (!ok && (q.cardId === x || /^\d+\.4:/.test(q.qid))) o.do(ov(t + 1));
+    const st = tick(o.s, null);
+    if (!wrote && st.recheck.due.includes(z)) {
+      wrote = true;
+      o.do(wr(z, false));
+      o.do(sy(t + 2));
+    }
+    if (!removed && wrote && st.recheck.due.length && !st.recheck.due.includes(z)) {
+      removed = true;
+      o.do(rm(st.recheck.due[0], t + 3, { cards: 'set' }));
+    }
+  }
+  o.do(nr(t + MIN));
+  o.emit();
+
+}
+
 // The user's 52-pair list: a full session with mistakes, both directions.
 for (const [seed, answerWith, roundSize] of [
   [52, 'term', 7],
@@ -804,17 +945,17 @@ function fuzzCards(d, n, strings = false) {
     else if (r < 0.1) c.definition = pick(d, BLANKS);
     else if (r < 0.14) c[chance(d, 0.5) ? 'term' : 'definition'] = pick(d, TEXTY);
     else if (r < 0.2 && cards.length) {
-      // Same answer text as an earlier card (maybe in another case).
+      // Same answer text as an earlier card (maybe in another case; junk entries are skipped).
       const other = pick(d, cards);
-      if (typeof other.term === 'string') c.term = chance(d, 0.5) ? other.term.toUpperCase() : other.term;
+      if (isObj(other) && typeof other.term === 'string') c.term = chance(d, 0.5) ? other.term.toUpperCase() : other.term;
     } else if (r < 0.26 && cards.length) {
       // Same prompt as an earlier card: a synonym.
       const other = pick(d, cards);
-      if (typeof other.definition === 'string') c.definition = other.definition;
+      if (isObj(other) && typeof other.definition === 'string') c.definition = other.definition;
     } else if (r < 0.3 && cards.length) {
       // Shares an alternative with an earlier card.
       const other = pick(d, cards);
-      if (typeof other.term === 'string') c.term = `${other.term}, ${pick(d, PAIRS)[0]}`;
+      if (isObj(other) && typeof other.term === 'string') c.term = `${other.term}, ${pick(d, PAIRS)[0]}`;
     } else if (!strings && r < 0.32) c[chance(d, 0.5) ? 'term' : 'definition'] = pick(d, [5, null, true]);
     else if (r < 0.35) c.id = pick(d, [i * 100, -i]);
     else if (r < 0.37) {
@@ -1012,10 +1153,11 @@ const SUBSETS = [
   }
 }
 
-// 3c. Long random plays until the session is finished (and closed).
+// 3c. Long random plays until the session is finished (and closed). (60 plays of up to 80 actions
+// since spacing made sessions longer, to keep the fixture size.)
 {
   const d = mulberry32(424242);
-  for (let k = 0; k < 75; k++) {
+  for (let k = 0; k < 60; k++) {
     const n = randInt(d, 1, 9);
     const cards = chance(d, 0.4) ? makeCards(n) : fuzzCards(d, n, chance(d, 0.5));
     const options = { answerWith: pick(d, ['term', 'definition', 'both']), learn: pick(d, [{ roundSize: randInt(d, 1, 8) }, { roundSize: 7, written: false }, { roundSize: 3, mc: false }, {}]) };
@@ -1025,7 +1167,7 @@ const SUBSETS = [
       create.progress = fuzzProgress(d, cardIdsOf(cards));
     } else if (chance(d, 0.3)) create.progress = fuzzProgress(d, cardIdsOf(cards));
     const run = new Run(cards, options, create);
-    play(d, run, cardIdsOf(cards), 90, 0.25 + d() * 0.65);
+    play(d, run, cardIdsOf(cards), 80, 0.25 + d() * 0.65);
     run.emit();
   }
 }
@@ -1047,12 +1189,17 @@ function mutate(d, raw) {
     if (!isObj(raw[key])) raw[key] = {};
     return raw[key];
   };
-  switch (randInt(d, 0, 21)) {
+  switch (randInt(d, 0, 26)) {
     case 0:
       if (keys.length) delete raw[pick(d, keys)];
       break;
     case 1:
-      if (keys.length) raw[pick(d, keys)] = pick(d, JUNK);
+      if (keys.length) {
+        const key = pick(d, keys);
+        const v = pick(d, JUNK);
+        // Counters stay whole numbers (the Swift port's Int counters, see the header comment).
+        raw[key] = (key === 'answered' || key === 'correct') && typeof v === 'number' ? Math.floor(v) : v;
+      }
       break;
     case 2: {
       const l = list('order');
@@ -1137,7 +1284,11 @@ function mutate(d, raw) {
       raw.finishedAt = pick(d, ['x', T0, null, 0, true]);
       break;
     case 17:
-      raw[pick(d, ['elapsedMs', 'answered', 'correct'])] = pick(d, [-50, 'x', 12345.5, null, 0, 3, 100]);
+      {
+        // Counters stay whole numbers (the Swift port's Int counters, see the header comment).
+        const key = pick(d, ['elapsedMs', 'answered', 'correct']);
+        raw[key] = pick(d, key === 'elapsedMs' ? [-50, 'x', 12345.5, null, 0, 3, 100] : [-50, 'x', 12345, null, 0, 3, 100]);
+      }
       break;
     case 18:
       raw.answerWith = pick(d, ['both', 'definition', 'x', null]);
@@ -1152,6 +1303,21 @@ function mutate(d, raw) {
         const r = raw.rounds[raw.rounds.length - 1];
         if (isObj(r)) r.round = raw.round;
       }
+      break;
+    case 21:
+      raw.clock = pick(d, [0, 3, 1000, -1, 2.5, 'x', null]);
+      break;
+    case 22:
+      map('lastAt')[pick(d, [anyId(), 'ghost'])] = pick(d, [0, 2, 99, -1, 1.5, 'x', null]);
+      break;
+    case 23:
+      raw.repeats = pick(d, [0, 3, 6, 7, -1, 2.5, 'x']);
+      break;
+    case 24:
+      raw[pick(d, ['review', 'recheck'])] = pick(d, [null, 'x', [], {}, { due: [anyId(), 'ghost', 5, anyId()] }, { due: 'x', results: { [anyId()]: true, ghost: false, x: 'y' } }]);
+      break;
+    case 25:
+      list('queue').push({ qid: pick(d, ['1.3:', '2.4:', '1.1.2:', '3.4.2:']) + anyId(), cardId: anyId(), type: 'written', ask: 'term' });
       break;
     default:
       raw.feedback = { qid: 'x', cardId: anyId(), type: 'mc' };
@@ -1190,7 +1356,73 @@ function restore(d, raw, cards, seed, progress, steps, pCorrect) {
   for (const raw of [null, 'x', 5, [], {}, { order: 'x' }, { order: [1, 2, 3], stage: [2, 2, 2] }]) restore(d, raw, makeCards(3), 1, {}, 3, 0.5);
 }
 
-// 4b. Round trip of real states (unchanged), then corrupted copies of them.
+// 4b. Hand-made spacing situations (a stored state between two rounds): waiting, overdue and new
+// cards, the repeat limit, MAX_LEARNING, cards answered at the same place.
+{
+  const d = mulberry32(4242);
+  const spaced = (n, fields) => {
+    const cards = makeCards(n);
+    const order = cards.map((c) => c.id);
+    return [{ v: 1, order, stage: Object.fromEntries(order.map((id) => [id, (fields.stage || {})[id] || 0])), learn: { roundSize: fields.roundSize || 7 }, clock: fields.clock, lastAt: fields.lastAt, repeats: fields.repeats || 0, queue: [], roundLog: [], answered: Number.isInteger(fields.clock) ? fields.clock : 4, correct: Number.isInteger(fields.clock) ? fields.clock : 4, ...(fields.extra || {}) }, cards];
+  };
+  const waits = (ids, list, clock) => Object.fromEntries(ids.map((id, i) => [id, clock - 1 - list[i]]));
+  const ten = makeCards(10).map((c) => c.id);
+  const ones = (ids) => Object.fromEntries(ids.map((id) => [id, 1]));
+  const situations = [];
+  for (let wait = 0; wait <= 16; wait++) situations.push(spaced(20, { stage: { c1: 1 }, lastAt: waits(['c1'], [wait], 30), clock: 30 }));
+  situations.push(spaced(20, { stage: ones(['c1', 'c2']), lastAt: waits(['c1', 'c2'], [15, 16], 40), clock: 40 }));
+  for (const repeats of [0, 3]) situations.push(spaced(20, { stage: ones(['c1', 'c2', 'c3', 'c4']), lastAt: waits(['c1', 'c2', 'c3', 'c4'], [18, 17, 16, 15], 40), clock: 40, repeats }));
+  for (const repeats of [3, 5, 6]) situations.push(spaced(20, { stage: ones(ten), lastAt: waits(ten, [19, 18, 17, 16, 15, 14, 13, 12, 11, 10], 40), clock: 40, repeats }));
+  situations.push(spaced(20, { stage: ones(ten), lastAt: waits(ten, [11, 14, 12, 10, 13, 11, 14, 12, 10, 13], 40), clock: 40 }));
+  situations.push(spaced(20, { stage: ones(ten.slice(0, 9)), lastAt: waits(ten.slice(0, 9), [19, 18, 17, 16, 15, 14, 13, 12, 11], 40), clock: 40, repeats: 3 }));
+  situations.push(spaced(4, { stage: ones(['c1', 'c2', 'c3', 'c4']), lastAt: { c1: 6, c2: 7, c3: 8, c4: 9 }, clock: 10 }));
+  situations.push(spaced(4, { stage: ones(['c1', 'c2', 'c3', 'c4']), lastAt: { c4: 6, c1: 7, c2: 8, c3: 9 }, clock: 10 }));
+  situations.push(spaced(3, { stage: ones(['c1', 'c2', 'c3']), lastAt: { c1: 9, c2: 9, c3: 8 }, clock: 10, roundSize: 1 }));
+  situations.push(spaced(3, { stage: ones(['c1', 'c2', 'c3']), lastAt: { c1: 9, c2: 9, c3: 9 }, clock: 10, roundSize: 1 }));
+  // With repetition questions and rechecks waiting (stage 2 cards).
+  situations.push(spaced(12, { stage: { c1: 2, c2: 2, c3: 1, c4: 2 }, lastAt: waits(['c1', 'c2', 'c3'], [3, 31, 12], 40), clock: 40, extra: { review: { due: ['c4'], results: {} }, recheck: { due: ['c1', 'c2'] }, misses: { c1: 1, c2: 2 } } }));
+  situations.push(spaced(5, { stage: { c1: 2, c2: 2, c3: 2, c4: 2, c5: 2 }, lastAt: waits(['c1', 'c2'], [0, 5], 20), clock: 20, extra: { recheck: { due: ['c1', 'c2', 'c3'] }, misses: { c1: 1, c2: 1 } } }));
+  // Junk spacing fields.
+  situations.push(spaced(6, { stage: { c1: 1 }, lastAt: { c1: -1, c2: 'x', c3: 2.5, ghost: 3, c4: 7 }, clock: 'x', repeats: -2 }));
+  situations.push(spaced(6, { stage: { c1: 1 }, lastAt: [1, 2], clock: 2.5, repeats: 1.5 }));
+  situations.push(spaced(6, { lastAt: null, clock: null, repeats: 'x', extra: { answered: 5 } }));
+  for (const [raw, cards] of situations) {
+    const run = new Run(cards, null, { seed: randInt(d, 1, 1e6) }, raw);
+    run.do(nr(T0 + SEC));
+    for (let i = 0; i < 4 && !isRoundOver(run.s); i++) run.do(ans(chance(d, 0.7), T0 + (2 + i) * SEC));
+    run.emit();
+  }
+
+  // A session stored before spacing (1.3): `active`, `retried`, a retry "1.2:c1" queued, no clock.
+  const OLD = {
+    v: 1, subset: 'all', answerWith: 'term', learn: { roundSize: 3, mc: true, written: true },
+    order: ['c3', 'c2', 'c1', 'c5', 'c4'], stage: { c3: 1, c2: 1, c1: 0, c5: 0, c4: 0 }, initiallyMastered: [],
+    seen: { c2: true, c1: true, c3: true }, active: ['c2', 'c3', 'c1'], round: 1,
+    queue: [
+      { qid: '1.1:c2', cardId: 'c2', type: 'written', ask: 'term', retryChoices: [{ cardId: 'c2', text: 'terme 2' }, { cardId: 'c5', text: 'terme 5' }, { cardId: 'c1', text: 'terme 1' }, { cardId: 'c4', text: 'terme 4' }] },
+      { qid: '1.2:c1', cardId: 'c1', type: 'mc', ask: 'term', choices: [{ cardId: 'c1', text: 'terme 1' }, { cardId: 'c2', text: 'terme 2' }, { cardId: 'c3', text: 'terme 3' }, { cardId: 'c4', text: 'terme 4' }] },
+    ],
+    retried: { c1: true },
+    roundLog: [
+      { qid: '1.1:c1', cardId: 'c1', type: 'mc', ask: 'term', correct: false, stageAfter: 0 },
+      { qid: '1.1:c3', cardId: 'c3', type: 'mc', ask: 'term', correct: true, stageAfter: 1 },
+    ],
+    rounds: [], answered: 2, correct: 1, misses: { c1: 1 },
+    last: { qid: '1.1:c3', cardId: 'c3', type: 'mc', ask: 'term', correct: true, stageBefore: 0 },
+    startedAt: T0, updatedAt: T0 + 2000, finishedAt: null, elapsedMs: 2000,
+  };
+  const five = makeCards(5);
+  const progress = { c2: recorded(true), c3: recorded(true), c1: recorded(false) };
+  const old = new Run(five, null, { seed: 7, progress }, clone(OLD));
+  old.do(ans(true, T0 + 3 * SEC));
+  old.do(ans(false, T0 + 4 * SEC));
+  old.do(ov(T0 + 5 * SEC));
+  playOut(old, () => true).emit();
+  const between = new Run(five, null, { seed: 8, progress }, { ...clone(OLD), queue: [] });
+  playOut(between, () => true).emit();
+}
+
+// 4c. Round trip of real states (unchanged), then corrupted copies of them.
 {
   const d = mulberry32(31337);
   for (let k = 0; k < 200; k++) {

@@ -378,6 +378,15 @@ final class WriteController {
         }
     }
 
+    /// The standard of every set (Einstellungen), for the note at the top of the options.
+    var standardOptions: StudyOptions { model.settings.study }
+
+    /// "Auf Standard zurücksetzen" (Optionen): this set follows the standard again; a new
+    /// direction or order asks to restart when the popover closes, like after any other change.
+    func resetOptionsToStandard() {
+        if let options = model.resetStudyOptions(setID: setID) { send(.optionsChanged(options)) }
+    }
+
     // MARK: Effects
 
     private func perform(_ effects: [WriteFlow.Effect]) {

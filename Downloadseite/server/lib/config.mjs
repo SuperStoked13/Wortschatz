@@ -114,18 +114,19 @@ export function loadConfig(env = process.env) {
     logLevel: raw(env, 'LOG_LEVEL') || 'info',
     duckdns: Object.freeze({ domain: duckdnsDomain, token: duckdnsToken }),
     limits: Object.freeze({
-      // Pages and form posts per address: a burst, then a steady rate.
-      pageBurst: readInt(env, 'RATE_PAGE_BURST', 60, 5, 100_000),
-      pagePerMinute: readInt(env, 'RATE_PAGE_PER_MINUTE', 60, 1, 100_000),
-      // Static files (CSS, JS, images): a page needs about a dozen, a school class a few hundred.
-      assetBurst: readInt(env, 'RATE_ASSET_BURST', 150, 20, 1_000_000),
-      assetPerMinute: readInt(env, 'RATE_ASSET_PER_MINUTE', 300, 60, 1_000_000),
-      // Downloads per address (a school shares one address, so not too strict). Every full
-      // download counts, also a second one through the same link.
-      downloadsPerHour: readInt(env, 'DOWNLOADS_PER_HOUR', 30, 1, 100_000),
-      downloadsPerDay: readInt(env, 'DOWNLOADS_PER_DAY', 100, 1, 1_000_000),
-      concurrentPerIp: readInt(env, 'CONCURRENT_DOWNLOADS_PER_IP', 6, 1, 10_000),
-      concurrentTotal: readInt(env, 'CONCURRENT_DOWNLOADS_TOTAL', 40, 1, 100_000),
+      // Requests per address, whatever they ask for: a burst, then a steady rate. A first visit
+      // is about ten requests, and a whole class often shares one address.
+      requestBurst: readInt(env, 'RATE_REQUEST_BURST', 1000, 5, 1_000_000),
+      requestsPerSecond: readNumber(env, 'RATE_REQUESTS_PER_SECOND', 20, 0.01, 100_000),
+      // Bytes of pages, files and error pages (downloads have their own limits below): per
+      // address, and for everybody together, so that the upload of a home connection survives
+      // many addresses that each stay within their limit. 0 = no limit.
+      siteBytesPerSecondPerIp: mbit(readNumber(env, 'SITE_BANDWIDTH_PER_IP_MBIT', 0.5, 0, 100_000)),
+      siteBytesPerSecond: mbit(readNumber(env, 'SITE_BANDWIDTH_MBIT', 20, 0, 100_000)),
+      passwordGuessesPerDay: readInt(env, 'PASSWORD_GUESSES_PER_DAY', 200, 1, 1_000_000),
+      // Parallel downloads: the bandwidth limit below still applies to all of them together.
+      concurrentPerIp: readInt(env, 'CONCURRENT_DOWNLOADS_PER_IP', 12, 1, 10_000),
+      concurrentTotal: readInt(env, 'CONCURRENT_DOWNLOADS_TOTAL', 200, 1, 100_000),
       linkSeconds: readInt(env, 'DOWNLOAD_LINK_SECONDS', 120, 10, 3600),
       linkUses: readInt(env, 'DOWNLOAD_LINK_USES', 3, 1, 100),
       bindLinkToIp: readBool(env, 'DOWNLOAD_LINK_BIND_IP', true),
@@ -137,11 +138,11 @@ export function loadConfig(env = process.env) {
       // Bandwidth: protects the upload of a home connection. 0 = no limit.
       totalBytesPerSecond: mbit(readNumber(env, 'BANDWIDTH_TOTAL_MBIT', 50, 0, 100_000)),
       perDownloadBytesPerSecond: mbit(readNumber(env, 'BANDWIDTH_PER_DOWNLOAD_MBIT', 0, 0, 100_000)),
+      // After this much in a day, downloads share a slow lane instead of stopping: an attacker
+      // who uses up the allowance must not be able to switch the downloads off until midnight.
       dailyBytes: Math.round(readNumber(env, 'DAILY_TRAFFIC_GB', 50, 0, 1_000_000) * 1e9),
-      dailyBytesPerIp: Math.round(readNumber(env, 'DAILY_TRAFFIC_GB_PER_IP', 3, 0, 1_000_000) * 1e9),
-      // Penalty points that lead to a temporary block (scanners, floods, forged links).
-      banThreshold: readInt(env, 'BAN_THRESHOLD', 12, 2, 10_000),
-      banMinutes: readInt(env, 'BAN_MINUTES', 60, 1, 60 * 24 * 30),
+      dailyBytesPerIp: Math.round(readNumber(env, 'DAILY_TRAFFIC_GB_PER_IP', 20, 0, 1_000_000) * 1e9),
+      slowLaneBytesPerSecond: mbit(readNumber(env, 'DAILY_TRAFFIC_SLOW_MBIT', 10, 0.1, 100_000)),
     }),
   });
 }

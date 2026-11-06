@@ -113,6 +113,8 @@ die JS-Muster direkt über `JsRegex`.
 | `LearnFlowModel.swift` | `LearnFlowModel.cs` (`questionInfo` → `QuestionInfoOf`, `pendingFeedback` → `PendingFeedbackOf`, `sessionSettings` → `SessionSettingsOf`, `stageStatus` → `StageStatusOf`) | über `LearnFlowTests` |
 | `LearnFlowReducer.swift` | `LearnFlowReducer.cs` (Methode für Methode; `Graphemes` bildet Swifts `Character`-Zählung für getippte Buchstaben nach) | `LearnFlowTests`, `LearnTypeAheadTests` |
 | `LearnEngine.swift` | `LearnEngine.cs` | `LearnEngineParityTests` (Fixture `learn`), `LearnReviewTests` (Wiederholungsfragen, nur Mac) |
+| `TextLayout.swift` | `TextLayout.cs` (`TextItem`, `LayoutOptions`, `BaselineSegment`, `ItemsToLines`, `EstimateSlope`, `DeskewItems`; nach `layout.js` mit UTF-16-Indizes) | `TextLayoutParityTests` (Fixture `layout`, 4 Teile), `TextLayoutTests`, `TextLayoutScriptsTests` |
+| `OCRPostprocess.swift` | `OCRPostprocess.cs` (`joinCJK` → `JoinCJK`) | `OCRPostprocessParityTests` (Fixture `ocr`), `OCRPostprocessTests`, `OCRPostprocessCJKTests` |
 
 Hinweis LearnEngine: `LearnState` ist in C# eine **Klasse** (viele Listen/Maps, Swift mutiert eine Kopie mit `var s`).
 Regel: Engine-Funktionen beginnen immer mit `var s = CopyState(state)` – das ist die frische Kopie, die verändert wird;
@@ -124,6 +126,46 @@ Mac-only-Verhalten (Wiederholungsfragen) hat eigene Tests.
 Speicherort: Die native App speichert seit 1.2 in `%LOCALAPPDATA%\Wortschatz\library.json` (Ordner der früheren
 WebView-App, deren localStorage beim ersten Start 1:1 übernommen wird, siehe README «Ersetzt die frühere Windows-App»).
 Lernsets wandern per Backup-Datei zwischen den Apps (gleiches Format).
+
+## Import (`WortschatzImport` → `src/Wortschatz.Core/Import/`)
+
+Der PDF-/Foto-/Textdatei-Import des Mac (`mac/Packages/WortschatzCore/Sources/WortschatzImport/`) ist ohne die
+Apple-Frameworks portiert. Alles, was PDFKit, ImageIO/CoreGraphics oder Vision macht, steckt hinter Schnittstellen
+(`Import/TextRecognition.cs`), die die App für Windows implementiert:
+
+| Schnittstelle | Ersetzt auf dem Mac | Vertrag |
+|---|---|---|
+| `ITextRecognizer.RecognizeTextAsync(OcrBitmap, languages, progress, ct)` | `TextRecognizing` (Vision) | Pixel, Ursprung oben links; Sprachen BCP 47 in Prioritätsreihenfolge; Abbruch mit `OperationCanceledException`. Engines ohne Wortboxen bauen ihre Zeilen mit `OcrLine.FromText`. |
+| `IImageDecoder.Decode(data, maxPixelSize)` | ImageIO in `OCRImage` | aufrecht (EXIF angewendet), wirft `ImportError(decode)` |
+| `IPdfReader.Open(data)` → `IPdfDocument` | `PDFDocument` | wirft `ImportError` `pdfInvalid`/`pdfPassword`; andere Ausnahmen gelten als `pdfInvalid` |
+| `IPdfDocument.Items(page)` | `PDFPageText.items(of:)` | Wörter mit Leerzeichen am Ende wie auf dem Mac; am einfachsten mit `PDFPageText.Items(text, rectOf)` und einem Rechteck-Lieferanten bauen (Anzeigekoordinaten, oben links) |
+| `IPdfDocument.PageHasImages(page)` | `PDFImageProbe` | Fehler gelten als «hat Bilder» |
+| `IPdfDocument.Render(page, scale)`, `PageSize(page)` | `PDFPageRenderer.render` | Pixel = Punkte × scale, weisser Hintergrund, Drehung/CropBox angewendet; `PageSize` ist die angezeigte Grösse |
+
+`OcrBitmap` ist eine fertige Klasse im Kern (BGRA, gerade Alpha, `Crop`, `Scaled`, `FlattenedOnWhite`). Die App erzeugt
+`new ImportPipeline(pdfReader, imageDecoder, recognizer)` – fehlt ein Teil, schlagen nur die Dateien fehl, die ihn
+brauchen (`pdfFailed`, `decode`, `ocrFailed`). Ob die Erkennung in Bändern läuft (`new BandedTextRecognizer(engine)`, auf dem
+Mac Standard), entscheidet die App. `ReadAsync`/`ReadAllAsync` arbeiten bis zum ersten `await` der Erkennung auf dem
+aufrufenden Thread: aus der Oberfläche über `Task.Run` starten.
+
+| Swift | C# | Tests |
+|---|---|---|
+| `ImportTypes.swift` | `ImportTypes.cs` (`ImportError` ist eine Exception mit `Code` (`ImportErrorCode`); `ImportSource` = Name, MIME, `Data` **oder** `FilePath`; `ImportSource.FromFile`/`FromData`) | über alle |
+| `ImportFileType.swift` | `ImportFileType.cs` (statt UTType: `SupportedExtensions`, `MimeTypeFor`) | `ImportFileTypeTests` |
+| `TextFileDecoder.swift` | `TextFileDecoder.cs` | `TextFileDecoderTests` |
+| `ImportPipeline.swift` | `ImportPipeline.cs` (`ImportBatch.appended(to:)` → `AppendedTo`) | `ImportPipelineTests` |
+| `PDFTextExtractor.swift` | `PDFTextExtractor.cs` | `PDFTextExtractorTests` (Fake-PDF statt echter PDFs) |
+| `PDFPageReading.swift` | `PDFPageReading.cs` (`PDFPageText.Items` mit Rechteck-Lieferant, `VisibleCharacterCount`, `ExpandingLigatures`, `ContainsRightToLeft(text, start, end)`, `PDFPageRenderer.Scale(w, h)`/`PixelSize`) | `PDFTextExtractorTests` |
+| `OCRService.swift` | `OCRService.cs` (`OCRService`, `RecognitionLanguages`, `OCRTextAssembler`) | `OCRTextAssemblerTests` |
+| `OCRImage.swift` | `OCRImage.cs` (`Scale`, `PrepareForRecognition`; dekodiert voll und verkleinert dann – gleiches Ergebnis) | `OCRTextAssemblerTests` |
+| `BandedTextRecognizer.swift` | `BandedTextRecognizer.cs` | `BandedTextRecognizerTests` |
+| `TextRecognition.swift` (OCRQuad/OCRWord/OCRLine, `TextRecognizing`) | `TextRecognition.cs` (`OcrQuad`, `OcrWord`, `OcrLine`, `ITextRecognizer` + die übrigen Schnittstellen) | – |
+
+Nicht portiert: `VocabSpellChecker.swift` (Apple-Rechtschreibung), die Vision-Engines und `VisionSettings`
+(Sprachabgleich/Rückfall auf die Lernsprache: Sache der Windows-Engine), `PDFImageProbe`/`DisplayGeometry`/das Rendern
+selbst. Von den Mac-Tests fehlen darum `VisionRecognitionTests`, `VocabSpellCheckerTests` und die PDF-Tests, die echte
+PDFs brauchen (`sample.pdf`, gedrehte Seiten, arabische/chinesische Textebene): sie gehören zur Windows-Implementierung
+von `IPdfReader`.
 
 ## Generierte Dateien
 
@@ -179,10 +221,10 @@ Die Oberfläche ist **C#-Code, kein XAML**: eine SwiftUI-Datei ↔ eine C#-Datei
 | UserDefaults | `Services/AppPreferences.cs` (`preferences.json` neben der Bibliothek) |
 | Snapshot-Harness (`DebugSnapshot.swift`) | `tools/Wortschatz.Snapshots` (headless PNGs) |
 
-Noch nicht portiert (bewusste Lücken, Stand 2.11.2026): Töne/Haptik (`SoundEffects.swift`), Bildschirmleser-Ansagen
-(`Effect.Announce` wird ignoriert), PDF-/Foto-Import (Mac: PDFKit/Vision; Windows bräuchte `Windows.Media.Ocr`),
-Rechtschreibvorschläge im Editor, Sonderzeichen-Leiste, Menüleisten-Befehle, App-Updates, die Einstellungs-Tabs
-«Lernen»/«Schreiben»/«Töne».
+Noch nicht portiert (bewusste Lücken, Stand 3.11.2026): Menüleisten-Befehle (Windows hat keine Menüleiste; die
+Kürzel gibt es), App-Updates (bewusst nicht, auch auf dem Mac verworfen), Tippfehler in der Import-Vorschau (Mac:
+ImportDetectionPanel; hier nur in der Kartenliste). Windows-Dienste: `Services/ImportServices.cs` (PDF, Bilder, OCR),
+`Services/WindowsSpellEngine.cs` (Rechtschreibung), `DesignSystem/Announcer.cs` (Bildschirmleser).
 
 ### Wie ein Bildschirm funktioniert
 
