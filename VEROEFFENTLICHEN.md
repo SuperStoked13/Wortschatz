@@ -23,7 +23,8 @@ online.
 4. **Release erstellen:** GitHub → *Releases* → *Draft a new release* → neuen Tag `v<version>` auf `main` →
    Titel → die Dateien aus `Downloadseite/releases/` anhängen (`.exe` + `windows.json` + `windows-update.json`,
    `.dmg` + `mac.json` + `appcast.xml`)
-   → *Set as the latest release* angehakt lassen → **Publish release**.
+   → *Set as the latest release* angehakt lassen → **Publish release**. Alle Dateien **vorher** anhängen: Danach lässt
+   sich keine mehr anhängen oder austauschen (unveränderliche Releases, siehe «Gut zu wissen»).
    Oder im Terminal:
    ```bash
    gh release create v<version> --title "Wortschatz <version>" --notes "Was neu ist …" \
@@ -126,4 +127,9 @@ Dann auch den Abschnitt «Erster Start auf dem Mac» in `Downloadseite/public/in
 - **Was der Server nicht übernimmt:** `.env` und alles für den Betrieb – Container, HTTPS und Limits sind auf dem
   Server fest eingestellt.
 - **Nichts passiert?** Auf dem Server steht im Protokoll, warum (z. B. Test fehlgeschlagen). Ein gescheitertes
-  Release wird erst wieder versucht, wenn sich am Release etwas ändert (Datei neu hochladen oder neuer Tag).
+  Release wird erst wieder versucht, wenn es einen neuen Tag gibt (die Dateien lassen sich nicht mehr austauschen).
+- **Unveränderliche Releases** (seit 25.11.2026): Nach dem Veröffentlichen sind die angehängten Dateien und der Tag
+  gesperrt – niemand kann eine Datei still austauschen, auch nicht mit einem gestohlenen Zugang. Titel, Text und
+  «Vorabversion» bleiben änderbar, Löschen geht auch; der Tag eines gelöschten Release ist aber für immer vergeben.
+  Ein Fehler in einer Datei heisst also: neue Versionsnummer. Kommen beide Apps ins selbe Release (z. B. das erste),
+  zuerst als *Draft* speichern, beide hängen ihre Dateien an, dann veröffentlichen.
