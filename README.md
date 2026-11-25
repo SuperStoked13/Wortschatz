@@ -13,6 +13,7 @@ Free, no ads, no account, and your study sets stay on your computer.
 [![Windows 10 or 11](https://img.shields.io/badge/Windows-10%20%7C%2011-0078D4?logo=data:image/svg%2bxml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCI+PHBhdGggZmlsbD0id2hpdGUiIGQ9Ik0wIDBoMTEuNHYxMS40SDB6TTEyLjYgMEgyNHYxMS40SDEyLjZ6TTAgMTIuNmgxMS40VjI0SDB6TTEyLjYgMTIuNkgyNFYyNEgxMi42eiIvPjwvc3ZnPg==)](#download)
 [![Free, no ads](https://img.shields.io/badge/price-free%2C%20no%20ads-22A06B)](#support)
 [![Support on Ko-fi](https://img.shields.io/badge/Ko--fi-buy%20me%20a%20coffee-FF5E5B?logo=kofi&logoColor=white)](https://ko-fi.com/anthonybuilds13)
+[![Anthony D'Angelo on LinkedIn](https://img.shields.io/badge/LinkedIn-Anthony%20D%27Angelo-0A66C2)](https://www.linkedin.com/in/anthonydangelo13)
 
 **[Download](https://wortschatz.duckdns.org/en)** · **[What’s new](Downloadseite/public/_neuigkeiten.md)** · **[Support ☕](https://ko-fi.com/anthonybuilds13)**
 
