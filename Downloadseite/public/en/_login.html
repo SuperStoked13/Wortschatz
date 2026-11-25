@@ -7,7 +7,7 @@
 </head>
 <body class="page page-login">
   <main id="inhalt" class="error-page login-page">
-    <img class="error-icon" src="{{@asset /assets/img/icon-128.png}}" srcset="{{@asset /assets/img/icon-128.png}} 1x, {{@asset /assets/img/icon-256.png}} 2x" alt="" width="96" height="96">
+    <picture><source media="(prefers-color-scheme: dark)" srcset="{{@asset /assets/img/icon-dark-128.png}} 1x, {{@asset /assets/img/icon-dark-256.png}} 2x"><img class="error-icon" src="{{@asset /assets/img/icon-128.png}}" srcset="{{@asset /assets/img/icon-128.png}} 1x, {{@asset /assets/img/icon-256.png}} 2x" alt="" width="96" height="96"></picture>
     <h1>Wortschatz</h1>
     <p class="error-message">This site is password protected.</p>
     <form class="login-form" method="post" action="/en/login">

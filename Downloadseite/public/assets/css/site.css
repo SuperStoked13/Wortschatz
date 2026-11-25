@@ -175,6 +175,11 @@ canvas {
   max-width: 100%;
 }
 
+/* Only wraps an <img> for its dark-mode source (app icon); the layout sees the <img> alone. */
+picture {
+  display: contents;
+}
+
 h1,
 h2,
 h3,

@@ -39,6 +39,11 @@ erscheint nicht auf der Seite.
 - Neu (Windows): Wortschatz aktualisiert sich selbst: Neue Versionen lädt die App im Hintergrund und installiert sie, wenn du sie beendest, und danach steht in der Seitenleiste, was neu ist. Ausschalten kannst du das unter Einstellungen › Daten › Updates.
   EN: Wortschatz now updates itself: the app downloads new versions in the background and installs them when you quit it, and afterwards the sidebar shows what’s new. You can turn this off under Settings › Data › Updates.
 
+## 1.8.1 – 2026-11-25
+
+- Neu (Mac): Das App-Symbol im Glas-Look von macOS 26 – es passt sich dem dunklen Modus an und lässt sich getönt oder klar darstellen.
+  EN: The app icon in the glass look of macOS 26 – it adapts to dark mode and can be shown tinted or clear.
+
 ## 1.8 – 2026-11-25
 
 - Verbessert (Mac): Neues Lernset: Eine eingefügte Liste steht sofort in den Karten – «Trennung» und «Seiten tauschen» ändern sie direkt dort, «Karten übernehmen» braucht es nicht mehr. Die Sprachen stehen zuerst auf «Automatisch» und werden erkannt.

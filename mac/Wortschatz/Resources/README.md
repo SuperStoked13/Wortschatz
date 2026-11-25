@@ -1,5 +1,8 @@
 # Resources
-Assets.xcassets (AppIcon, AccentColor #5146E5 / #7B74FF). Regenerate the icon with mac/scripts/make-icon.swift.
+App-Symbol: `AppIcon.icon` (Icon Composer, Liquid Glass: hell, dunkel, getönt, klar; macOS 26+). Bearbeiten in Icon
+Composer (Xcode › Open Developer Tool), Ebenen als SVG in `AppIcon.icon/Assets/` (Hinterkarte, Vorderkarte, Haken), dunkle
+Farben als `appearance: dark` in `icon.json`. Danach die Bilder der Downloadseite neu: `swift mac/scripts/export-icon.swift`.
+Assets.xcassets: AccentColor #5146E5 / #7B74FF.
 
 ## Sprachen (Deutsch und Englisch, seit 24.11.2026)
 `Localizable.xcstrings` ist der String Catalog: Deutsch ist die Ausgangssprache (der Text im Code ist der

@@ -29,7 +29,7 @@
 
   <main id="inhalt">
     <section class="hero" aria-labelledby="hero-title">
-      <img class="hero-icon" src="{{@asset /assets/img/icon-256.png}}" srcset="{{@asset /assets/img/icon-256.png}} 1x, {{@asset /assets/img/icon-512.png}} 2x" alt="" width="148" height="148">
+      <picture><source media="(prefers-color-scheme: dark)" srcset="{{@asset /assets/img/icon-dark-256.png}} 1x, {{@asset /assets/img/icon-dark-512.png}} 2x"><img class="hero-icon" src="{{@asset /assets/img/icon-256.png}}" srcset="{{@asset /assets/img/icon-256.png}} 1x, {{@asset /assets/img/icon-512.png}} 2x" alt="" width="148" height="148"></picture>
       <h1 class="hero-title" id="hero-title">Wortschatz</h1>
       <p class="hero-lead">Vokabeln lernen, bis sie sitzen.</p>
       <p class="hero-text">Neue Wörter kommen zuerst als Multiple Choice, dann schreibst du sie selbst. Bedient wird alles mit der Enter-Taste, und deine Lernsets bleiben auf deinem Computer.</p>

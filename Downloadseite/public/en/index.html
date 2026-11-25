@@ -30,7 +30,7 @@
 
   <main id="inhalt">
     <section class="hero" aria-labelledby="hero-title">
-      <img class="hero-icon" src="{{@asset /assets/img/icon-256.png}}" srcset="{{@asset /assets/img/icon-256.png}} 1x, {{@asset /assets/img/icon-512.png}} 2x" alt="" width="148" height="148">
+      <picture><source media="(prefers-color-scheme: dark)" srcset="{{@asset /assets/img/icon-dark-256.png}} 1x, {{@asset /assets/img/icon-dark-512.png}} 2x"><img class="hero-icon" src="{{@asset /assets/img/icon-256.png}}" srcset="{{@asset /assets/img/icon-256.png}} 1x, {{@asset /assets/img/icon-512.png}} 2x" alt="" width="148" height="148"></picture>
       <h1 class="hero-title" id="hero-title">Wortschatz</h1>
       <p class="hero-lead">Learn vocabulary until it sticks.</p>
       <p class="hero-text">New words come up as multiple choice first, then you type them yourself. Everything runs on the Return key, and your study sets stay on your computer.</p>

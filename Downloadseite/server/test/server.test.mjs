@@ -1481,7 +1481,8 @@ describe('floods', () => {
     const html = zlib.brotliDecompressSync(page.body).toString();
     const wanted = [
       ...[...html.matchAll(/(?:src|href)="(\/assets\/[^"]+\.(?:css|js)[^"]*)"/g)].map((match) => match[1]),
-      ...[...html.matchAll(/(\/assets\/img\/[^"\s,]+) 2x/g)].map((match) => match[1]),
+      // Of a <picture>, a browser loads one source: the <img> (light), not the dark <source>.
+      ...[...html.replace(/<source [^>]+>/g, '').matchAll(/(\/assets\/img\/[^"\s,]+) 2x/g)].map((match) => match[1]),
       ...[...html.matchAll(/<img[^>]+src="(\/assets\/[^"]+)"/g)].map((match) => match[1]),
       '/assets/img/noise.png',
       '/favicon.ico',

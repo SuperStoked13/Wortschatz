@@ -8,7 +8,7 @@
 <body class="page page-error">
 {{> nav}}
   <main id="inhalt" class="error-page">
-    <img class="error-icon" src="{{@asset /assets/img/icon-128.png}}" srcset="{{@asset /assets/img/icon-128.png}} 1x, {{@asset /assets/img/icon-256.png}} 2x" alt="" width="96" height="96">
+    <picture><source media="(prefers-color-scheme: dark)" srcset="{{@asset /assets/img/icon-dark-128.png}} 1x, {{@asset /assets/img/icon-dark-256.png}} 2x"><img class="error-icon" src="{{@asset /assets/img/icon-128.png}}" srcset="{{@asset /assets/img/icon-128.png}} 1x, {{@asset /assets/img/icon-256.png}} 2x" alt="" width="96" height="96"></picture>
     <p class="error-code">Fehler {{error.status}}</p>
     <h1>{{error.title}}</h1>
     <p class="error-message">{{error.message}}</p>
