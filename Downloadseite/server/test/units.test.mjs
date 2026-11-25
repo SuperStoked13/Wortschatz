@@ -267,6 +267,13 @@ describe('templates', () => {
     assert.equal(escapeHtml("'"), '&#39;');
   });
 
+  it('writes JSON that nothing can break out of a <script> element with', () => {
+    const out = render(compile('<script type="application/ld+json">{{@json data}}</script>'), { data: { a: '</script><b>&\u2028"' } }, env);
+    assert.equal(out, '<script type="application/ld+json">{"a":"\\u003c/script\\u003e\\u003cb\\u003e\\u0026\\u2028\\""}</script>');
+    assert.deepEqual(JSON.parse(out.slice(35, -9)), { a: '</script><b>&\u2028"' });
+    assert.equal(render(compile('{{@json missing}}'), {}, env), 'null');
+  });
+
   it('renders sections, partials and assets', () => {
     const t = compile('{{#a}}A{{/a}}{{^a}}B{{/a}}{{> p}}{{@asset /x.css}}{{o.k}}');
     assert.equal(render(t, { a: true, name: 'n', o: { k: 'v' } }, env), 'A<i>n</i>/x.css?v=1v');

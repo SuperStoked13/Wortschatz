@@ -139,7 +139,8 @@ describe('website', () => {
   it('has no inline scripts or styles (the CSP would block them)', async () => {
     for (const page of ['/', '/datenschutz', '/neuigkeiten', '/en', '/en/privacy', '/en/whats-new', '/gibt-es-nicht']) {
       const html = (await request(s.port, 'GET', page, { ip: nextIp() })).body.toString();
-      assert.doesNotMatch(html, /<script(?![^>]*\bsrc=)[^>]*>/i, `${page}: inline script`);
+      // The structured data (application/ld+json) is a data block: never run, not a script for the CSP.
+      assert.doesNotMatch(html, /<script(?![^>]*\b(?:src=|type="application\/ld\+json"))[^>]*>/i, `${page}: inline script`);
       assert.doesNotMatch(html, /<style\b/i, `${page}: style element`);
       assert.doesNotMatch(html, /\sstyle="/i, `${page}: style attribute`);
       assert.doesNotMatch(html, /\son[a-z]+="/i, `${page}: event handler attribute`);
@@ -241,6 +242,7 @@ describe('website', () => {
       for (const html of [german, english]) {
         assert.ok(html.includes(`<link rel="alternate" hreflang="de" href="${ORIGIN}${de}">`), `${de}: German alternate`);
         assert.ok(html.includes(`<link rel="alternate" hreflang="en" href="${ORIGIN}${en}">`), `${en}: English alternate`);
+        assert.ok(html.includes(`<link rel="alternate" hreflang="x-default" href="${ORIGIN}${en}">`), `${en}: English for everybody else`);
         const script = html.search(/<script src="\/assets\/js\/lang\.js\?v=[0-9a-f]+"><\/script>/);
         assert.ok(script > 0 && script < html.indexOf('rel="stylesheet"'), 'lang.js, before the stylesheet (it would wait for it)');
         assert.doesNotMatch(html, /\{\{/, 'no template tags');
@@ -295,6 +297,86 @@ describe('website', () => {
     for (const headers of [{ 'Accept-Language': 'fr-CH,de;q=0.8,en;q=0.5' }, { Referer: 'https://evil.example/en/x' }]) {
       assert.match((await ask('/gibt-es-nicht', headers)).body.toString(), /Seite nicht gefunden/, JSON.stringify(headers));
     }
+  });
+});
+
+/** The structured data of a page: its SoftwareApplication and WebSite, or null without any. */
+function structuredData(html) {
+  const blocks = [...html.matchAll(/<script type="application\/ld\+json">(.*?)<\/script>/gs)];
+  if (!blocks.length) return null;
+  assert.equal(blocks.length, 1, 'one block of structured data');
+  const data = JSON.parse(blocks[0][1]);
+  assert.equal(data['@context'], 'https://schema.org');
+  return {
+    app: data['@graph'].find((node) => node['@type'] === 'SoftwareApplication'),
+    website: data['@graph'].find((node) => node['@type'] === 'WebSite'),
+  };
+}
+
+describe('search engines and AI assistants', () => {
+  let s;
+  before(async () => {
+    s = await startServer();
+  });
+  after(() => s.close());
+  const get = (target, headers = {}) => request(s.port, 'GET', target, { ip: nextIp(), headers });
+
+  it('describes the app as structured data on both home pages, from the live releases', async () => {
+    for (const [page, system] of [['/', 'macOS 26 oder neuer, Windows 10 oder 11'], ['/en', 'macOS 26 or later, Windows 10 or 11']]) {
+      const { app, website } = structuredData((await get(page)).body.toString());
+      assert.equal(app.name, 'Wortschatz');
+      assert.equal(app['@id'], `${ORIGIN}/#app`, `${page}: the same app in both languages`);
+      assert.equal(app.url, page === '/' ? `${ORIGIN}/` : `${ORIGIN}/en`);
+      assert.equal(app.applicationCategory, 'EducationalApplication');
+      assert.equal(app.operatingSystem, system);
+      assert.equal(app.softwareVersion, '1.0');
+      assert.equal(app.dateModified, '2026-10-14');
+      assert.equal(app.downloadUrl, `${app.url}#download`, 'downloads from this server: the section on the page');
+      assert.deepEqual(app.offers, { '@type': 'Offer', price: '0', priceCurrency: 'CHF' });
+      assert.deepEqual(app.inLanguage, ['de']);
+      assert.ok(app.featureList.length >= 5);
+      assert.equal(website.url, `${ORIGIN}/`);
+    }
+    for (const page of ['/neuigkeiten', '/datenschutz', '/en/whats-new', '/en/privacy']) {
+      assert.equal(structuredData((await get(page)).body.toString()), null, page);
+    }
+  });
+
+  it('names the search engine titles and descriptions of the home pages', async () => {
+    assert.match((await get('/')).body.toString(), /<title>Wortschatz: kostenloser Vokabeltrainer für Mac und Windows<\/title>/);
+    assert.match((await get('/en')).body.toString(), /<title>Wortschatz: free vocabulary trainer for Mac and Windows<\/title>/);
+  });
+
+  it('lists every page that may be found in sitemap.xml, with both languages, and robots.txt points there', async () => {
+    const res = await get('/sitemap.xml');
+    assert.equal(res.status, 200);
+    assert.match(res.headers['content-type'], /^application\/xml/);
+    const xml = res.body.toString();
+    assert.match(xml, /^<\?xml version="1\.0" encoding="UTF-8"\?>\n<urlset /);
+    const listed = [...xml.matchAll(/<loc>([^<]+)<\/loc>/g)].map((match) => match[1]);
+    assert.deepEqual(listed.sort(), [`${ORIGIN}/`, `${ORIGIN}/en`, `${ORIGIN}/en/whats-new`, `${ORIGIN}/neuigkeiten`]);
+    assert.equal((xml.match(/<lastmod>2026-10-14<\/lastmod>/g) || []).length, 4);
+    assert.equal((xml.match(/<xhtml:link rel="alternate" hreflang="x-default" href="https:\/\/wortschatz\.test\/en"\/>/g) || []).length, 2);
+    // What the sitemap leaves out says noindex itself, and the other way round.
+    for (const page of ['/', '/neuigkeiten', '/datenschutz', '/en', '/en/whats-new', '/en/privacy']) {
+      const noindex = /<meta name="robots" content="noindex">/.test((await get(page)).body.toString());
+      assert.equal(noindex, !listed.includes(`${ORIGIN}${page}`), page);
+    }
+    const robots = await get('/robots.txt');
+    assert.equal(robots.status, 200);
+    assert.equal(robots.body.toString(), `User-agent: *\nDisallow: /dl/\nDisallow: /download/\n\nSitemap: ${ORIGIN}/sitemap.xml\n`);
+  });
+
+  it('explains Wortschatz to AI assistants in llms.txt', async () => {
+    const res = await get('/llms.txt');
+    assert.equal(res.status, 200);
+    assert.match(res.headers['content-type'], /^text\/plain; charset=utf-8/);
+    const text = res.body.toString();
+    assert.match(text, /^# Wortschatz\n\n> Wortschatz is a free vocabulary trainer/);
+    assert.match(text, /- macOS: version 1\.0, macOS 26 or later, Apple Silicon, released 2026-10-14\. Download: https:\/\/wortschatz\.test\/en#download/);
+    assert.match(text, /- Windows: version 1\.0, Windows 10 or 11, 64-bit \(x64\)/);
+    assert.ok(text.includes(`(${ORIGIN}/en/whats-new)`));
+    assert.match(text, /The app is in German\./);
   });
 });
 
@@ -551,6 +633,11 @@ describe('without releases', () => {
   it('shows that the versions are coming and refuses links', async () => {
     const html = (await request(s.port, 'GET', '/', { ip: nextIp() })).body.toString();
     assert.match(html, /macOS-Version folgt/);
+    const { app } = structuredData(html);
+    assert.equal(app.operatingSystem, 'macOS, Windows');
+    assert.equal(app.softwareVersion, undefined);
+    assert.equal(app.downloadUrl, `${ORIGIN}/#download`);
+    assert.doesNotMatch((await request(s.port, 'GET', '/sitemap.xml', { ip: nextIp() })).body.toString(), /<lastmod>/);
     assert.match(html, /Windows-Version folgt/);
     const res = await link(s.port, nextIp(), 'mac', { Accept: 'application/json' });
     assert.equal(res.status, 404);
@@ -584,8 +671,9 @@ describe('reloading', () => {
 
   /** The compressed variants of everything the server sends from memory, by path. */
   const variants = () => {
-    const { site, pages, checksums } = s.app.state;
-    return new Map([...site.statics, ...pages, ['/checksums.txt', checksums]].map(([where, entry]) => [where, { br: entry.br, gzip: entry.gzip }]));
+    const { site, pages, checksums, robots, sitemap, llms } = s.app.state;
+    const generated = [['/checksums.txt', checksums], ['/robots.txt', robots], ['/sitemap.xml', sitemap], ['/llms.txt', llms]];
+    return new Map([...site.statics, ...pages, ...generated].map(([where, entry]) => [where, { br: entry.br, gzip: entry.gzip }]));
   };
 
   it('compresses nothing again when nothing changed', async () => {
@@ -666,6 +754,15 @@ describe('downloads on GitHub', () => {
       assert.match(html, new RegExp(WIN_SHA), page);
       assert.match(html, /92,0 MB|92\.0 MB/, page);
     }
+  });
+
+  it('names the files on GitHub as the downloads in the structured data and in llms.txt', async () => {
+    const { app } = structuredData((await request(s.port, 'GET', '/en', { ip: nextIp() })).body.toString());
+    assert.deepEqual(app.downloadUrl, [`${REPO}/v1.6.2-mac/Wortschatz-1.6.2-macOS.dmg`, `${REPO}/v1.5/Wortschatz-1.5-Windows.exe`]);
+    assert.equal(app.softwareVersion, undefined, 'Mac and Windows have different versions');
+    assert.deepEqual(app.inLanguage, ['de', 'en'], 'Mac 1.6.2 is German only, Windows 1.5 speaks English');
+    const llms = (await request(s.port, 'GET', '/llms.txt', { ip: nextIp() })).body.toString();
+    assert.ok(llms.includes(`Download: ${REPO}/v1.5/Wortschatz-1.5-Windows.exe`));
   });
 
   it('lists the checksums from the manifests', async () => {
@@ -1138,7 +1235,7 @@ describe('password', () => {
     const updates = await request(s.port, 'GET', '/neuigkeiten', { ip });
     assert.equal(updates.status, 303);
     assert.equal(updates.headers.location, '/login?weiter=%2Fneuigkeiten');
-    for (const target of ['/checksums.txt', '/gibt-es-nicht']) {
+    for (const target of ['/checksums.txt', '/sitemap.xml', '/llms.txt', '/gibt-es-nicht']) {
       const res = await request(s.port, 'GET', target, { ip });
       assert.equal(res.status, 401, target);
       assert.equal(res.headers['cache-control'], 'no-store');
@@ -1151,6 +1248,9 @@ describe('password', () => {
 
   it('keeps the login page, its styles, the privacy page and the health check open', async () => {
     const ip = nextIp();
+    const robots = (await request(s.port, 'GET', '/robots.txt', { ip })).body.toString();
+    assert.match(robots, /Disallow: \/dl\//);
+    assert.doesNotMatch(robots, /Sitemap/, 'no sitemap while the site needs a password');
     const page = await request(s.port, 'GET', '/login', { ip });
     assert.equal(page.status, 200);
     const html = page.body.toString();

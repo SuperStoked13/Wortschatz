@@ -17,6 +17,7 @@ import { englishLabel, errorText, formatDate, languageOfPath, message, preferred
 import { escapeHtml } from './templates.mjs';
 import { parseRange, securityHeaders, send, sendEntry, sendJson, wantsJson } from './http.mjs';
 import { createStats } from './stats.mjs';
+import { lastUpdated, llmsText, robotsText, sitemapXml, structuredData } from './seo.mjs';
 
 /** The last Mac version that never went online (no update check). */
 const MAC_WITHOUT_UPDATES_UP_TO = '1.7.1';
@@ -25,14 +26,16 @@ const WINDOWS_WITHOUT_UPDATES_UP_TO = '1.7.1';
 
 const METHODS = new Set(['GET', 'HEAD', 'POST']);
 // Every page in German and in English: its template, its language and the same page in the other one.
+// noindex: search engines leave it out (<meta name="robots"> in the template), and so does sitemap.xml.
 const PAGES = new Map([
   ['/', { name: 'index', lang: 'de', other: '/en' }],
-  ['/datenschutz', { name: 'datenschutz', lang: 'de', other: '/en/privacy' }],
+  ['/datenschutz', { name: 'datenschutz', lang: 'de', other: '/en/privacy', noindex: true }],
   ['/neuigkeiten', { name: 'neuigkeiten', lang: 'de', other: '/en/whats-new' }],
   ['/en', { name: 'en/index', lang: 'en', other: '/' }],
-  ['/en/privacy', { name: 'en/privacy', lang: 'en', other: '/datenschutz' }],
+  ['/en/privacy', { name: 'en/privacy', lang: 'en', other: '/datenschutz', noindex: true }],
   ['/en/whats-new', { name: 'en/whats-new', lang: 'en', other: '/neuigkeiten' }],
 ]);
+const INDEXED = [...PAGES].filter(([, page]) => page.lang === 'de' && !page.noindex).map(([route, page]) => ({ de: route, en: page.other }));
 const HOME = Object.freeze({ de: '/', en: '/en' });
 const LOGIN = Object.freeze({ de: '/login', en: '/en/login' });
 const CHANGELOG = '_neuigkeiten.md';
@@ -180,6 +183,8 @@ function viewModel(releases, config, changelog, lang) {
     // after 1.7.1): the privacy page and the help of each app say so.
     ...updatesView(releases),
     updates: changelogView(changelog, releases, lang),
+    // For search engines and AI assistants (seo.mjs): the app as structured data in the head of the home page.
+    seo: { schema: structuredData({ releases, origin: config.origin, lang, english: languages.english }) },
   };
 }
 
@@ -261,7 +266,18 @@ export async function createApp(config, log) {
     const checksums = await makeEntry(Buffer.from(checksumsText(releases, config.origin), 'utf8'), 'text/plain; charset=utf-8', {
       cacheControl: 'no-cache',
     });
-    return { site, releases, models, pages, checksums };
+    // For search engines and AI assistants (seo.mjs). The sitemap only once the site is public.
+    const english = models.en.appLanguages.english;
+    const robots = await makeEntry(Buffer.from(robotsText({ origin: config.origin, sitemap: !config.password }), 'utf8'), 'text/plain; charset=utf-8');
+    const sitemap = await makeEntry(
+      Buffer.from(sitemapXml({ origin: config.origin, pages: INDEXED, lastmod: lastUpdated(releases) }), 'utf8'),
+      'application/xml; charset=utf-8',
+      { cacheControl: 'no-cache' },
+    );
+    const llms = await makeEntry(Buffer.from(llmsText({ releases, origin: config.origin, english }), 'utf8'), 'text/plain; charset=utf-8', {
+      cacheControl: 'no-cache',
+    });
+    return { site, releases, models, pages, checksums, robots, sitemap, llms };
   }
 
   // The signature is taken before building: a file that changes while the build runs is then
@@ -825,6 +841,7 @@ export async function createApp(config, log) {
 
     const asset = req.method === 'POST' ? null : state.site.statics.get(path);
     if (asset) return sendEntry(req, res, asset, { versioned: new URLSearchParams(query).get('v') === asset.version });
+    if (path === '/robots.txt' && req.method !== 'POST') return sendEntry(req, res, state.robots);
 
     if (path === LOGIN.de || path === LOGIN.en) return login(req, res, ctx, languageOfPath(path), new URLSearchParams(query));
     if (path === '/logout' || path === '/en/logout') return logout(req, res, languageOfPath(path));
@@ -841,6 +858,8 @@ export async function createApp(config, log) {
       return redirect(req, res, 301, path.slice(0, -1));
     }
     if (path === '/checksums.txt' && req.method !== 'POST') return sendEntry(req, res, state.checksums, { personal });
+    if (path === '/sitemap.xml' && req.method !== 'POST') return sendEntry(req, res, state.sitemap, { personal });
+    if (path === '/llms.txt' && req.method !== 'POST') return sendEntry(req, res, state.llms, { personal });
     if (path === '/healthz' && req.method !== 'POST') {
       return send(req, res, 200, { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store' }, 'ok\n');
     }

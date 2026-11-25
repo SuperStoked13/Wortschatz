@@ -5,6 +5,7 @@
 //   {{#list}}…{{/list}}       block once per object in the list: its fields first, then the outer values
 //   {{> partial}}             another template from public/_partials
 //   {{@asset /assets/x.css}}  the asset's URL with its content hash (?v=…)
+//   {{@json name}}            the value as JSON, safe inside <script type="application/ld+json">
 
 const TAG = /\{\{\s*([#^/>@]?)\s*([^}]*?)\s*\}\}/g;
 
@@ -15,6 +16,11 @@ export function escapeHtml(value) {
     .replaceAll('>', '&gt;')
     .replaceAll('"', '&quot;')
     .replaceAll("'", '&#39;');
+}
+
+/** JSON for a <script> element: nothing in it can end the element or start markup. */
+export function jsonForScript(value) {
+  return JSON.stringify(value ?? null).replace(/[<>&\u2028\u2029]/g, (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`);
 }
 
 export function compile(source, name = 'template') {
@@ -39,8 +45,9 @@ export function compile(source, name = 'template') {
       top.children.push({ type: 'partial', name: body });
     } else if (sigil === '@') {
       const [fn, arg] = body.split(/\s+/);
-      if (fn !== 'asset' || !arg) throw new Error(`${name}: unbekannte Funktion {{@${body}}}.`);
-      top.children.push({ type: 'asset', path: arg });
+      if (fn === 'asset' && arg) top.children.push({ type: 'asset', path: arg });
+      else if (fn === 'json' && arg) top.children.push({ type: 'json', key: arg });
+      else throw new Error(`${name}: unbekannte Funktion {{@${body}}}.`);
     } else {
       top.children.push({ type: 'value', key: body });
     }
@@ -99,6 +106,9 @@ export function render(nodes, context, env, depth = 0) {
       }
       case 'asset':
         out += escapeHtml(env.asset(node.path));
+        break;
+      case 'json':
+        out += jsonForScript(lookup(context, node.key));
         break;
       default:
         throw new Error(`Unbekannter Knoten ${node.type}`);

@@ -8,11 +8,16 @@
   server), otherwise the browser's: German when the browser lists German before English, otherwise
   English. Clicks from page to page within the site are never redirected: whoever follows a link
   (or the switch) stays where it goes, even without localStorage.
+
+  Search engines and other crawlers are never redirected either: Google renders pages with an
+  English browser, and a redirect would make every German page look like a move to the English one
+  (they find both languages through <link rel="alternate" hreflang> and sitemap.xml instead).
 */
 (() => {
   'use strict';
 
   const KEY = 'wortschatz-sprache';
+  const CRAWLER = /bot\b|bot\/|spider|crawl|slurp|Google(?:Other|-)|Lighthouse/i;
   // The same places on the page in the other language.
   const ANCHORS = {
     funktionen: 'features',
@@ -64,6 +69,7 @@
     return hash;
   }
 
+  if (CRAWLER.test(navigator.userAgent || '')) return;
   if (cameFromThisSite()) return;
   const wanted = stored() ?? browserLanguage();
   if (!wanted || wanted === current) return;

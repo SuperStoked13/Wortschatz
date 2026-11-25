@@ -181,7 +181,7 @@ cd Downloadseite/server
 node --test test/*.test.mjs
 ```
 
-145 Tests: Bausteine (Adressen, Links, Limits, Templates, Kompression, Neuigkeiten, Sprachen) und der ganze Server mit echten
+151 Tests: Bausteine (Adressen, Links, Limits, Templates, Kompression, Neuigkeiten, Sprachen) und der ganze Server mit echten
 Angriffsversuchen (Path Traversal, gefälschte Links, fremde Origins, Bots, Fluten, langsame Clients,
 abgelaufene Links, hängende Downloads, ersetzte Dateien, falsche Passwörter, gefälschte Login-Cookies,
 falsche GitHub-Links in Manifesten, Besucheradressen über den Socket).
@@ -196,6 +196,15 @@ falsche GitHub-Links in Manifesten, Besucheradressen über den Socket).
   geht nie an den Server), sonst Deutsch, wenn der Browser Deutsch vor Englisch nennt, und sonst Englisch. Links
   innerhalb der Seite leitet es nie um. Was der Server selbst sagt (Fehlerseiten, Login, Meldungen beim Download),
   steht in `server/lib/lang.mjs` und folgt der Seite (`/en…`, auch die vorherige) oder `Accept-Language`.
+  Suchmaschinen und andere Crawler leitet `lang.js` nie um: Google liest Seiten mit einem englischen Browser und sähe
+  sonst jede deutsche Seite als Umleitung auf die englische.
+- Suchmaschinen und KI-Assistenten (`server/lib/seo.mjs`): strukturierte Daten (schema.org, JSON-LD) im Kopf beider
+  Startseiten, `/sitemap.xml`, `/robots.txt` und `/llms.txt` – alles aus den live Releases, ein neues Release
+  aktualisiert sie von selbst. Titel und Beschreibung stehen in den Seiten selbst (`<title>`, `<meta name="description">`).
+  Solange `SITE_PASSWORD` gesetzt ist, nennt `robots.txt` keine Sitemap, und Sitemap und `llms.txt` brauchen die
+  Anmeldung wie die Seiten. Eine neue Seite, die Suchmaschinen finden dürfen, kommt in `PAGES` (`server/lib/app.mjs`) und
+  damit in die Sitemap; eine, die sie nicht finden sollen, bekommt dort `noindex: true` und in der Vorlage
+  `<meta name="robots" content="noindex">` (ein Test prüft, dass beides zusammenpasst).
 - Sprachen der Apps: `server/lib/languages.mjs`. Bis Mac 1.6.2 und Windows 1.4 nur Deutsch, jede neuere Version auch
   Englisch (Releases kommen von `main`). Danach richten sich der Hinweis oben, der Satz im Download-Abschnitt und die
   Zeile «Sprache» jeder Karte – ein neues Release schaltet die Seite von selbst um. Tests: `test/languages.test.mjs`.

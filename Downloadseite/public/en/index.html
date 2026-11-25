@@ -4,12 +4,12 @@
 {{> head}}
   <script src="{{@asset /assets/js/backdrop.js}}" defer></script>
   <script src="{{@asset /assets/js/demo.js}}" defer></script>
-  <title>Wortschatz: a vocabulary trainer for Mac and Windows</title>
-  <meta name="description" content="Wortschatz is a vocabulary trainer for Mac and Windows: multiple choice and typing, flashcards, tests with a Swiss grade and import from lists, PDFs and photos. Free, no account, offline. {{appLanguages.note}}">
+  <title>Wortschatz: free vocabulary trainer for Mac and Windows</title>
+  <meta name="description" content="Free vocabulary trainer for Mac and Windows, no account, works offline: multiple choice, typing, flashcards, tests and import from lists, PDFs and photos. {{appLanguages.note}}">
   <link rel="canonical" href="{{site.origin}}/en">
   <meta property="og:type" content="website">
   <meta property="og:site_name" content="Wortschatz">
-  <meta property="og:title" content="Wortschatz">
+  <meta property="og:title" content="Wortschatz: vocabulary trainer for Mac and Windows">
   <meta property="og:description" content="Learn vocabulary until it sticks. For Mac and Windows, free and without an account.">
   <meta property="og:url" content="{{site.origin}}/en">
   <meta property="og:image" content="{{site.origin}}{{@asset /assets/img/og.png}}">
@@ -19,6 +19,7 @@
   <meta property="og:locale" content="en_GB">
   <meta property="og:locale:alternate" content="de_CH">
   <meta name="twitter:card" content="summary_large_image">
+  <script type="application/ld+json">{{@json seo.schema}}</script>
 </head>
 <body class="home">
 {{> sprite}}
