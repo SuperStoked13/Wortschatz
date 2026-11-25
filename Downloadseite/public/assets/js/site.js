@@ -306,8 +306,7 @@
         copy.classList.remove('is-done');
         if (label) label.textContent = label.dataset.original || TEXT.copy;
       };
-      // A link to this page: at the address it was opened under (the Cloudflare address works where DuckDNS is blocked).
-      const text = copy.hasAttribute('data-copy-page') ? window.location.origin + window.location.pathname : copy.dataset.copy;
+      const text = copy.dataset.copy;
       try {
         await navigator.clipboard.writeText(text);
         copy.classList.add('is-done');
