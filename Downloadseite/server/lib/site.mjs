@@ -2,12 +2,22 @@
 // pre-compressed (brotli, gzip) and versioned by content hash; the HTML templates are
 // compiled and rendered with the release data. Markdown files (the update list) are read
 // as text for the server and never served.
+//
+// Compressing is the expensive part (brotli at quality 11), so it never runs on the event loop:
+// zlib's asynchronous functions work on the libuv thread pool, one file at a time (br and gzip
+// side by side, two of the pool's four threads), so requests and the file reads of running
+// downloads go on meanwhile. And a reload compresses only what is new: the variants are kept
+// by content hash for as long as the latest load still uses them.
 
 import crypto from 'node:crypto';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
+import { promisify } from 'node:util';
 import zlib from 'node:zlib';
 import { compile, render } from './templates.mjs';
+
+const brotliCompress = promisify(zlib.brotliCompress);
+const gzipCompress = promisify(zlib.gzip);
 
 const TYPES = Object.freeze({
   '.css': 'text/css; charset=utf-8',
@@ -33,20 +43,65 @@ function hashOf(buffer) {
   return crypto.createHash('sha256').update(buffer).digest('hex');
 }
 
-/** A servable in-memory file with its compressed variants and ETag. */
-export function makeEntry(body, type, { cacheControl } = {}) {
-  const hash = hashOf(body);
-  const entry = { body, type, hash, version: hash.slice(0, 10), etag: `"${hash.slice(0, 24)}"`, cacheControl };
-  if (COMPRESSIBLE.test(type) && body.length > 600) {
-    const br = zlib.brotliCompressSync(body, {
+// The compressed variants by content hash, in two generations: what the current load used
+// and what the one before used. A new load starts a new generation and takes over what it
+// uses again; whatever it no longer uses is dropped with the generation after it.
+let usedNow = new Map();
+let usedBefore = new Map();
+let compressions = 0;
+
+/** How often a body was compressed since the start (not taken from the cache). */
+export function compressionCount() {
+  return compressions;
+}
+
+/** Starts a new generation of the cache (at the start of every load of the site). */
+function newGeneration() {
+  usedBefore = usedNow;
+  usedNow = new Map();
+}
+
+async function compress(body) {
+  compressions += 1;
+  const [br, gzip] = await Promise.all([
+    brotliCompress(body, {
       params: {
         [zlib.constants.BROTLI_PARAM_QUALITY]: 11,
         [zlib.constants.BROTLI_PARAM_SIZE_HINT]: body.length,
       },
+    }),
+    gzipCompress(body, { level: 9 }),
+  ]);
+  return {
+    br: br.length < body.length * 0.95 ? br : null,
+    gzip: gzip.length < body.length * 0.95 ? gzip : null,
+  };
+}
+
+/** The variants of this body: from the cache, or compressed now (the same body only once at a time). */
+function variantsOf(hash, body) {
+  let variants = usedNow.get(hash) ?? usedBefore.get(hash);
+  if (!variants) {
+    variants = compress(body);
+    // A failure is not kept: the next load tries again.
+    variants.catch(() => {
+      for (const generation of [usedNow, usedBefore]) {
+        if (generation.get(hash) === variants) generation.delete(hash);
+      }
     });
-    const gzip = zlib.gzipSync(body, { level: 9 });
-    if (br.length < body.length * 0.95) entry.br = br;
-    if (gzip.length < body.length * 0.95) entry.gzip = gzip;
+  }
+  usedNow.set(hash, variants);
+  return variants;
+}
+
+/** A servable in-memory file with its compressed variants and ETag. */
+export async function makeEntry(body, type, { cacheControl } = {}) {
+  const hash = hashOf(body);
+  const entry = { body, type, hash, version: hash.slice(0, 10), etag: `"${hash.slice(0, 24)}"`, cacheControl };
+  if (COMPRESSIBLE.test(type) && body.length > 600) {
+    const { br, gzip } = await variantsOf(hash, body);
+    if (br) entry.br = br;
+    if (gzip) entry.gzip = gzip;
   }
   return entry;
 }
@@ -62,14 +117,16 @@ async function walk(dir, base = dir, out = []) {
 }
 
 /**
- * @returns {{
+ * @returns {Promise<{
  *   statics: Map<string, object>,
- *   renderPage: (name: string, context: object) => object,
+ *   has: (name: string) => boolean,
+ *   renderPage: (name: string, context: object) => Promise<object>,
  *   renderHtml: (name: string, context: object) => string,
  *   text: (name: string) => string,
- * }}
+ * }>}
  */
 export async function loadSite(publicDir) {
+  newGeneration();
   const files = await walk(publicDir);
   const statics = new Map();
   const templates = new Map();
@@ -100,7 +157,7 @@ export async function loadSite(publicDir) {
     if (!type) continue; // unknown types are never served
     const body = await fsp.readFile(full);
     if (extension === '.css') styles.push([`/${rel}`, body.toString('utf8')]);
-    else statics.set(`/${rel}`, makeEntry(body, type));
+    else statics.set(`/${rel}`, await makeEntry(body, type));
   }
 
   // Version the url(/assets/…) references inside the stylesheets, then the stylesheets.
@@ -109,7 +166,7 @@ export async function loadSite(publicDir) {
       const entry = statics.get(ref);
       return entry ? `url(${quote}${ref}?v=${entry.version}${quote})` : match;
     });
-    statics.set(urlPath, makeEntry(Buffer.from(versioned, 'utf8'), TYPES['.css']));
+    statics.set(urlPath, await makeEntry(Buffer.from(versioned, 'utf8'), TYPES['.css']));
   }
 
   const env = {
@@ -132,7 +189,7 @@ export async function loadSite(publicDir) {
     has: (name) => templates.has(name),
     text: (name) => texts.get(name) ?? '',
     renderHtml,
-    renderPage(name, context) {
+    async renderPage(name, context) {
       return makeEntry(Buffer.from(renderHtml(name, context), 'utf8'), 'text/html; charset=utf-8', {
         cacheControl: 'no-cache',
       });

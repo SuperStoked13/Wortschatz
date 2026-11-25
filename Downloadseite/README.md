@@ -181,7 +181,7 @@ cd Downloadseite/server
 node --test test/*.test.mjs
 ```
 
-140 Tests: Bausteine (Adressen, Links, Limits, Templates, Neuigkeiten, Sprachen) und der ganze Server mit echten
+145 Tests: Bausteine (Adressen, Links, Limits, Templates, Kompression, Neuigkeiten, Sprachen) und der ganze Server mit echten
 Angriffsversuchen (Path Traversal, gefälschte Links, fremde Origins, Bots, Fluten, langsame Clients,
 abgelaufene Links, hängende Downloads, ersetzte Dateien, falsche Passwörter, gefälschte Login-Cookies,
 falsche GitHub-Links in Manifesten, Besucheradressen über den Socket).

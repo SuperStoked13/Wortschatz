@@ -1,7 +1,9 @@
 // Unit tests for the building blocks: `node --test test/` in the server folder.
 
 import assert from 'node:assert/strict';
+import crypto from 'node:crypto';
 import { describe, it } from 'node:test';
+import zlib from 'node:zlib';
 import { loadConfig } from '../lib/config.mjs';
 import { anonymizeIp, buildTrust, clientIp, expandIpv6, ipKey, isLoopback, networkKey, normalizeIp } from '../lib/net.mjs';
 import { LinkSigner } from '../lib/tokens.mjs';
@@ -9,6 +11,7 @@ import { ConcurrencyGate, DailyBudget, DailyQuota, TokenBucket, WindowCounter, d
 import { compile, escapeHtml, render } from '../lib/templates.mjs';
 import { notModified, parseRange, pickEncoding } from '../lib/http.mjs';
 import { formatSize, githubReleaseUrl } from '../lib/releases.mjs';
+import { compressionCount, makeEntry } from '../lib/site.mjs';
 import { ByteRate } from '../lib/throttle.mjs';
 import { changelogView, compareVersions, parseChangelog } from '../lib/changelog.mjs';
 import { englishLabel, errorText, formatDate, languageOfPath, message, preferredLanguage } from '../lib/lang.mjs';
@@ -475,6 +478,48 @@ describe('http helpers', () => {
   it('formats in Swiss German', () => {
     assert.equal(formatSize(9_437_184), '9.4 MB');
     assert.equal(formatSize(800), '1 KB');
+  });
+});
+
+describe('compressed files', () => {
+  it('compresses the same content only once', async () => {
+    const body = Buffer.from('Wortschatz lernen, Wort für Wort. '.repeat(100));
+    const count = compressionCount();
+    const entry = await makeEntry(body, 'text/css; charset=utf-8');
+    assert.equal(compressionCount(), count + 1);
+    assert.deepEqual(zlib.brotliDecompressSync(entry.br), body);
+    assert.deepEqual(zlib.gunzipSync(entry.gzip), body);
+    const again = await makeEntry(Buffer.from(body), 'text/css; charset=utf-8', { cacheControl: 'no-cache' });
+    assert.equal(compressionCount(), count + 1, 'taken from the cache');
+    assert.equal(again.br, entry.br);
+    assert.equal(again.gzip, entry.gzip);
+    assert.equal(again.etag, entry.etag);
+    assert.equal(again.cacheControl, 'no-cache');
+  });
+
+  it('keeps the event loop running while it compresses', async () => {
+    const body = Buffer.from(crypto.randomBytes(60_000).toString('hex'));
+    let turns = 0;
+    const timer = setInterval(() => (turns += 1), 1);
+    try {
+      const entry = await makeEntry(body, 'text/plain; charset=utf-8');
+      assert.ok(entry.br && entry.gzip);
+    } finally {
+      clearInterval(timer);
+    }
+    assert.ok(turns > 0, 'timers ran while brotli was busy');
+  });
+
+  it('leaves small, binary and incompressible files as they are', async () => {
+    const count = compressionCount();
+    const small = await makeEntry(Buffer.from('kurz'), 'text/plain; charset=utf-8');
+    const image = await makeEntry(Buffer.alloc(5000), 'image/png');
+    assert.equal(compressionCount(), count, 'not even tried');
+    const noise = await makeEntry(crypto.randomBytes(5000), 'text/plain; charset=utf-8');
+    for (const entry of [small, image, noise]) {
+      assert.equal(entry.br, undefined);
+      assert.equal(entry.gzip, undefined);
+    }
   });
 });
 

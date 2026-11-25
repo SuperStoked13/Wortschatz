@@ -250,7 +250,7 @@ export async function createApp(config, log) {
     const pages = new Map();
     for (const [route, { name, lang, other }] of PAGES) {
       const alternates = lang === 'de' ? { de: route, en: other } : { de: other, en: route };
-      pages.set(route, site.renderPage(name, { ...models[lang], page: pageView(lang, other, alternates) }));
+      pages.set(route, await site.renderPage(name, { ...models[lang], page: pageView(lang, other, alternates) }));
     }
     // Templates that are rendered per request: fail now, at start or reload, rather than then.
     for (const lang of ['de', 'en']) {
@@ -258,21 +258,24 @@ export async function createApp(config, log) {
       site.renderHtml(`${prefix}_error`, { ...models[lang], page: pageView(lang, HOME.de), error: { status: 404, title: 'Test', message: 'Test' } });
       site.renderHtml(`${prefix}_login`, { ...models[lang], page: pageView(lang, LOGIN.de, LOGIN), login: { next: '/', wrong: false } });
     }
-    const checksums = makeEntry(Buffer.from(checksumsText(releases, config.origin), 'utf8'), 'text/plain; charset=utf-8', {
+    const checksums = await makeEntry(Buffer.from(checksumsText(releases, config.origin), 'utf8'), 'text/plain; charset=utf-8', {
       cacheControl: 'no-cache',
     });
     return { site, releases, models, pages, checksums };
   }
 
-  let state = await build();
+  // The signature is taken before building: a file that changes while the build runs is then
+  // noticed on the next round of the watcher below, not only when a download finds it replaced.
   let signature = await releasesSignature(config.releasesDir);
+  let state = await build();
   let reloading = null;
 
   function reload(reason) {
     reloading ??= (async () => {
       try {
+        const measured = await releasesSignature(config.releasesDir);
         state = await build();
-        signature = await releasesSignature(config.releasesDir);
+        signature = measured;
         log.info('reload', { reason, mac: Boolean(state.releases.mac), windows: Boolean(state.releases.windows) });
       } catch (error) {
         log.error('reload', { reason, message: error.message });

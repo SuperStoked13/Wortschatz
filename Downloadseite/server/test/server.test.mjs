@@ -18,6 +18,7 @@ import { createApp } from '../lib/app.mjs';
 import { loadConfig } from '../lib/config.mjs';
 import { createHttpServer, listenOnSocket } from '../lib/http.mjs';
 import { createLogger } from '../lib/log.mjs';
+import { compressionCount } from '../lib/site.mjs';
 
 const PUBLIC_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'public');
 const HOST = 'wortschatz.test';
@@ -571,6 +572,56 @@ describe('without releases', () => {
     await s.app.reload('test');
     assert.equal(s.app.state.releases.windows, null);
     assert.equal(s.app.state.releases.mac, null);
+  });
+});
+
+describe('reloading', () => {
+  let s;
+  before(async () => {
+    s = await startServer();
+  });
+  after(() => s.close());
+
+  /** The compressed variants of everything the server sends from memory, by path. */
+  const variants = () => {
+    const { site, pages, checksums } = s.app.state;
+    return new Map([...site.statics, ...pages, ['/checksums.txt', checksums]].map(([where, entry]) => [where, { br: entry.br, gzip: entry.gzip }]));
+  };
+
+  it('compresses nothing again when nothing changed', async () => {
+    const before = variants();
+    assert.ok(before.get('/').br && before.get('/assets/css/site.css').br, 'pages and assets are compressed');
+    const count = compressionCount();
+    await s.app.reload('test');
+    assert.equal(compressionCount(), count);
+    const after = variants();
+    assert.deepEqual([...after.keys()], [...before.keys()]);
+    for (const [where, { br, gzip }] of after) {
+      assert.equal(br, before.get(where).br, `${where}: the same brotli buffer`);
+      assert.equal(gzip, before.get(where).gzip, `${where}: the same gzip buffer`);
+    }
+  });
+
+  it('compresses only the pages a new release changes', async () => {
+    await fs.writeFile(path.join(s.releasesDir, 'Wortschatz-2.0-macOS.dmg'), crypto.randomBytes(1000));
+    await fs.writeFile(path.join(s.releasesDir, 'mac.json'), JSON.stringify({ file: 'Wortschatz-2.0-macOS.dmg', version: '2.0' }));
+    const before = variants();
+    const count = compressionCount();
+    await s.app.reload('test');
+    const after = variants();
+    for (const where of s.app.state.site.statics.keys()) {
+      assert.equal(after.get(where).br, before.get(where).br, `${where}: unchanged`);
+    }
+    assert.notEqual(after.get('/').br, before.get('/').br, 'the home page shows the new version');
+    const changed = [...after].filter(([where, { br }]) => br && br !== before.get(where).br).length;
+    assert.ok(changed > 0 && compressionCount() - count === changed, `${compressionCount() - count} compressed, ${changed} changed`);
+
+    const res = await request(s.port, 'GET', '/', { ip: nextIp(), headers: { 'Accept-Encoding': 'br' } });
+    assert.equal(res.headers['content-encoding'], 'br');
+    const html = zlib.brotliDecompressSync(res.body).toString();
+    assert.match(html, /Version 2\.0/);
+    const gzipped = await request(s.port, 'GET', '/', { ip: nextIp(), headers: { 'Accept-Encoding': 'gzip' } });
+    assert.equal(zlib.gunzipSync(gzipped.body).toString(), html);
   });
 });
 
