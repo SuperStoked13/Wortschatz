@@ -158,8 +158,21 @@ public static class EmptyStateView
             m.HorizontalAlignment = HorizontalAlignment.Center;
             texts.Children.Add(m);
         }
-        var row = Ui.H(12, actions);
-        row.HorizontalAlignment = HorizontalAlignment.Center;
+        StackPanel row;
+        if (AppDevice.IsPhone && actions.Length > 1)
+        {
+            // Phone: four buttons side by side ran off the screen («Alles gemeistert!» showed two of four, 06.11.2026);
+            // one under the other, full width, the main action (the last one) on top.
+            row = Ui.V(10, actions.Reverse().ToArray());
+            foreach (var a in actions) a.HorizontalAlignment = HorizontalAlignment.Stretch;
+            row.HorizontalAlignment = HorizontalAlignment.Stretch;
+            row.MaxWidth = 420;
+        }
+        else
+        {
+            row = Ui.H(12, actions);
+            row.HorizontalAlignment = HorizontalAlignment.Center;
+        }
         var stack = Ui.V(20, symbol, texts, row);
         stack.HorizontalAlignment = HorizontalAlignment.Center;
         stack.VerticalAlignment = VerticalAlignment.Center;

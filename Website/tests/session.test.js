@@ -542,7 +542,7 @@ test('finalStats: accuracy, hardest ordering and missed cards', () => {
   expect(stats.elapsedMs).toBeGreaterThan(0);
 });
 
-test('finalStats: both directions add up per card, ties keep order, max 10', () => {
+test('finalStats: both directions add up per card, ties keep order, every missed card', () => {
   let s = createSession(makeCards(12), { answerWith: 'both', shuffle: false }, { now: T0 });
   // Round 1: every term question missed, every definition question correct except c12:d.
   const results = s.order.map((qid) => qid.endsWith(':d') && qid !== 'c12:d');
@@ -551,9 +551,9 @@ test('finalStats: both directions add up per card, ties keep order, max 10', () 
   expect(stats.total).toBe(24);
   expect(stats.firstTryCorrect).toBe(11);
   expect(stats.accuracy).toBe(11 / 24);
-  expect(stats.hardest).toHaveLength(10);
+  expect(stats.hardest).toHaveLength(12);
   expect(stats.hardest[0]).toEqual({ cardId: 'c12', misses: 2 });
-  expect(stats.hardest.slice(1).map((h) => h.cardId)).toEqual(['c1', 'c2', 'c3', 'c4', 'c5', 'c6', 'c7', 'c8', 'c9']);
+  expect(stats.hardest.slice(1).map((h) => h.cardId)).toEqual(['c1', 'c2', 'c3', 'c4', 'c5', 'c6', 'c7', 'c8', 'c9', 'c10', 'c11']);
   expect(stats.missedCardIds).toHaveLength(12);
   expect(stats.missedCardIds[0]).toBe('c1');
 });

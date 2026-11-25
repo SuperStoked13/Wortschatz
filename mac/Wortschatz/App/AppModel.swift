@@ -21,9 +21,9 @@ import WortschatzCore
 ///
 /// ## Navigation (main window)
 /// - `sidebarSelection` / `route`: change them with `select(_:)`, `showOverview()`,
-///   `showSet(_:)` and the study calls. `route` is `.overview`, `.set(id)`,
-///   `.learn(StudyRequest)` or `.write(StudyRequest)`.
-/// - Study mode: entering `.learn`/`.write` collapses the sidebar (`columnVisibility =
+///   `showSet(_:)` and the study calls. `route` is `.overview`, `.set(id)`, or a study screen:
+///   `.learn`, `.write`, `.flashcards` or `.exam` (each with its `StudyRequest`).
+/// - Study mode: entering a study screen collapses the sidebar (`columnVisibility =
 ///   .detailOnly`); leaving restores the previous visibility.
 ///
 /// ## API for the screens
@@ -43,7 +43,7 @@ import WortschatzCore
 ///   `speak(_:lang:)`.
 /// - Data: `exportBackup()`, `importBackup()` (file chooser → preview sheet),
 ///   `prepareBackupImport(from:)` + `performBackupImport(_:mode:)` for other screens with their
-///   own file chooser (Settings), `showWebMigration()`.
+///   own file chooser (Settings).
 /// - Feedback: `toasts` (`ToastCenter`), `confirm(_:)` for a confirmation alert, `report(_:)`
 ///   for errors.
 @MainActor
@@ -61,12 +61,23 @@ final class AppModel {
     @ObservationIgnored let persistence: Persistence
     let toasts: ToastCenter
 
-    /// Derived view data, rebuilt after every store change.
+    /// Derived view data, rebuilt after every store change. It holds still while a study screen
+    /// is open (see `latestLibrary`).
     private(set) var library: LibrarySnapshot = .empty
+    /// The newest derived data, for the model's own decisions (which session runs, the daily
+    /// streak). `library` follows only once the study screen is left: views kept alive under it
+    /// were rebuilt after every answer and every save of the study clock. On the iPhone the
+    /// Übersicht and the set page under the study screen (2–3 frames each, measured 2026-11-10);
+    /// on the Mac the hidden sidebar (re-filtering every term when a search is left in it), the
+    /// Lernset menu and an open Settings window (2026-11-24).
+    @ObservationIgnored private(set) var latestLibrary: LibrarySnapshot = .empty
     /// Global settings (theme, default study options).
     private(set) var settings: WortschatzCore.Settings = .default
     /// Incremented after every store change.
     private(set) var revision = 0
+    /// «Wiederholungsfragen» and «Nachkontrolle nach Fehlern» as switched now; an open Lernen
+    /// applies a change at once (`AppModel+LearnSwitches`, which alone sets it).
+    var learnSwitches = LearnSwitches.current
 
     // MARK: Navigation
 
@@ -78,9 +89,6 @@ final class AppModel {
     var routeOnScreen: DetailRoute {
         departingRoute ?? route
     }
-    /// The widest the sidebar may be dragged: half the window, so the page beside it always
-    /// keeps at least the other half (`ContentView` updates it with the window's width).
-    var sidebarMaxWidth: CGFloat = 620
     @ObservationIgnored private var columnVisibilityBeforeStudy: NavigationSplitViewVisibility?
     /// The layout is still changing around a study screen (the sidebar sliding away before
     /// Lernen/Schreiben, coming back after it); the incoming screen builds its content once this
@@ -140,10 +148,6 @@ final class AppModel {
     var isChoosingBackup = false
     /// A read backup waiting for the import sheet.
     var backupImport: BackupImportPreview?
-    /// The "Aus der Web-Version übernehmen" sheet.
-    var isShowingWebMigration = false
-    /// A backup chosen in the web migration sheet, waiting for that sheet to close.
-    @ObservationIgnored var stagedBackupImport: BackupImportPreview?
     /// An informational alert (load recovery, errors that need reading).
     var alert: AppAlert?
 
@@ -158,6 +162,7 @@ final class AppModel {
     @ObservationIgnored private var saveFailureToast: ToastCenter.Toast.ID?
     @ObservationIgnored private var unsubscribe: (@Sendable () -> Void)?
     @ObservationIgnored private var terminationObserver: (any NSObjectProtocol)?
+    @ObservationIgnored private var learnSwitchesObserver: (any NSObjectProtocol)?
 
     /// Read-aloud for the whole app (set screens, Learn, Write, the voice samples in Settings):
     /// one synthesizer, so a new utterance always cancels the previous one, and the voice
@@ -171,6 +176,8 @@ final class AppModel {
         self.persistence = persistence
         self.toasts = toasts
         refresh()
+        // A set's own "Soundeffekte" switch mutes the sounds while it is on screen.
+        SoundEffects.shared.currentSetID = { [weak self] in self?.route.setID }
         if persistence == .enabled { flashcardDecks = loadFlashcardDecks() }
         unsubscribe = store.subscribe { [weak self] change in
             self?.storeDidChange(change)
@@ -182,6 +189,7 @@ final class AppModel {
             // Posted on the main thread, synchronously, while the app quits.
             MainActor.assumeIsolated { self?.save() }
         }
+        learnSwitchesObserver = observeLearnSwitches()
         if store.hasUnsavedChanges { scheduleSave() }
         alert = AppAlert(recovery: store.recovery)
     }
@@ -212,8 +220,11 @@ final class AppModel {
         } catch {
             let model = AppModel(store: LibraryStore(backend: MemoryBackend()), persistence: .disabled)
             model.alert = AppAlert(
-                title: "Die Daten können nicht gespeichert werden",
-                message: "Wortschatz findet seinen Speicherort nicht. Änderungen gehen beim Beenden verloren. (\(error.localizedDescription))")
+                title: String(localized: "Die Daten können nicht gespeichert werden"),
+                message: String(
+                    localized:
+                        "Wortschatz findet seinen Speicherort nicht. Änderungen gehen beim Beenden verloren. (\(error.localizedDescription))"
+                ))
             return model
         }
     }
@@ -226,17 +237,21 @@ final class AppModel {
     // MARK: Store changes
 
     private func storeDidChange(_ change: StoreChange) {
-        refresh()
+        refresh(after: change)
         if change.kind == .local { scheduleSave() }
     }
 
     /// Rebuilds the derived data and keeps the navigation valid (a deleted set leaves its screens).
-    private func refresh() {
+    /// `change` (nil = everything) lets sets it did not touch keep their summaries.
+    private func refresh(after change: StoreChange? = nil) {
         #if DEBUG
-        library = DebugTiming.measure("LibrarySnapshot.build") { LibrarySnapshot.build(from: store) }
+        latestLibrary = DebugTiming.measure("LibrarySnapshot.build") {
+            LibrarySnapshot.build(from: store, previous: latestLibrary, change: change)
+        }
         #else
-        library = LibrarySnapshot.build(from: store)
+        latestLibrary = LibrarySnapshot.build(from: store, previous: latestLibrary, change: change)
         #endif
+        if !route.isStudy { library = latestLibrary }
         celebrateDailyStreak()
         let newSettings = store.getSettings()
         if newSettings != settings {
@@ -259,7 +274,7 @@ final class AppModel {
     /// short fanfare, once per day, while studying. A moment late, so it does not sound over
     /// the answer's own chime.
     private func celebrateDailyStreak() {
-        let streak = library.stats.streak
+        let streak = latestLibrary.stats.streak
         guard persistence == .enabled, route.isStudy, streak.today > 0, streak.current > 0 else { return }
         let today = TimeUtil.dateKey(timeZone: store.timeZone)
         guard celebratedStreakDay != today else { return }
@@ -267,8 +282,8 @@ final class AppModel {
         UserDefaults.standard.set(today, forKey: Self.celebratedStreakDayKey)
         let message =
             streak.current == 1
-            ? "Neue Lernserie gestartet – lerne morgen weiter!"
-            : "Lernserie: \(streak.current) Tage in Folge!"
+            ? String(localized: "Neue Lernserie gestartet – lerne morgen weiter!")
+            : String(localized: "Lernserie: \(streak.current) Tage in Folge!")
         Task { @MainActor [weak self] in
             try? await Task.sleep(for: .milliseconds(650))
             guard let self else { return }
@@ -279,7 +294,8 @@ final class AppModel {
 
     // MARK: Saving
 
-    private func scheduleSave() {
+    /// Saves soon (also after the sync took over the server's state, an `.external` change).
+    func scheduleSave() {
         guard persistence == .enabled, saveTask == nil else { return }
         saveTask = Task { [weak self] in
             try? await Task.sleep(for: Self.saveDelay)
@@ -359,10 +375,6 @@ final class AppModel {
     /// The set the window is about (selected in the sidebar, shown or studied).
     var currentSetID: String? { route.setID }
 
-    var currentSet: SetSummary? {
-        currentSetID.flatMap(library.summary(for:))
-    }
-
     /// Sidebar selection: shows the overview or the set (and leaves a running study screen).
     func select(_ item: SidebarItem?) {
         guard let item, item != route.sidebarItem || route.isStudy else { return }
@@ -400,6 +412,8 @@ final class AppModel {
             columnVisibilityBeforeStudy = columnVisibility
             enterStudyLayout(from: oldRoute)
         } else if !newRoute.isStudy, oldRoute.isStudy {
+            // The views that held still under the study screen catch up (`latestLibrary`).
+            library = latestLibrary
             let restored = columnVisibilityBeforeStudy ?? .all
             columnVisibilityBeforeStudy = nil
             leaveStudyLayout(from: oldRoute, restoring: restored)
@@ -541,7 +555,7 @@ final class AppModel {
     /// "Lernen ↩" / "Weiterlernen ↩" (⌘L): continues the running Learn session, else starts one.
     func continueLearn(setID: String) {
         if case let .learn(request) = route, request.setID == setID { return }
-        let running = library.summary(for: setID)?.learn != nil
+        let running = latestLibrary.summary(for: setID)?.learn != nil
         study(.learn, setID: setID, forceNew: !running)
     }
 
@@ -549,7 +563,7 @@ final class AppModel {
     /// starts one.
     func continueWrite(setID: String) {
         if case let .write(request) = route, request.setID == setID { return }
-        let running = library.summary(for: setID)?.write != nil
+        let running = latestLibrary.summary(for: setID)?.write != nil
         study(.write, setID: setID, forceNew: !running)
     }
 
@@ -568,7 +582,7 @@ final class AppModel {
     private func startSession(
         _ mode: StudyMode, setID: String, subset: StudySubset, forceNew: Bool, reviewMastered: Bool = false
     ) {
-        guard forceNew, let summary = library.summary(for: setID) else {
+        guard forceNew, let summary = latestLibrary.summary(for: setID) else {
             study(mode, setID: setID, subset: subset, forceNew: forceNew, reviewMastered: reviewMastered)
             return
         }
@@ -583,17 +597,9 @@ final class AppModel {
             return
         }
         let copy = SubsetConfirmCopy(mode: mode)
-        let what =
-            switch subset {
-            case .starred: "nur die markierten Begriffe"
-            case .learning: "nur die nicht gemeisterten Begriffe"
-            case .missed: "nur die falschen Begriffe"
-            case .cardIds: "nur die ausgewählten Begriffe"
-            case .all: "alle Begriffe"
-            }
         confirm(ConfirmationRequest(
             title: copy.title,
-            message: "\(copy.saved) (\(running.detail)) endet, wenn du jetzt \(what) \(copy.verb). Dein Lernfortschritt bleibt erhalten.",
+            message: copy.message(detail: running.detail, subset: subset),
             confirmLabel: copy.confirmLabel
         ) { [weak self] in
             guard let self else { return }
@@ -610,7 +616,7 @@ final class AppModel {
     /// "Neu starten" next to a running Learn session: same scope; a session with answers
     /// only ends after asking (`restartLearn` in set.js).
     func restartLearn(setID: String) {
-        guard let learn = library.summary(for: setID)?.learn else {
+        guard let learn = latestLibrary.summary(for: setID)?.learn else {
             study(.learn, setID: setID, forceNew: true)
             return
         }
@@ -620,7 +626,8 @@ final class AppModel {
             return
         }
         confirm(ConfirmationRequest(
-            title: "Neu starten?", message: Self.restartSessionMessage(learn.subset), confirmLabel: "Neu starten"
+            title: String(localized: "Neu starten?"), message: Self.restartSessionMessage(learn.subset),
+            confirmLabel: String(localized: "Neu starten")
         ) { [weak self] in
             self?.study(.learn, setID: setID, subset: subset, forceNew: true)
         })
@@ -628,14 +635,14 @@ final class AppModel {
 
     /// "Neu starten" for a running Write session (asks first when it has answers).
     func restartWrite(setID: String) {
-        guard let write = library.summary(for: setID)?.write, write.hasAnswers else {
+        guard let write = latestLibrary.summary(for: setID)?.write, write.hasAnswers else {
             study(.write, setID: setID, forceNew: true)
             return
         }
         confirm(ConfirmationRequest(
-            title: "Neue Runde starten?",
-            message: "Deine gespeicherte Runde (\(write.detail)) endet. Dein Lernfortschritt bleibt erhalten.",
-            confirmLabel: "Neu starten"
+            title: String(localized: "Neue Runde starten?"),
+            message: String(localized: "Deine gespeicherte Runde (\(write.detail)) endet. Dein Lernfortschritt bleibt erhalten."),
+            confirmLabel: String(localized: "Neu starten")
         ) { [weak self] in
             self?.study(.write, setID: setID, forceNew: true)
         })
@@ -643,9 +650,9 @@ final class AppModel {
 
     /// The overview's "Weiterlernen ↩": the latest running session, else the most recent set.
     func resume() {
-        if let item = library.resume {
+        if let item = latestLibrary.resume {
             study(item.mode, setID: item.setID)
-        } else if let first = library.sets.first {
+        } else if let first = latestLibrary.sets.first {
             showSet(first.id)
         } else {
             openEditor(.new)
@@ -690,14 +697,28 @@ final class AppModel {
 
     /// `restartSessionMessage` of learn-model.js.
     static func restartSessionMessage(_ subset: StudySubset) -> String {
-        let what =
-            switch subset {
-            case .starred: "mit allen markierten Begriffen, die noch nicht sitzen"
-            case .missed: "mit allen zuletzt falsch beantworteten Begriffen"
-            case .cardIds: "mit den ausgewählten Begriffen, die noch nicht sitzen"
-            case .all, .learning: "mit allen Begriffen, die noch nicht sitzen"
-            }
-        return "Du beginnst eine neue Lerneinheit \(what). Dein Lernfortschritt bleibt gespeichert."
+        switch subset {
+        case .starred:
+            String(
+                localized:
+                    "Du beginnst eine neue Lerneinheit mit allen markierten Begriffen, die noch nicht sitzen. Dein Lernfortschritt bleibt gespeichert."
+            )
+        case .missed:
+            String(
+                localized:
+                    "Du beginnst eine neue Lerneinheit mit allen zuletzt falsch beantworteten Begriffen. Dein Lernfortschritt bleibt gespeichert."
+            )
+        case .cardIds:
+            String(
+                localized:
+                    "Du beginnst eine neue Lerneinheit mit den ausgewählten Begriffen, die noch nicht sitzen. Dein Lernfortschritt bleibt gespeichert."
+            )
+        case .all, .learning:
+            String(
+                localized:
+                    "Du beginnst eine neue Lerneinheit mit allen Begriffen, die noch nicht sitzen. Dein Lernfortschritt bleibt gespeichert."
+            )
+        }
     }
 
     // MARK: Editor
@@ -712,7 +733,7 @@ final class AppModel {
 
     /// Whether a sheet covers the main window (menu commands for sets and study pause then).
     var isPresentingSheet: Bool {
-        editorRequest != nil || textExport != nil || backupImport != nil || isShowingWebMigration
+        editorRequest != nil || textExport != nil || backupImport != nil
     }
 
     func closeEditor() {
@@ -734,11 +755,11 @@ final class AppModel {
     }
 
     /// Shows an error as a toast (`LibraryStoreError` messages are German already).
-    func report(_ error: any Error, fallback: String = "Etwas ist schiefgelaufen. Bitte versuche es nochmal.") {
+    func report(_ error: any Error, fallback: String = String(localized: "Etwas ist schiefgelaufen. Bitte versuche es nochmal.")) {
         toasts.show(Self.message(for: error, fallback: fallback), tone: .danger, duration: .seconds(6))
     }
 
-    static func message(for error: any Error, fallback: String = "Etwas ist schiefgelaufen. Bitte versuche es nochmal.") -> String {
+    static func message(for error: any Error, fallback: String = String(localized: "Etwas ist schiefgelaufen. Bitte versuche es nochmal.")) -> String {
         if let error = error as? LibraryStoreError { return error.message }
         if let error = error as? BackupFileError { return error.message }
         if let error = error as? LocalizedError, let text = error.errorDescription, !text.isEmpty { return text }
@@ -759,10 +780,6 @@ final class AppModel {
         speech.speak(text, lang: lang)
     }
 
-    func stopSpeaking() {
-        speech.stop()
-    }
-
     // MARK: Undo
 
     var undoManager: UndoManager {
@@ -772,23 +789,76 @@ final class AppModel {
 
 /// The wording of "Laufende Lerneinheit beenden?" per mode (`SUBSET_CONFIRM` in set.js).
 private struct SubsetConfirmCopy {
+    let mode: StudyMode
     let title: String
-    let saved: String
-    let verb: String
     let confirmLabel: String
 
     init(mode: StudyMode) {
+        self.mode = mode
         switch mode {
         case .learn:
-            title = "Laufende Lerneinheit beenden?"
-            saved = "Deine gespeicherte Lerneinheit"
-            verb = "lernst"
-            confirmLabel = "Neu beginnen"
+            title = String(localized: "Laufende Lerneinheit beenden?")
+            confirmLabel = String(localized: "Neu beginnen")
         case .write, .flashcards, .exam:
-            title = "Laufende Runde beenden?"
-            saved = "Deine gespeicherte Runde"
-            verb = "übst"
-            confirmLabel = "Neue Runde starten"
+            title = String(localized: "Laufende Runde beenden?")
+            confirmLabel = String(localized: "Neue Runde starten")
+        }
+    }
+
+    /// "Deine gespeicherte Runde (…) endet, wenn du jetzt nur die markierten Begriffe übst. …",
+    /// one whole sentence per mode and scope.
+    func message(detail: String, subset: StudySubset) -> String {
+        switch (mode, subset) {
+        case (.learn, .starred):
+            String(
+                localized:
+                    "Deine gespeicherte Lerneinheit (\(detail)) endet, wenn du jetzt nur die markierten Begriffe lernst. Dein Lernfortschritt bleibt erhalten."
+            )
+        case (.learn, .learning):
+            String(
+                localized:
+                    "Deine gespeicherte Lerneinheit (\(detail)) endet, wenn du jetzt nur die nicht gemeisterten Begriffe lernst. Dein Lernfortschritt bleibt erhalten."
+            )
+        case (.learn, .missed):
+            String(
+                localized:
+                    "Deine gespeicherte Lerneinheit (\(detail)) endet, wenn du jetzt nur die falschen Begriffe lernst. Dein Lernfortschritt bleibt erhalten."
+            )
+        case (.learn, .cardIds):
+            String(
+                localized:
+                    "Deine gespeicherte Lerneinheit (\(detail)) endet, wenn du jetzt nur die ausgewählten Begriffe lernst. Dein Lernfortschritt bleibt erhalten."
+            )
+        case (.learn, .all):
+            String(
+                localized:
+                    "Deine gespeicherte Lerneinheit (\(detail)) endet, wenn du jetzt alle Begriffe lernst. Dein Lernfortschritt bleibt erhalten."
+            )
+        case (_, .starred):
+            String(
+                localized:
+                    "Deine gespeicherte Runde (\(detail)) endet, wenn du jetzt nur die markierten Begriffe übst. Dein Lernfortschritt bleibt erhalten."
+            )
+        case (_, .learning):
+            String(
+                localized:
+                    "Deine gespeicherte Runde (\(detail)) endet, wenn du jetzt nur die nicht gemeisterten Begriffe übst. Dein Lernfortschritt bleibt erhalten."
+            )
+        case (_, .missed):
+            String(
+                localized:
+                    "Deine gespeicherte Runde (\(detail)) endet, wenn du jetzt nur die falschen Begriffe übst. Dein Lernfortschritt bleibt erhalten."
+            )
+        case (_, .cardIds):
+            String(
+                localized:
+                    "Deine gespeicherte Runde (\(detail)) endet, wenn du jetzt nur die ausgewählten Begriffe übst. Dein Lernfortschritt bleibt erhalten."
+            )
+        case (_, .all):
+            String(
+                localized:
+                    "Deine gespeicherte Runde (\(detail)) endet, wenn du jetzt alle Begriffe übst. Dein Lernfortschritt bleibt erhalten."
+            )
         }
     }
 }
@@ -830,12 +900,18 @@ struct AppAlert: Identifiable {
             return nil
         case .fromBackup:
             self.init(
-                title: "Deine Daten wurden wiederhergestellt",
-                message: "Die Datei mit deinen Lernsets war beschädigt oder fehlte. Wortschatz hat die neueste lesbare Sicherung geladen; die letzten Minuten vor dem Problem können fehlen.")
+                title: String(localized: "Deine Daten wurden wiederhergestellt"),
+                message: String(
+                    localized:
+                        "Die Datei mit deinen Lernsets war beschädigt oder fehlte. Wortschatz hat die neueste lesbare Sicherung geladen; die letzten Minuten vor dem Problem können fehlen."
+                ))
         case .reset:
             self.init(
-                title: "Deine Daten konnten nicht gelesen werden",
-                message: "Die Datei mit deinen Lernsets ist beschädigt, und es gibt keine lesbare Sicherung. Wortschatz startet leer; die beschädigte Datei bleibt als «library-corrupt.json» im Speicherort erhalten. Mit einem Backup kannst du deine Lernsets wiederherstellen.")
+                title: String(localized: "Deine Daten konnten nicht gelesen werden"),
+                message: String(
+                    localized:
+                        "Die Datei mit deinen Lernsets ist beschädigt, und es gibt keine lesbare Sicherung. Wortschatz startet leer; die beschädigte Datei bleibt als «library-corrupt.json» im Speicherort erhalten. Mit einem Backup kannst du deine Lernsets wiederherstellen."
+                ))
         }
     }
 }

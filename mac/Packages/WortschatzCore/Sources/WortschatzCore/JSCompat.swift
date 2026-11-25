@@ -27,20 +27,6 @@ public enum JSCompat {
         return String(scalars[first...last])
     }
 
-    /// JS `s.trimStart()`.
-    public static func trimStart(_ s: String) -> String {
-        let scalars = s.unicodeScalars
-        guard let first = scalars.firstIndex(where: { !isWhitespace($0) }) else { return "" }
-        return String(scalars[first...])
-    }
-
-    /// JS `s.trimEnd()`.
-    public static func trimEnd(_ s: String) -> String {
-        let scalars = s.unicodeScalars
-        guard let last = scalars.lastIndex(where: { !isWhitespace($0) }) else { return "" }
-        return String(scalars[...last])
-    }
-
     // MARK: Numbers
 
     /// JS `Math.round` (half rounds toward +∞). NaN and ±∞ are returned unchanged.
@@ -48,11 +34,6 @@ public enum JSCompat {
         guard x.isFinite else { return x }
         let f = x.rounded(.down)
         return x - f >= 0.5 ? f + 1 : f
-    }
-
-    /// JS `Number.isInteger(x)`.
-    public static func isInteger(_ x: Double) -> Bool {
-        x.isFinite && x == x.rounded(.towardZero)
     }
 
     /// JS `String(x)` / template-literal formatting of a number.
@@ -112,9 +93,6 @@ public enum JSCompat {
     /// JS `s.length` (UTF-16 code units).
     public static func length(_ s: String) -> Int { s.utf16.count }
 
-    /// JS `Array.from(s)` (code points).
-    public static func codePoints(_ s: String) -> [String] { s.unicodeScalars.map { String($0) } }
-
     /// `s.normalize('NFC')`.
     public static func nfc(_ s: String) -> String { s.precomposedStringWithCanonicalMapping }
 
@@ -140,14 +118,6 @@ extension KeyedEncodingContainer {
     /// Encodes `value`, writing an explicit `null` for nil (JS keeps such keys as `null`).
     mutating func encodeNullable<T: Encodable>(_ value: T?, forKey key: Key) throws {
         if let value { try encode(value, forKey: key) } else { try encodeNil(forKey: key) }
-    }
-}
-
-/// Decodes an element and yields nil instead of failing (to skip invalid array entries).
-struct Failable<T: Decodable>: Decodable {
-    let value: T?
-    init(from decoder: any Decoder) throws {
-        value = try? T(from: decoder)
     }
 }
 

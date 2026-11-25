@@ -51,6 +51,19 @@ final class SynonymAssistant {
 
     var isActive: Bool { isEnabled && isAvailable }
 
+    /// On for this set: the setting, Apple Intelligence and the set's own switch (Toleranz in its
+    /// Lernen and Schreiben options). Synonym cards of the set count either way
+    /// (`Synonyms.gradeWithSynonyms`); this only decides about words outside the set.
+    func isActive(forSet setID: String) -> Bool { isActive && Self.isOn(forSet: setID) }
+
+    /// `UserDefaults` key of a set's own switch (false = no synonyms outside this set, on this Mac).
+    static func setKey(_ setID: String) -> String { "\(defaultsKey).\(setID)" }
+
+    /// Whether the set's own switch is on (it is unless switched off).
+    static func isOn(forSet setID: String) -> Bool {
+        UserDefaults.standard.object(forKey: setKey(setID)) as? Bool ?? true
+    }
+
     /// Whether the model is asked about `query`: `ExtendedSynonyms.supports` it and the model
     /// speaks both languages. Chinese depends on the model (`supportsLocale`); Arabic is not
     /// supported by the model (measured 2026-10-15) and has no model name, so it stays off.
@@ -82,13 +95,13 @@ final class SynonymAssistant {
         case .available:
             return nil
         case .unavailable(.appleIntelligenceNotEnabled):
-            return "Schalte Apple Intelligence in den Systemeinstellungen ein, um diese Funktion zu nutzen."
+            return String(localized: "Schalte Apple Intelligence in den Systemeinstellungen ein, um diese Funktion zu nutzen.")
         case .unavailable(.deviceNotEligible):
-            return "Dieser Mac unterstützt Apple Intelligence nicht."
+            return String(localized: "Dieser Mac unterstützt Apple Intelligence nicht.")
         case .unavailable(.modelNotReady):
-            return "Apple Intelligence wird noch geladen – versuch es später nochmals."
+            return String(localized: "Apple Intelligence wird noch geladen – versuch es später nochmals.")
         default:
-            return "Apple Intelligence ist gerade nicht verfügbar."
+            return String(localized: "Apple Intelligence ist gerade nicht verfügbar.")
         }
     }
 
@@ -219,7 +232,7 @@ final class SynonymAssistant {
 
     // MARK: Storage
 
-    private struct Stored: Codable {
+    nonisolated private struct Stored: Codable, Sendable {
         var lists: [String: [String]]
         var confirmed: [String: [String]]
     }
@@ -240,15 +253,16 @@ final class SynonymAssistant {
         confirmed = stored.confirmed
     }
 
-    /// Writes the cache a moment after the last change.
+    /// Writes the cache a moment after the last change; encoded off the main thread (up to 5000
+    /// lists, during Schreiben about once per question).
     private func scheduleSave() {
         saveTask?.cancel()
         saveTask = Task { [weak self] in
             try? await Task.sleep(for: .seconds(2))
-            guard !Task.isCancelled, let self, let url = Self.fileURL,
-                let data = try? JSONEncoder().encode(Stored(lists: lists, confirmed: confirmed))
-            else { return }
+            guard !Task.isCancelled, let self, let url = Self.fileURL else { return }
+            let stored = Stored(lists: lists, confirmed: confirmed)
             await Task.detached(priority: .utility) {
+                guard let data = try? JSONEncoder().encode(stored) else { return }
                 do {
                     try FileManager.default.createDirectory(
                         at: url.deletingLastPathComponent(), withIntermediateDirectories: true)

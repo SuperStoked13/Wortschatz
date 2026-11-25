@@ -41,6 +41,7 @@
   --info-soft: rgb(47 125 225 / 0.12);
   --status-new: #C4C9D4;
   --flame: #F26B1D;
+  --coffee: #9B6B47;
 
   /* Liquid Glass */
   --glass-fill: rgb(255 255 255 / 0.5);
@@ -116,6 +117,7 @@
     --info-soft: rgb(94 162 255 / 0.2);
     --status-new: #5C6272;
     --flame: #FF8A3D;
+    --coffee: #B98563;
 
     --glass-fill: rgb(46 50 64 / 0.4);
     --rim-strong: rgb(255 255 255 / 0.32);
@@ -512,6 +514,28 @@ main,
   filter: brightness(1.06);
 }
 
+/* The language switch: small, and still there when the other links make room on phones. */
+.nav-lang {
+  display: inline-grid;
+  place-items: center;
+  min-width: 40px;
+  height: 32px;
+  padding: 0 9px;
+  border-radius: 999px;
+  color: var(--text-2);
+  font-size: 0.8125rem;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+  text-decoration: none;
+  box-shadow: inset 0 0 0 1px var(--hairline-strong);
+  transition: background-color 0.2s var(--ease-soft), color 0.2s var(--ease-soft);
+}
+
+.nav-lang:hover {
+  color: var(--text);
+  background: rgb(127 127 127 / 0.1);
+}
+
 /* -------------------------------------------------------------- backdrop */
 
 .page-backdrop {
@@ -604,6 +628,184 @@ main,
 
 .hero-note-mobile {
   max-width: 26rem;
+}
+
+/* ------------------------------------------- coffee: a hand-drawn Ko-fi link */
+
+/* One purple for everything drawn (words, arrow, heart), the same as the Ko-fi and download buttons. */
+
+.hero {
+  position: relative;
+}
+
+.coffee {
+  position: absolute;
+  top: calc(var(--nav-h) + clamp(150px, 15vw, 210px));
+  right: max(var(--gutter), calc(50% - 590px));
+  width: 214px;
+  height: 236px;
+  border-radius: 28px;
+  color: var(--text-2);
+  text-align: left;
+  text-decoration: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.hero > a.coffee {
+  animation: fade-in 0.7s var(--ease-soft) 0.8s both;
+}
+
+.coffee:focus-visible {
+  outline: 3px solid var(--accent);
+  outline-offset: 6px;
+}
+
+/* The words in single pen strokes (tools/handschrift.py writes them): every stroke runs the same
+   animation, and its own dash pattern makes it start when the pen gets there. Then the arrow. */
+.coffee-note {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: auto;
+  height: 78px;
+  overflow: visible;
+  fill: none;
+  stroke: var(--accent-fill);
+  stroke-width: 2.1;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  transform: rotate(-7deg);
+  transform-origin: 0 100%;
+  transition: transform 0.35s var(--ease-arrive);
+}
+
+.coffee-note path {
+  stroke-dashoffset: 1001;
+  animation: coffee-draw 1.5s linear 1s forwards;
+}
+
+.coffee-note-de path {
+  animation-duration: 2.3s;
+}
+
+.coffee-arrow {
+  position: absolute;
+  top: 66px;
+  left: 0;
+  width: 120px;
+  height: 130px;
+  overflow: visible;
+  fill: none;
+  stroke: var(--accent-fill);
+  stroke-width: 2.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.coffee-arrow path {
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+  animation: coffee-draw 0.7s var(--ease-soft) 2.7s forwards;
+}
+
+.coffee-arrow .coffee-arrow-head {
+  animation-duration: 0.25s;
+  animation-delay: 3.35s;
+}
+
+.coffee-note-de ~ .coffee-arrow path {
+  animation-delay: 3.5s;
+}
+
+.coffee-note-de ~ .coffee-arrow .coffee-arrow-head {
+  animation-delay: 4.15s;
+}
+
+.coffee-cup {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 128px;
+  transition: transform 0.4s var(--ease-arrive);
+  transform-origin: 50% 90%;
+}
+
+.coffee:hover .coffee-cup {
+  transform: translateY(-3px) rotate(-4deg);
+}
+
+.coffee:hover .coffee-note {
+  transform: rotate(-9deg) scale(1.04);
+}
+
+@keyframes coffee-draw {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+/* The cup, also in the support section: pencil lines on the page's own surfaces. */
+.cup {
+  display: block;
+  width: 100%;
+  height: auto;
+  overflow: visible;
+  fill: none;
+  stroke: var(--text-2);
+  stroke-width: 2.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.cup .cup-fill {
+  fill: var(--surface);
+}
+
+.cup .cup-coffee {
+  fill: var(--coffee);
+  stroke: none;
+}
+
+.cup .cup-shine {
+  stroke: var(--hairline-strong);
+  stroke-width: 2;
+}
+
+.cup .cup-heart {
+  fill: var(--accent-fill);
+  stroke: var(--accent-fill);
+  stroke-width: 1.8;
+}
+
+.cup-steam path {
+  transform-box: fill-box;
+  transform-origin: 50% 100%;
+  stroke: var(--text-3);
+  stroke-width: 2.1;
+  opacity: 0;
+  animation: coffee-steam 4.2s ease-in-out infinite;
+}
+
+.cup-steam path:nth-child(2) {
+  animation-delay: 1.4s;
+}
+
+.cup-steam path:nth-child(3) {
+  animation-delay: 2.8s;
+}
+
+@keyframes coffee-steam {
+  0% {
+    opacity: 0;
+    transform: translateY(9px) scaleX(0.9);
+  }
+  35% {
+    opacity: 0.7;
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-12px) scaleX(1.08);
+  }
 }
 
 /* One orchestrated entrance when the page loads. */
@@ -2794,7 +2996,8 @@ main,
   color: var(--success-text);
 }
 
-.platform .dl-form {
+.platform .dl-form,
+.platform .dl-link {
   margin-top: auto;
 }
 
@@ -2881,6 +3084,62 @@ main,
   color: var(--text);
   font-size: 0.8125rem;
   white-space: nowrap;
+}
+
+/* --------------------------------------------------------------- support */
+
+.support {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: min(760px, 100%);
+  margin: 0 auto;
+  padding: clamp(24px, 4vw, 48px) var(--gutter) clamp(88px, 11vw, 136px);
+  text-align: center;
+}
+
+.support-cup {
+  width: 92px;
+  margin-bottom: 18px;
+}
+
+.support h2 {
+  font-family: var(--font-display);
+  font-size: clamp(2.1rem, 1.3rem + 2.6vw, 3.25rem);
+  font-weight: 700;
+  line-height: 1.04;
+  letter-spacing: -0.032em;
+}
+
+.support-text {
+  max-width: 36rem;
+  margin-top: 18px;
+  color: var(--text-2);
+  font-size: 1.125rem;
+  line-height: 1.6;
+}
+
+.support-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 12px;
+  margin-top: 30px;
+}
+
+.support-actions .i {
+  width: 1.15em;
+  height: 1.15em;
+}
+
+.support-note {
+  width: 100%;
+  max-width: 34rem;
+  margin-top: 34px;
+  padding-top: 26px;
+  border-top: 1px solid var(--hairline);
+  color: var(--text-3);
+  font-size: 0.9375rem;
 }
 
 /* ---------------------------------------------------------------- footer */
@@ -3270,6 +3529,28 @@ main,
 
 /* ------------------------------------------------------------ responsive */
 
+@media (max-width: 1120px) {
+  .coffee {
+    position: relative;
+    top: auto;
+    right: auto;
+    width: 196px;
+    height: 216px;
+    margin-top: 36px;
+  }
+  .coffee-note {
+    height: 70px;
+  }
+  .coffee-arrow {
+    top: 59px;
+    width: 110px;
+    height: 119px;
+  }
+  .coffee-cup {
+    width: 116px;
+  }
+}
+
 @media (max-width: 900px) {
   .keys {
     grid-template-columns: 1fr;
@@ -3399,6 +3680,20 @@ main,
   .is-active > .caret,
   .is-active .caret {
     animation: none;
+  }
+  .coffee-note path,
+  .coffee-arrow path {
+    stroke-dasharray: none;
+    stroke-dashoffset: 0;
+    animation: none;
+  }
+  .cup-steam path {
+    opacity: 0.55;
+    animation: none;
+  }
+  .coffee-note,
+  .coffee-cup {
+    transition: none;
   }
 }
 

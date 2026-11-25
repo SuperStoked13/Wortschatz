@@ -3,6 +3,7 @@ using Avalonia.Automation;
 using Avalonia.Controls;
 using Avalonia.Media;
 using Wortschatz.Core;
+using static Wortschatz.Core.CoreText;
 
 namespace Wortschatz.App.DesignSystem;
 
@@ -58,7 +59,7 @@ public static class SpecialCharacterBar
         // Phone: one line that scrolls sideways (French has 15 – in rows they took three lines of the little room
         // above the on-screen keyboard), with keys big enough for a finger.
         Panel row = phone ? new StackPanel { Orientation = Avalonia.Layout.Orientation.Horizontal, Spacing = 6 } : new WrapPanel { ItemSpacing = 6, LineSpacing = 6 };
-        AutomationProperties.SetName(row, "Sonderzeichen");
+        AutomationProperties.SetName(row, L("Sonderzeichen"));
         foreach (var c in chars)
         {
             var label = new TextBlock { Text = c, FontSize = 16, FontWeight = FontWeight.Medium, HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Center, VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center };
@@ -69,20 +70,44 @@ public static class SpecialCharacterBar
                 BorderBrush = WsTheme.B(p.Hairline), BorderThickness = new Thickness(0.5),
                 Child = label,
             };
-            var button = Ui.Clickable(key, () => SpecialCharacters.Insert(target, c), $"{c} einfügen", 7, Colors.Transparent, Palette.Hex(Ui.Rgb(p.Accent), 0.12), new Thickness(0));
+            var button = Ui.Clickable(key, () => SpecialCharacters.Insert(target, c), L($"{c} einfügen"), 7, Colors.Transparent, Palette.Hex(Ui.Rgb(p.Accent), 0.12), new Thickness(0));
             button.Focusable = false;
             button.PointerEntered += (_, _) => label.Foreground = WsTheme.B(p.Accent);
             button.PointerExited += (_, _) => label.Foreground = WsTheme.B(p.Text);
             row.Children.Add(button);
         }
         if (!phone) return row;
-        return new ScrollViewer
+        var scroller = new ScrollViewer
         {
             Content = row,
             // Tapping a key must not take the keys from the answer field.
             Focusable = false,
             HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Hidden,
             VerticalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled,
+        };
+        // The keys fade out at an edge where more of them follow – a cut-off key alone did not say «swipe for more».
+        scroller.ScrollChanged += (_, _) => scroller.OpacityMask = EdgeFade(scroller);
+        return scroller;
+    }
+
+    /// <summary>A mask that fades the left and/or right edge where the row goes on; null when everything shows.</summary>
+    public static IBrush? EdgeFade(ScrollViewer s)
+    {
+        double width = s.Viewport.Width;
+        if (width <= 0) return null;
+        bool left = s.Offset.X > 1, right = s.Offset.X + width < s.Extent.Width - 1;
+        if (!left && !right) return null;
+        double fade = Math.Min(0.25, 28 / width);
+        var stops = new GradientStops();
+        if (left) { stops.Add(new GradientStop(Colors.Transparent, 0)); stops.Add(new GradientStop(Colors.Black, fade)); }
+        else stops.Add(new GradientStop(Colors.Black, 0));
+        if (right) { stops.Add(new GradientStop(Colors.Black, 1 - fade)); stops.Add(new GradientStop(Colors.Transparent, 1)); }
+        else stops.Add(new GradientStop(Colors.Black, 1));
+        return new LinearGradientBrush
+        {
+            StartPoint = new RelativePoint(0, 0.5, RelativeUnit.Relative),
+            EndPoint = new RelativePoint(1, 0.5, RelativeUnit.Relative),
+            GradientStops = stops,
         };
     }
 }

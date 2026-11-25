@@ -39,12 +39,14 @@ struct OverviewScreen: View {
     /// `leadText` of dashboard.js.
     private var leadText: String {
         let streak = model.library.stats.streak
-        if streak.today > 0 { return "Heute schon \(Labels.plural(streak.today, "Antwort", "Antworten")) – weiter so!" }
-        if streak.current > 0 {
-            return "Lerne heute, damit deine Serie von \(Labels.plural(streak.current, "Tag", "Tagen")) weiterläuft."
+        if streak.today > 0 {
+            return String(localized: "Heute schon \(Labels.plural(streak.today, "Antwort", "Antworten")) – weiter so!")
         }
-        if model.library.resume != nil { return "Mach dort weiter, wo du aufgehört hast." }
-        return "Bereit für ein paar Wörter? Wähle ein Lernset und leg los."
+        if streak.current > 0 {
+            return String(localized: "Lerne heute, damit deine Serie von \(Labels.plural(streak.current, "Tag", "Tagen")) weiterläuft.")
+        }
+        if model.library.resume != nil { return String(localized: "Mach dort weiter, wo du aufgehört hast.") }
+        return String(localized: "Bereit für ein paar Wörter? Wähle ein Lernset und leg los.")
     }
 }
 
@@ -74,15 +76,15 @@ struct OverviewHeader: View {
     static func greeting(_ date: Date, calendar: Calendar = .current) -> String {
         let hour = calendar.component(.hour, from: date)
         switch hour {
-        case 5..<11: return "Guten Morgen"
-        case 11..<18: return "Guten Tag"
-        default: return "Guten Abend"
+        case 5..<11: return String(localized: "Guten Morgen")
+        case 11..<18: return String(localized: "Guten Tag")
+        default: return String(localized: "Guten Abend")
         }
     }
 
     /// "Montag, 12. Oktober".
     static func dayLabel(_ date: Date) -> String {
-        date.formatted(.dateTime.weekday(.wide).day().month(.wide).locale(Locale(identifier: "de_CH")))
+        date.formatted(.dateTime.weekday(.wide).day().month(.wide).locale(AppLanguage.formattingLocale))
     }
 }
 
@@ -97,18 +99,22 @@ struct OverviewStatsRow: View {
         GlassEffectContainer(spacing: Spacing.m) {
             HStack(spacing: Spacing.m) {
                 StatTile(
-                    "Lernserie", value: "\(streak.current)", unit: streak.current == 1 ? "Tag" : "Tage",
+                    String(localized: "Lernserie"), value: "\(streak.current)",
+                    unit: streak.current == 1
+                        ? String(localized: "Tag", comment: "Unit after the streak count: 1 day")
+                        : String(localized: "Tage", comment: "Unit after the streak count: several days"),
                     systemImage: "flame.fill", tint: streak.flameTint, caption: streak.caption
                 )
                 .help(streak.longestHelp)
                 StatTile(
-                    "Heute beantwortet", value: "\(streak.today)", systemImage: "checkmark.bubble.fill",
-                    tint: streak.today > 0 ? Theme.accent : Theme.new.fill, caption: "Letzte 7 Tage: \(stats.week)"
+                    String(localized: "Heute beantwortet"), value: "\(streak.today)", systemImage: "checkmark.bubble.fill",
+                    tint: streak.today > 0 ? Theme.accent : Theme.new.fill,
+                    caption: String(localized: "Letzte 7 Tage: \(stats.week)")
                 )
                 StatTile(
-                    "Begriffe gemeistert", value: "\(stats.mastered)", systemImage: "trophy.fill",
+                    String(localized: "Begriffe gemeistert"), value: "\(stats.mastered)", systemImage: "trophy.fill",
                     tint: stats.mastered > 0 ? Theme.mastered.fill : Theme.new.fill,
-                    caption: "von \(Labels.plural(stats.total, "Begriff", "Begriffen"))"
+                    caption: String(localized: "von \(Labels.plural(stats.total, "Begriff", "Begriffen"))")
                 )
                 .help("Ein Begriff gilt als gemeistert, wenn du ihn zweimal in Folge richtig beantwortest.")
             }
@@ -121,15 +127,15 @@ struct OverviewStatsRow: View {
 extension StudyStreak {
     /// "Heute geschafft", "Heute noch lernen", "Rekord: 9 Tage", …
     var caption: String {
-        if today > 0 { return "Heute geschafft" }
-        if current > 0 { return "Heute noch lernen" }
-        if longest > 0 { return "Rekord: \(Labels.plural(longest, "Tag", "Tage"))" }
-        return "Lerne heute, um zu starten"
+        if today > 0 { return String(localized: "Heute geschafft") }
+        if current > 0 { return String(localized: "Heute noch lernen") }
+        if longest > 0 { return String(localized: "Rekord: \(Labels.plural(longest, "Tag", "Tage"))") }
+        return String(localized: "Lerne heute, um zu starten")
     }
 
     /// "Längste Serie: 9 Tage" (tooltip), empty before the first streak.
     var longestHelp: String {
-        longest > 0 ? "Längste Serie: \(Labels.plural(longest, "Tag", "Tage"))" : ""
+        longest > 0 ? String(localized: "Längste Serie: \(Labels.plural(longest, "Tag", "Tage"))") : ""
     }
 
     /// The flame's colour: lit while a streak runs.

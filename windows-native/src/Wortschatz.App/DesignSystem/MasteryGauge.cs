@@ -4,6 +4,7 @@ using Avalonia.Controls;
 using Avalonia.Layout;
 using Avalonia.Media;
 using Wortschatz.Core;
+using static Wortschatz.Core.CoreText;
 
 namespace Wortschatz.App.DesignSystem;
 
@@ -48,9 +49,10 @@ public sealed class MasteryGauge : Grid
         {
             Size.Small when complete => Icons.Icon(IconName.Check, 9 * scale, p.Mastered.Fill, 3.4),
             Size.Medium when complete => Icons.Icon(IconName.Check, 17 * scale, p.Mastered.Text, 2.6),
-            Size.Medium => Ui.Text($"{percent} %", 11.5 * scale, FontWeight.SemiBold),
-            Size.Large => Centered(Ui.V(0, Centered(Ui.Text($"{percent} %", 30 * scale, FontWeight.Bold, font: WsTheme.Prompt)),
-                Centered(Ui.Text("gemeistert", 12 * scale, color: p.TextSecondary)))),
+            // "60 %" (English "60%", Mac: percentText).
+            Size.Medium => Ui.Text(L($"{percent} %"), 11.5 * scale, FontWeight.SemiBold),
+            Size.Large => Centered(Ui.V(0, Centered(Ui.Text(L($"{percent} %"), 30 * scale, FontWeight.Bold, font: WsTheme.Prompt)),
+                Centered(Ui.Text(L("gemeistert"), 12 * scale, color: p.TextSecondary)))),
             _ => null,
         };
         if (center is not null)
@@ -60,8 +62,8 @@ public sealed class MasteryGauge : Grid
             Children.Add(center);
         }
         IsHitTestVisible = size != Size.Small;
-        AutomationProperties.SetName(this, $"Lernstand: {percent} Prozent gemeistert");
-        if (size != Size.Small) ToolTip.SetTip(this, $"{mastered} gemeistert · {learning} am Lernen · {total - mastered - learning} neu");
+        AutomationProperties.SetName(this, L($"Lernstand: {percent} Prozent gemeistert"));
+        if (size != Size.Small) ToolTip.SetTip(this, L($"{mastered} gemeistert · {learning} am Lernen · {total - mastered - learning} neu"));
     }
 
     public MasteryGauge(SetProgress stats, Size size = Size.Small, double scale = 1) : this(stats.Mastered, stats.Learning, stats.Total, size, scale) { }

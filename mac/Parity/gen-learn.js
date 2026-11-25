@@ -8,6 +8,7 @@
 //                     action; `cards` are the set's cards.
 //   buildChoices      [cards, card, ask, seed, n] → the options (n null = the default).
 //   stageFromProgress [progress] → the stage.
+//   solvedFromProgress [progress] → whether the card was ever answered right.
 //
 // snapshot = {state, current, counts, checkpoint, isRoundOver, isFinished, finalStats, matches}
 //   with matches = matchesProgress(state, tracked progress). After 'answer', 'override' and 'tick'
@@ -69,6 +70,7 @@ import {
   matchesProgress,
   syncProgress,
   stageFromProgress,
+  solvedFromProgress,
 } from '../../Website/src/core/learn.js';
 import { applyAnswer, applyOverride } from '../../Website/src/core/mastery.js';
 import { parseVocab } from '../../Website/src/core/parser.js';
@@ -351,7 +353,7 @@ scenario(null, OPTS, { seed: 1, now: T0 }).emit();
   run.emit();
 }
 
-// a wrong written answer sends the card back to multiple choice
+// a wrong written answer resets the stage but stays written (answered right before)
 {
   const cards = makeCards(5);
   const progress = Object.fromEntries(cards.map((c) => [c.id, progressEntry(1)]));
@@ -664,6 +666,11 @@ scenario(makeCards(3), OPTS, at(6), [ans(true, T0 + SEC), ans(false, T0 + 2 * SE
   // A reset elsewhere makes the cards new again; overrides stay in step.
   scenario(makeCards(4), OPTS, at(38), [ans(false, T0 + SEC), ov(T0 + 2 * SEC), sy(T0 + 3 * SEC, { progress: {} }), sy(T0 + 4 * SEC, { progress: null })]).emit();
   scenario(makeCards(4), OPTS, at(38), [ans(false, T0 + SEC), ov(T0 + 2 * SEC), rs(), sy(T0 + 3 * SEC)]).emit();
+  // Resets of one card and of all between answers (the fuzz below has few of them).
+  for (let k = 0; k < 6; k++) {
+    const id = `c${(k % 5) + 1}`;
+    scenario(makeCards(5), OPTS, at(60 + k), [ans(k % 2 === 0, T0 + SEC), rs(k % 3 ? [id] : undefined), ans(true, T0 + 2 * SEC), rs([id])]).emit();
+  }
 
   // The question type flags.
   const four = makeCards(4);
@@ -800,6 +807,14 @@ function masteredProgress(cards) {
   o.do(nr(t + MIN));
   o.emit();
 
+  // Whole sessions to the end with repetition questions, rechecks and a quarter wrong: near the end a
+  // round's plan has only rechecks left that are not due yet (the round ends; none comes before MIN_GAP).
+  const seventy = makeCards(70);
+  for (const seed of [1]) {
+    const dd = mulberry32(seed + 1000);
+    const session = scenario(seventy, { answerWith: 'both', learn: { roundSize: 15 } }, { ...at(seed), review: true, recheck: true, progress: masteredProgress(seventy.slice(0, 10)) });
+    playOut(session, () => dd() < 0.75, { d: dd, pOverride: 0.1 }).emit();
+  }
 }
 
 // The user's 52-pair list: a full session with mistakes, both directions.
@@ -823,6 +838,32 @@ for (const [seed, answerWith, roundSize] of [
 }
 scenario(USER, OPTS, { ...at(55), subset: 'starred' }).emit();
 scenario(USER, { answerWith: 'both', learn: { roundSize: 50 } }, at(56)).emit();
+
+// Multiple choice only once (24.11.2026): a multiple-choice miss stays multiple choice; a card
+// answered right once (in Learn, by "Ich hatte recht" or in Write mode) is asked written from then
+// on, also after a written miss; a progress reset brings multiple choice back.
+{
+  const two = makeCards(2);
+  const opts = { answerWith: 'term', learn: { roundSize: 4 } };
+  const once = scenario(two, opts, at(12), [ans(false, T0 + SEC), ans(true, T0 + 2 * SEC), ans(true, T0 + 3 * SEC), ans(false, T0 + 4 * SEC)]);
+  once.t = T0 + 4 * SEC;
+  playOut(once, () => true).emit();
+  scenario(two, opts, at(12), [ans(false, T0 + SEC), ov(T0 + 2 * SEC), ans(true, T0 + 3 * SEC)]).emit();
+  const [a] = tick(createLearn(two, opts, { rng: mulberry32(12), now: T0 }), null).order;
+  scenario(two, opts, at(12), [wr(a, true), wr(a, false), sy(T0 + SEC), ans(true, T0 + 2 * SEC), rs([a]), sy(T0 + 3 * SEC)]).emit();
+  // Five cards seen before, some answered right before, some never: mixed rounds to the end.
+  const five = makeCards(5);
+  const seenBefore = { c1: progressEntry(0, 1, 1), c2: progressEntry(0, 0, 2), c3: progressEntry(1), c4: progressEntry(0, 3, 4) };
+  const d = mulberry32(124);
+  playOut(scenario(five, { answerWith: 'both', learn: { roundSize: 6 } }, { ...at(123), progress: seenBefore }), () => d() < 0.6, { d, pOverride: 0.3 }).emit();
+  // A session stored before 24.11.2026 (no `solved`): stage-1 cards count as solved, a stage-0 card
+  // answered right before gets its flag (and written questions) from the next sync.
+  const stored = tick(createLearn(five, opts, { rng: mulberry32(125), now: T0, progress: seenBefore }), null);
+  delete stored.solved;
+  const r = new Run(five, null, { seed: 126, progress: seenBefore }, stored);
+  r.do(sy(T0 + SEC));
+  playOut(r, () => true).emit();
+}
 
 // ---------------------------------------------------------------------------
 // 2. buildChoices and stageFromProgress
@@ -902,6 +943,21 @@ function choicesCase(cards, card, ask, seed, n = null) {
   for (let seed = 1; seed <= 25; seed++) {
     for (const card of scripts) choicesCase(scripts, card, seed % 3 ? 'term' : 'definition', seed);
   }
+  // Word classes and similar options (wordclass.js, tests/learn.test.js): French–German cards of four
+  // classes, then the English, Italian and Spanish lists of tests/fixtures (articles, "to", endings).
+  const mixed = [
+    ['le corps', 'der Körper'], ['la tête', 'der Kopf'], ['le nez', 'die Nase'], ['la bouche', 'der Mund'],
+    ['la dent', 'der Zahn'], ['manger', 'essen'], ['boire', 'trinken'], ['dormir', 'schlafen'],
+    ['se lever', 'aufstehen'], ['lent, lente', 'langsam'], ['rapide', 'schnell'], ['beau, belle', 'schön'],
+    ['gentil, gentille', 'nett'], ['Joyeux Noël!', 'Frohe Weihnachten!'], ['Merci beaucoup!', 'Vielen Dank!'],
+  ].map(([term, definition], i) => ({ id: `m${i + 1}`, term, definition }));
+  for (let seed = 1; seed <= 12; seed++) {
+    for (const card of mixed) choicesCase(mixed, card, seed % 2 ? 'term' : 'definition', seed);
+  }
+  for (const name of ['english-german.txt', 'italian.txt', 'spanish.txt']) {
+    const list = parseVocab(readText(`tests/fixtures/${name}`)).cards.map((c, i) => ({ id: `${name[0]}${i + 1}`, term: c.term, definition: c.definition }));
+    for (let seed = 1; seed <= 15; seed++) choicesCase(list, list[(seed * 5) % list.length], seed % 2 ? 'term' : 'definition', seed);
+  }
 }
 
 for (const p of [
@@ -922,6 +978,10 @@ for (const p of [
   { streak: 1e300 },
 ]) {
   cases.add('stageFromProgress', [p === undefined ? null : p], stageFromProgress(p));
+  cases.add('solvedFromProgress', [p === undefined ? null : p], solvedFromProgress(p));
+}
+for (const p of [progressEntry(0, 1, 1), progressEntry(0, 0, 3), { correct: 2 }, { streak: 1 }, { correct: -1, streak: 0.5 }]) {
+  cases.add('solvedFromProgress', [p], solvedFromProgress(p));
 }
 
 // ---------------------------------------------------------------------------
@@ -1382,6 +1442,17 @@ function restore(d, raw, cards, seed, progress, steps, pCorrect) {
   // With repetition questions and rechecks waiting (stage 2 cards).
   situations.push(spaced(12, { stage: { c1: 2, c2: 2, c3: 1, c4: 2 }, lastAt: waits(['c1', 'c2', 'c3'], [3, 31, 12], 40), clock: 40, extra: { review: { due: ['c4'], results: {} }, recheck: { due: ['c1', 'c2'] }, misses: { c1: 1, c2: 2 } } }));
   situations.push(spaced(5, { stage: { c1: 2, c2: 2, c3: 2, c4: 2, c5: 2 }, lastAt: waits(['c1', 'c2'], [0, 5], 20), clock: 20, extra: { recheck: { due: ['c1', 'c2', 'c3'] }, misses: { c1: 1, c2: 1 } } }));
+  // Rechecks never before MIN_GAP (23.11.2026): only rechecks left that waited fewer – the round ends
+  // (c1 after c2's two questions); one that waited 10 comes; many waiting 15 at the end come although
+  // their wait (30 with so many open) is not reached.
+  situations.push(spaced(2, { stage: { c1: 2 }, lastAt: { c1: 4 }, clock: 10, extra: { recheck: { due: ['c1'] }, misses: { c1: 1 } } }));
+  for (const c2 of [2, 3]) {
+    situations.push(spaced(3, { stage: { c1: 2, c2: 2, c3: 2 }, lastAt: { c1: 9, c2 }, clock: 12, roundSize: 3, extra: { recheck: { due: ['c1', 'c2'] }, misses: { c1: 1, c2: 1 }, review: { due: ['c3'], results: {} } } }));
+  }
+  {
+    const many = makeCards(35).map((c) => c.id);
+    situations.push(spaced(40, { stage: Object.fromEntries(makeCards(40).map((c) => [c.id, 2])), lastAt: Object.fromEntries(many.map((id) => [id, 4])), clock: 20, extra: { recheck: { due: many }, misses: ones(many) } }));
+  }
   // Junk spacing fields.
   situations.push(spaced(6, { stage: { c1: 1 }, lastAt: { c1: -1, c2: 'x', c3: 2.5, ghost: 3, c4: 7 }, clock: 'x', repeats: -2 }));
   situations.push(spaced(6, { stage: { c1: 1 }, lastAt: [1, 2], clock: 2.5, repeats: 1.5 }));

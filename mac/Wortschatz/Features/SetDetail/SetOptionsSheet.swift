@@ -3,8 +3,9 @@ import WortschatzCore
 
 /// The options of a set outside a study session ("Optionen" on the set page): Lernen or
 /// Schreiben, as in the study screens' options, with the note on what this set does differently
-/// from the standard. Every change is stored for the set at once and applies when that mode
-/// starts next. "Fertig" (↩, esc) closes.
+/// from the standard. Every change is stored for the set at once and applies at once, also to a
+/// session already started (`LearnFlow`/`WriteFlow` follow it when it resumes). "Fertig" (↩, esc)
+/// closes.
 struct SetOptionsSheet: View {
     let setID: String
 
@@ -48,9 +49,10 @@ struct SetOptionsSheet: View {
                 case .learn:
                     LearnOptionsSections(
                         options: options, termLang: termLang, defLang: defLang, review: $review, recheck: $recheck,
-                        update: update)
+                        setID: setID, update: update)
                 case .write:
-                    WriteOptionsSections(options: options, termLang: termLang, defLang: defLang, update: update)
+                    WriteOptionsSections(
+                        options: options, termLang: termLang, defLang: defLang, setID: setID, update: update)
                 }
             }
             .formStyle(.grouped)
@@ -64,6 +66,7 @@ struct SetOptionsSheet: View {
                     .buttonStyle(.borderedProminent)
             }
             .controlSize(.large)
+            .buttonBorderShape(.capsule)
             .padding(.horizontal, Spacing.l)
             .padding(.vertical, Spacing.m)
         }
@@ -72,12 +75,13 @@ struct SetOptionsSheet: View {
         .onExitCommand { dismiss() }
     }
 
-    /// Stores a change for this set (`LibraryStore.updateStudyOptions`).
+    /// Stores a change for this set; an option set back to the standard is no longer its own
+    /// (`LibraryStore.updateOwnStudyOptions`).
     private func update(_ patch: StudyOptionsPatch) {
         do {
-            _ = try model.store.updateStudyOptions(setID, patch)
+            _ = try model.store.updateOwnStudyOptions(setID, patch)
         } catch {
-            model.report(error, fallback: "Die Option konnte nicht gespeichert werden.")
+            model.report(error, fallback: String(localized: "Die Option konnte nicht gespeichert werden."))
         }
     }
 }

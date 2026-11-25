@@ -19,8 +19,9 @@ import Foundation
 ///   added or removed, and on import. They are never exported.
 public final class LibraryStore: @unchecked Sendable {
     public static let SCHEMA_VERSION = 1
-    public static let DEFAULT_TITLE = "Unbenanntes Lernset"
-    public static let COPY_SUFFIX = " (Kopie)"
+    /// The title of a set without one, in the app's language (it becomes the set's stored title;
+    /// nothing compares it).
+    public static var DEFAULT_TITLE: String { L("Unbenanntes Lernset") }
 
     public let backend: any StorageBackend
     public let autosave: Bool
@@ -234,7 +235,7 @@ public final class LibraryStore: @unchecked Sendable {
             let t = now()
             var copy = set
             copy.id = newSetId(taken: Set(doc.sets.map(\.id)))
-            copy.title = set.title + Self.COPY_SUFFIX
+            copy.title = L("%@ (Kopie)", set.title)
             copy.cards = StoreSanitizer.buildCards(set.cards.map(CardDraft.init), keepIds: false, makeID: makeID)
             copy.createdAt = t
             copy.updatedAt = t
@@ -466,6 +467,24 @@ public final class LibraryStore: @unchecked Sendable {
         }
     }
 
+    /// A change in a set's options (Lernen's and Schreiben's options, the set's options): like
+    /// `updateStudyOptions`, but an option set back to the standard's value (Einstellungen) is no
+    /// longer the set's own (issue #8, 25.11.2026). Before, «Vorlesen» on and off again kept
+    /// `{audio: false}`: the options said the set followed the standard, yet it stayed silent once
+    /// the standard was switched on. `updateStudyOptions` stays the web app's `mergeStudy` (parity
+    /// with store.json). Same as Windows' `UpdateOwnStudyOptions`.
+    @discardableResult
+    public func updateOwnStudyOptions(_ setId: String, _ patch: StudyOptionsPatch) throws -> StudyOptions {
+        try mutate {
+            let index = try requireSet(setId)
+            let merged = (doc.sets[index].studyOptions ?? StudyOptionsPatch()).merging(patch)
+                .droppingStandard(patch.sanitized(), standard: doc.settings.study)
+            doc.sets[index].studyOptions = merged.isEmpty ? nil : merged
+            written(Key.sets)
+            return getStudyOptions(setId)
+        }
+    }
+
     // MARK: Activity
 
     /// Answers per local day ("YYYY-MM-DD" → count).
@@ -648,6 +667,7 @@ public final class LibraryStore: @unchecked Sendable {
         continuation.onTermination = { _ in unsubscribe() }
         return stream
     }
+
 }
 
 // MARK: - Internals
@@ -774,6 +794,13 @@ extension LibraryStore {
     }
 
     // MARK: Mutations
+
+    /// Runs several write operations as one: a single change notification (and one autosave) at
+    /// the end, and when one of them throws, all of them are undone. A study step writes its
+    /// answer and its session this way, so the app rebuilds its derived data once per answer.
+    public func batch<T>(_ body: () throws -> T) throws -> T {
+        try mutate(body)
+    }
 
     /// Runs one public write operation: groups its changes into a single notification and, at
     /// the outermost level, undoes everything when it throws (or when its autosave fails).

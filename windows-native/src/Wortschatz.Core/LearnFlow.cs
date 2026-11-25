@@ -1,3 +1,5 @@
+using static Wortschatz.Core.CoreText;
+
 namespace Wortschatz.Core;
 
 // Port of LearnFlow.swift: the Learn screen as a pure reducer (spec §6), a port of the screen logic of
@@ -15,7 +17,8 @@ namespace Wortschatz.Core;
 // - Feedback: Enter = Weiter (a correct answer also advances by itself); after multiple choice any key
 //   continues, after a correct written answer any key continues and starts typing the next written answer.
 //   Ctrl+Enter (⌘↩) = "Ich hatte recht" after a written miss.
-// - Copy step (Abtippen, learn.retype): Enter checks the copy field and continues when right.
+// - Copy step (Abtippen, learn.retype): Enter checks the copy field and continues when right; typed out it continues
+//   by itself after a short beat (CopyStep).
 // - Checkpoint: Enter = Weiter zu Runde N. Finish: Enter = Fertig. Esc leaves (back to the set).
 // One key press causes at most one transition: repeats never transition, and presses within
 // INPUT_LOCK_MS after a transition are swallowed.
@@ -74,11 +77,12 @@ public static partial class LearnFlow
     /// <summary>
     /// The question on screen (<c>questionInfo</c> plus the options). Choices: the options on screen (texts from the
     /// current cards; [] for written); StoredChoices: the options as stored in the session; IsReview: a repetition
-    /// question (Wiederholungsfrage) of a card mastered before the session.
+    /// question (Wiederholungsfrage) of a card mastered before the session; IsRecheck: a recheck (Nachkontrolle) of a card
+    /// missed and then mastered in the session.
     /// </summary>
     public sealed record QuestionInfo(string Qid, string CardId, QuestionType Type, AskSide Ask, string Prompt, string Expected,
         Lang PromptLang, Lang AnswerLang, string PromptLabel, string Placeholder, string PlaceholderShort, bool Starred,
-        IReadOnlyList<Choice> Choices, IReadOnlyList<Choice> StoredChoices, bool IsReview = false)
+        IReadOnlyList<Choice> Choices, IReadOnlyList<Choice> StoredChoices, bool IsReview = false, bool IsRecheck = false)
     {
         /// <summary>The question for the synonym check (ExtendedSynonyms).</summary>
         public SynonymQuery SynonymQuery => new(Prompt, Expected, PromptLang, AnswerLang);
@@ -153,6 +157,19 @@ public static partial class LearnFlow
             o["feedback"] = Feedback;
             return JSONValue.Object(o);
         }
+
+        /// <summary>
+        /// The stored session after «Wiederholungsfragen» (review) or «Nachkontrolle nach Fehlern» (recheck) was switched
+        /// (null: not switched): they apply at once to every unfinished session (LearnEngine.SetReview/SetRecheck). Null
+        /// when nothing changes.
+        /// </summary>
+        public SavedLearn? Switching(bool? review = null, bool? recheck = null, IReadOnlyDictionary<string, CardProgress>? progress = null, double? now = null)
+        {
+            var next = State;
+            if (review is { } r) next = LearnEngine.SetReview(next, r, progress, now);
+            if (recheck is { } c) next = LearnEngine.SetRecheck(next, c, now);
+            return ReferenceEquals(next, State) ? null : this with { State = next };
+        }
     }
 
     /// <summary>A confirmation the view shows as an alert (PromptContentOf). Keys are ignored while it is open; answer with Event.PromptAnswered.</summary>
@@ -217,9 +234,15 @@ public static partial class LearnFlow
         public List<Card> Cards { get; set; }
         /// <summary>The study options in effect (tolerance, audio and the copy step apply at once).</summary>
         public StudyOptions Options { get; set; }
-        /// <summary>New sessions ask repetition questions (LearnReview); a running session keeps what it was started with.</summary>
+        /// <summary>
+        /// Sessions ask repetition questions (Wiederholungsfragen, LearnReview). Switched (Event.ReviewChanged, also in the
+        /// options), it applies to the running session at once; a resumed session keeps its own (it may have been started for them).
+        /// </summary>
         public bool Review { get; set; }
-        /// <summary>New sessions have rechecks (LearnRecheck, Nachkontrolle); a running session keeps what it was started with.</summary>
+        /// <summary>
+        /// Sessions have rechecks (Nachkontrolle, LearnRecheck). Switched (Event.RecheckChanged, also in the options), it
+        /// applies to the running session at once, and a resumed session follows it.
+        /// </summary>
         public bool Recheck { get; set; }
         /// <summary>The scope (the session's subset, or the requested one on the message screens).</summary>
         public StudySubset Subset { get; set; }
@@ -240,8 +263,6 @@ public static partial class LearnFlow
         public Prompt? Prompt { get; set; }
         public Overlay? Overlay { get; set; }
         public StudyOptions? OptionsBeforeOverlay { get; set; }
-        public bool? ReviewBeforeOverlay { get; set; }
-        public bool? RecheckBeforeOverlay { get; set; }
         /// <summary>The running auto-advance timer (Effect.ScheduleAutoAdvance), null = none.</summary>
         public int? AutoAdvanceToken { get; set; }
         public int LastToken { get; set; }
@@ -254,6 +275,8 @@ public static partial class LearnFlow
         public int Rejections { get; set; }
         /// <summary>Increases with every transition (new question, feedback, checkpoint, finish, message).</summary>
         public int Transitions { get; set; }
+        /// <summary>«Später» on «Neu starten?» for changed options: the session goes on with its own settings (Windows only).</summary>
+        public KeptOptions? Kept { get; set; }
 
         public State(Phase phase, LearnState? session, string setId, string setTitle, Lang termLang, Lang defLang, IEnumerable<Card> cards,
             StudyOptions options, StudySubset subset, bool review = false, bool recheck = false)
@@ -343,9 +366,9 @@ public static partial class LearnFlow
         public sealed record EditCard(Card Card) : Event;
         /// <summary>The study options changed (options popover or settings).</summary>
         public sealed record OptionsChanged(StudyOptions Options) : Event;
-        /// <summary>"Wiederholungsfragen" was switched (applies to new sessions; see State.Review).</summary>
+        /// <summary>"Wiederholungsfragen" was switched (applies at once; see State.Review).</summary>
         public sealed record ReviewChanged(bool Review) : Event;
-        /// <summary>"Nachkontrolle" was switched (applies to new sessions; see State.Recheck).</summary>
+        /// <summary>"Nachkontrolle" was switched (applies at once; see State.Recheck).</summary>
         public sealed record RecheckChanged(bool Recheck) : Event;
         /// <summary>"Alle wiederholen" on the everything-mastered screen: a session of repetition questions over the scope.</summary>
         public sealed record StartReview : Event;
@@ -403,6 +426,8 @@ public static partial class LearnFlow
         /// <summary>LibraryStore.ToggleStar(setId, cardId).</summary>
         public sealed record ToggleStar(string CardId) : Effect;
         public sealed record Navigate(Destination Destination) : Effect;
+        /// <summary>«Später» on «Neu starten?»: store it for the set on this device (Start's kept). Windows only.</summary>
+        public sealed record KeepOptions(KeptOptions Kept) : Effect;
     }
 
     /// <summary>What a reduction may read besides the state: randomness, the time, the stored progress and synonyms found outside the set.</summary>
@@ -413,7 +438,7 @@ public static partial class LearnFlow
         public double Now { get; set; }
         /// <summary>The set's stored progress (after every effect applied so far).</summary>
         public IReadOnlyDictionary<string, CardProgress> Progress { get; set; }
-        /// <summary>Words with the same meaning that are not in the set (ExtendedSynonyms); none on Windows by default.</summary>
+        /// <summary>Words with the same meaning that are not in the set (ExtendedSynonyms; the app: AppModel.ExtraAnswers).</summary>
         public Func<SynonymQuery, IReadOnlyList<string>> ExtraAnswers { get; set; }
 
         public Env(RNG? rng = null, double? now = null, IReadOnlyDictionary<string, CardProgress>? progress = null,
@@ -432,13 +457,17 @@ public static partial class LearnFlow
     /// Opens the Learn screen for set: resumes saved (with its open "Nicht ganz" screen and the answers given
     /// elsewhere since) unless forceNew, the saved session is finished or a different subset is asked for;
     /// otherwise starts a new session over subset (null = the whole set). A requested subset never silently ends a
-    /// session with answers: it asks first.
+    /// session with answers: it asks first. Options that shape a session changed since it started ask «Neu starten?» unless
+    /// <paramref name="kept"/> says «Später» was answered for them (Windows only, issue #7).
     /// </summary>
     public static (State State, List<Effect> Effects) Start(VocabSet set, IReadOnlyDictionary<string, CardProgress> progress, StudyOptions options,
         SavedLearn? saved = null, StudySubset? subset = null, bool forceNew = false, bool review = false, RNG? rng = null, double? now = null,
-        bool recheck = false)
+        bool recheck = false, KeptOptions? kept = null)
     {
-        var state = new State(Phase.Empty, null, set.Id, set.Title, set.TermLang, set.DefLang, set.Cards, options, subset ?? StudySubset.All, review, recheck);
+        var state = new State(Phase.Empty, null, set.Id, set.Title, set.TermLang, set.DefLang, set.Cards, options, subset ?? StudySubset.All, review, recheck)
+        {
+            Kept = kept,
+        };
         var m = new Machine(state, new Env(rng, now, progress));
         m.Boot(saved, subset, forceNew);
         return m.Result();
@@ -452,18 +481,18 @@ public static partial class LearnFlow
         return m.Result();
     }
 
-    /// <summary>The German label of what Enter does now (for the ↵ hint and the primary button), null when Enter does nothing.</summary>
+    /// <summary>The label of what Enter does now (for the ↵ hint and the primary button), null when Enter does nothing.</summary>
     public static string? ReturnAction(State state)
     {
         if (state.Prompt is not null || state.Overlay is not null) return null;
         return state.Phase.Kind switch
         {
-            PhaseKind.Question => state.Phase.QuestionType == QuestionType.Mc ? (state.Highlighted is null ? null : "Auswählen") : "Antworten",
-            PhaseKind.Feedback or PhaseKind.Copy => "Weiter",
-            PhaseKind.Checkpoint => $"Weiter zu Runde {state.Round + 1}",
-            PhaseKind.Finished => "Fertig",
-            PhaseKind.AllMastered => "Fortschritt zurücksetzen und neu lernen",
-            _ => state.Subset.Equals(StudySubset.All) ? "Begriffe hinzufügen" : "Alle Begriffe üben",
+            PhaseKind.Question => state.Phase.QuestionType == QuestionType.Mc ? (state.Highlighted is null ? null : L("Auswählen")) : L("Antworten"),
+            PhaseKind.Feedback or PhaseKind.Copy => L("Weiter"),
+            PhaseKind.Checkpoint => L($"Weiter zu Runde {state.Round + 1}"),
+            PhaseKind.Finished => L("Fertig"),
+            PhaseKind.AllMastered => L("Fortschritt zurücksetzen und neu lernen"),
+            _ => state.Subset.Equals(StudySubset.All) ? L("Begriffe hinzufügen") : L("Alle Begriffe üben"),
         };
     }
 
@@ -472,7 +501,7 @@ public static partial class LearnFlow
     {
         if (state.Feedback is not { CanOverride: true } f || state.Question?.Type != QuestionType.Written) return null;
         return state.Phase == Phase.FeedbackOf(FeedbackKind.Wrong) || state.Phase == Phase.Copy
-            ? (f.EditedCorrect ? "Als richtig zählen" : "Ich hatte recht")
+            ? (f.EditedCorrect ? L("Als richtig zählen") : L("Ich hatte recht"))
             : null;
     }
 
@@ -503,16 +532,38 @@ public static partial class LearnFlow
     public static PromptContent? PromptContentOf(State state) => state.Prompt switch
     {
         null => null,
-        Prompt.RestartSession => new("Neu starten?", RestartSessionMessage(state.Session?.Subset ?? state.Subset), "Neu starten", "Abbrechen", false),
-        Prompt.RestartForOptions r => new("Neu starten?", RestartMessage(r.Changes), "Neu starten", "Später", false),
-        Prompt.Relearn r => new("Fortschritt zurücksetzen?",
-            $"Der Lernfortschritt {(r.CardIds.Count == 1 ? "dieses Begriffs" : $"dieser {r.CardIds.Count} Begriffe")} wird zurückgesetzt. "
-            + $"Danach lernst du {(r.CardIds.Count == 1 ? "ihn" : "sie")} von vorne – zuerst mit Multiple Choice.", "Zurücksetzen", "Abbrechen", true),
-        Prompt.ReplaceSession r => new("Laufende Lerneinheit beenden?",
-            $"Deine gespeicherte Lerneinheit endet, wenn du jetzt {SubsetWhat(r.Wanted)} lernst. Dein Lernfortschritt bleibt erhalten.",
-            "Neu beginnen", "Fortsetzen", false),
+        Prompt.RestartSession => new(L("Neu starten?"), RestartSessionMessage(state.Session?.Subset ?? state.Subset), L("Neu starten"), L("Abbrechen"), false),
+        Prompt.RestartForOptions r => new(L("Neu starten?"), RestartMessage(r.Changes), L("Neu starten"), L("Später"), false),
+        Prompt.Relearn r => new(L("Fortschritt zurücksetzen?"),
+            r.CardIds.Count == 1
+                ? L("Der Lernfortschritt dieses Begriffs wird zurückgesetzt. Danach lernst du ihn von vorne – zuerst mit Multiple Choice.")
+                : L($"Der Lernfortschritt dieser {r.CardIds.Count} Begriffe wird zurückgesetzt. Danach lernst du sie von vorne – zuerst mit Multiple Choice."),
+            L("Zurücksetzen"), L("Abbrechen"), true),
+        Prompt.ReplaceSession r => new(L("Laufende Lerneinheit beenden?"), ReplaceSessionMessage(r.Wanted), L("Neu beginnen"), L("Fortsetzen"), false),
         _ => null,
     };
+
+    /// <summary>"Laufende Lerneinheit beenden?": one whole sentence per subset.</summary>
+    static string ReplaceSessionMessage(StudySubset wanted) => wanted.Kind switch
+    {
+        StudySubsetKind.All => L("Deine gespeicherte Lerneinheit endet, wenn du jetzt alle Begriffe lernst. Dein Lernfortschritt bleibt erhalten."),
+        StudySubsetKind.Starred => L("Deine gespeicherte Lerneinheit endet, wenn du jetzt nur die markierten Begriffe lernst. Dein Lernfortschritt bleibt erhalten."),
+        StudySubsetKind.Learning => L("Deine gespeicherte Lerneinheit endet, wenn du jetzt nur die nicht gemeisterten Begriffe lernst. Dein Lernfortschritt bleibt erhalten."),
+        StudySubsetKind.Missed => L("Deine gespeicherte Lerneinheit endet, wenn du jetzt nur die zuletzt falsch beantworteten Begriffe lernst. Dein Lernfortschritt bleibt erhalten."),
+        _ => L("Deine gespeicherte Lerneinheit endet, wenn du jetzt eine neue Auswahl lernst. Dein Lernfortschritt bleibt erhalten."),
+    };
+
+    /// <summary>The AllMastered text: one whole sentence per scope.</summary>
+    static string AllMasteredText(StudySubset subset, int count)
+    {
+        if (subset.Equals(StudySubset.Starred))
+            return count == 1
+                ? L("Du beherrschst bereits den markierten Begriff. Wiederhole sie, um zu prüfen, ob sie noch sitzen, setz den Fortschritt zurück, um nochmal von vorne zu lernen, oder übe sie schriftlich.")
+                : L($"Du beherrschst bereits alle {count} markierten Begriffe. Wiederhole sie, um zu prüfen, ob sie noch sitzen, setz den Fortschritt zurück, um nochmal von vorne zu lernen, oder übe sie schriftlich.");
+        return count == 1
+            ? L("Du beherrschst bereits den Begriff. Wiederhole sie, um zu prüfen, ob sie noch sitzen, setz den Fortschritt zurück, um nochmal von vorne zu lernen, oder übe sie schriftlich.")
+            : L($"Du beherrschst bereits alle {count} Begriffe. Wiederhole sie, um zu prüfen, ob sie noch sitzen, setz den Fortschritt zurück, um nochmal von vorne zu lernen, oder übe sie schriftlich.");
+    }
 
     /// <summary>The message screens (Empty, AllMastered). OffersWrite: "Schreiben üben"; OffersReview: "Alle wiederholen" (Event.StartReview).</summary>
     public sealed record MessageContent(string SystemImage, string Title, string Text, string PrimaryLabel, bool OffersWrite, bool OffersReview = false);
@@ -520,20 +571,18 @@ public static partial class LearnFlow
     public static MessageContent? MessageOf(State state)
     {
         if (state.Phase == Phase.AllMastered)
-            return new("trophy.fill", "Alles gemeistert!",
-                $"Du beherrschst bereits {ScopeText(state.Subset, state.ScopeCardIds.Count)}. "
-                + "Wiederhole sie, um zu prüfen, ob sie noch sitzen, setz den Fortschritt zurück, um nochmal von "
-                + "vorne zu lernen, oder übe sie schriftlich.", "Fortschritt zurücksetzen und neu lernen", true, true);
+            return new("trophy.fill", L("Alles gemeistert!"), AllMasteredText(state.Subset, state.ScopeCardIds.Count),
+                L("Fortschritt zurücksetzen und neu lernen"), true, true);
         if (state.Phase != Phase.Empty) return null;
-        const string all = "Alle Begriffe üben";
+        var all = L("Alle Begriffe üben");
         return state.Subset.Kind switch
         {
-            StudySubsetKind.Starred => new("star", "Keine markierten Begriffe", "Markiere schwierige Begriffe mit dem Stern, um sie gezielt zu üben.", all, false),
-            StudySubsetKind.Learning => new("trophy.fill", "Alles gemeistert!",
-                "Du beherrschst bereits alle Begriffe in diesem Lernset. Übe trotzdem alle, damit sie frisch bleiben.", all, false),
-            StudySubsetKind.Missed or StudySubsetKind.CardIds => new("checkmark.circle", "Keine falschen Begriffe", "Hier gibt es gerade nichts nachzuholen.", all, false),
-            _ => new("square.stack.3d.up", "Noch keine Begriffe zum Üben",
-                "Füge diesem Lernset Begriffe mit Übersetzung hinzu, dann kann es losgehen.", "Begriffe hinzufügen", false),
+            StudySubsetKind.Starred => new("star", L("Keine markierten Begriffe"), L("Markiere schwierige Begriffe mit dem Stern, um sie gezielt zu üben."), all, false),
+            StudySubsetKind.Learning => new("trophy.fill", L("Alles gemeistert!"),
+                L("Du beherrschst bereits alle Begriffe in diesem Lernset. Übe trotzdem alle, damit sie frisch bleiben."), all, false),
+            StudySubsetKind.Missed or StudySubsetKind.CardIds => new("checkmark.circle", L("Keine falschen Begriffe"), L("Hier gibt es gerade nichts nachzuholen."), all, false),
+            _ => new("square.stack.3d.up", L("Noch keine Begriffe zum Üben"),
+                L("Füge diesem Lernset Begriffe mit Übersetzung hinzu, dann kann es losgehen."), L("Begriffe hinzufügen"), false),
         };
     }
 }

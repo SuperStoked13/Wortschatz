@@ -341,12 +341,12 @@ public enum Exam {
     /// The results' title by grade.
     public static func verdict(_ grade: Double) -> String {
         switch grade {
-        case 6...: "Perfekt!"
-        case 5.5...: "Hervorragend!"
-        case 5...: "Sehr gut!"
-        case 4.5...: "Gut gemacht!"
-        case 4...: "Bestanden!"
-        default: "Noch nicht genügend"
+        case 6...: L("Perfekt!")
+        case 5.5...: L("Hervorragend!")
+        case 5...: L("Sehr gut!")
+        case 4.5...: L("Gut gemacht!")
+        case 4...: L("Bestanden!")
+        default: L("Noch nicht genügend")
         }
     }
 
@@ -382,51 +382,53 @@ public enum Exam {
     }
 }
 
-/// German texts of the exam settings and results.
+/// Texts of the exam settings and results (German source, translated with `L`).
 public enum ExamCopy {
     /// "Ohne Zeitlimit", "1 Minute", "10 Minuten".
     public static func minutes(_ minutes: Int) -> String {
-        minutes <= 0 ? "Ohne Zeitlimit" : Labels.plural(minutes, "Minute", "Minuten")
+        minutes <= 0 ? L("Ohne Zeitlimit") : Labels.plural(minutes, "Minute", "Minuten")
     }
 
     public static func toleranceTitle(_ tolerance: ExamTolerance) -> String {
         switch tolerance {
-        case .strict: "Streng"
-        case .half: "Halber Punkt"
-        case .lenient: "Grosszügig"
+        case .strict: L("Streng")
+        case .half: L("Halber Punkt")
+        case .lenient: L("Grosszügig")
         }
     }
 
     /// What a small mistake costs.
     public static func toleranceText(_ tolerance: ExamTolerance) -> String {
         switch tolerance {
-        case .strict: "Nur ganz richtige Antworten geben einen Punkt."
-        case .half: "Ein kleiner Fehler kostet einen halben Punkt."
-        case .lenient: "Kleine Fehler kosten nichts."
+        case .strict: L("Nur ganz richtige Antworten geben einen Punkt.")
+        case .half: L("Ein kleiner Fehler kostet einen halben Punkt.")
+        case .lenient: L("Kleine Fehler kosten nichts.")
         }
     }
 
     /// Which mistakes are small.
-    public static let smallMistakesText =
-        "Kleine Fehler sind ein Tippfehler, fehlende Akzente, die Grossschreibung deutscher Nomen und ein fehlender Artikel oder ein fehlendes Pronomen. Ein falscher Artikel ist ein Fehler."
+    public static var smallMistakesText: String {
+        L(
+            "Kleine Fehler sind ein Tippfehler, fehlende Akzente, die Grossschreibung deutscher Nomen und ein fehlender Artikel oder ein fehlendes Pronomen. Ein falscher Artikel ist ein Fehler.")
+    }
 
     /// "17.5 von 20 Punkten".
     public static func scoreLine(_ result: ExamResult) -> String {
-        "\(Exam.pointsText(result.points)) von \(Labels.plural(result.maxPoints, "Punkt", "Punkten"))"
+        L("%@ von %@", Exam.pointsText(result.points), Labels.plural(result.maxPoints, "Punkt", "Punkten"))
     }
 
     /// The mark's label in the results ("Richtig", "Halber Punkt", …).
     public static func markLabel(_ item: ExamItemResult) -> String {
         switch item.mark {
-        case .correct: "Richtig"
+        case .correct: L("Richtig")
         case .minor:
             switch item.points {
-            case 1: "Richtig"
-            case 0.5: "Halber Punkt"
-            default: "Kleiner Fehler"
+            case 1: L("Richtig")
+            case 0.5: L("Halber Punkt")
+            default: L("Kleiner Fehler")
             }
-        case .wrong: "Falsch"
-        case .blank: "Keine Antwort"
+        case .wrong: L("Falsch")
+        case .blank: L("Keine Antwort")
         }
     }
 }

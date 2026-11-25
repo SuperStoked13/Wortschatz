@@ -10,25 +10,27 @@ extension WriteFlow {
     /// The label of the answer field: "Deine Antwort", or "Tippe die richtige Antwort ab" in the
     /// copy step.
     public static func fieldLabel(_ state: State) -> String {
-        state.phase == .copy ? "Tippe die richtige Antwort ab" : "Deine Antwort"
+        state.phase == .copy ? L("Tippe die richtige Antwort ab") : L("Deine Antwort")
     }
 
     /// The placeholder of the answer field (`short` for narrow layouts).
     public static func fieldPlaceholder(_ state: State, short: Bool = false) -> String {
-        if state.phase == .copy { return short ? "Antwort abtippen" : "Richtige Antwort abtippen" }
-        guard let q = state.question else { return "Antwort eingeben" }
+        if state.phase == .copy { return short ? L("Antwort abtippen") : L("Richtige Antwort abtippen") }
+        guard let q = state.question else { return L("Antwort eingeben") }
         return short ? q.placeholderShort : q.placeholder
     }
 
     /// "Runde 2 · nur die Begriffe, die noch nicht sassen" above the card from round 2 on.
     public static func roundNote(_ state: State) -> String? {
         guard state.phase.isCard, let c = counters(state), c.round > 1 else { return nil }
-        return "Runde \(c.round) · nur die Begriffe, die noch nicht sassen"
+        return L("Runde %@ · nur die Begriffe, die noch nicht sassen", "\(c.round)")
     }
 
     /// The VoiceOver label of the sidebar counters.
     public static func countersAccessibilityLabel(_ c: WriteSession.Counters) -> String {
-        "Runde \(c.round): \(c.remaining) verbleibend, \(c.incorrect) falsch, \(c.correct) von \(c.total) richtig"
+        L(
+            "Runde %@: %@ verbleibend, %@ falsch, %@ von %@ richtig", "\(c.round)", "\(c.remaining)", "\(c.incorrect)",
+            "\(c.correct)", "\(c.total)")
     }
 
     /// The answer diff under "Deine Antwort" (write-card.js `diffView`): segments against the
@@ -82,22 +84,24 @@ extension WriteFlow {
 
     /// "Hervorragend!", "Gut gemacht!", "Weiter so!" or "Dranbleiben – das wird!".
     public static func summaryTitle(ratio: Double) -> String {
-        if ratio >= 0.9 { return "Hervorragend!" }
-        if ratio >= 0.7 { return "Gut gemacht!" }
-        if ratio >= 0.4 { return "Weiter so!" }
-        return "Dranbleiben – das wird!"
+        if ratio >= 0.9 { return L("Hervorragend!") }
+        if ratio >= 0.7 { return L("Gut gemacht!") }
+        if ratio >= 0.4 { return L("Weiter so!") }
+        return L("Dranbleiben – das wird!")
     }
 
     /// "Runde 1 geschafft".
     public static func summaryEyebrow(_ summary: WriteSession.RoundSummary) -> String {
-        "Runde \(summary.round) geschafft"
+        L("Runde %@ geschafft", "\(summary.round)")
     }
 
     /// "In Runde 2 übst du nur die 3 Begriffe, die noch nicht sassen."
     public static func summaryText(_ summary: WriteSession.RoundSummary) -> String {
-        let one = summary.incorrect == 1
-        let what = one ? "den Begriff, der" : "die \(summary.incorrect) Begriffe, die"
-        return "In Runde \(summary.round + 1) übst du nur \(what) noch nicht sass\(one ? "" : "en")."
+        summary.incorrect == 1
+            ? L("In Runde %@ übst du nur den Begriff, der noch nicht sass.", "\(summary.round + 1)")
+            : L(
+                "In Runde %@ übst du nur die %@ Begriffe, die noch nicht sassen.", "\(summary.round + 1)",
+                "\(summary.incorrect)")
     }
 
     // MARK: - Results
@@ -110,14 +114,25 @@ extension WriteFlow {
 
     /// The line under "Geschafft!".
     public static func resultsSubtitle(cardCount: Int, accuracy: Double, bothDirections: Bool) -> String {
-        let dir = bothDirections ? " in beide Richtungen" : ""
         if cardCount == 1 {
-            return accuracy >= 1
-                ? "Beim ersten Versuch richtig\(dir) – perfekt!" : "Du hast den Begriff\(dir) richtig geschrieben."
+            if accuracy >= 1 {
+                return bothDirections
+                    ? L("Beim ersten Versuch richtig in beide Richtungen – perfekt!")
+                    : L("Beim ersten Versuch richtig – perfekt!")
+            }
+            return bothDirections
+                ? L("Du hast den Begriff in beide Richtungen richtig geschrieben.")
+                : L("Du hast den Begriff richtig geschrieben.")
         }
         let what = Labels.plural(cardCount, "Begriff", "Begriffe")
-        if accuracy >= 1 { return "Alle \(what)\(dir) beim ersten Versuch richtig – perfekt!" }
-        return "Du hast alle \(what)\(dir) richtig geschrieben."
+        if accuracy >= 1 {
+            return bothDirections
+                ? L("Alle %@ in beide Richtungen beim ersten Versuch richtig – perfekt!", what)
+                : L("Alle %@ beim ersten Versuch richtig – perfekt!", what)
+        }
+        return bothDirections
+            ? L("Du hast alle %@ in beide Richtungen richtig geschrieben.", what)
+            : L("Du hast alle %@ richtig geschrieben.", what)
     }
 
     /// `resultsSubtitle` for the results in `state`.
@@ -129,11 +144,11 @@ extension WriteFlow {
     /// "42 %" for a share (clamped to 0…1).
     public static func percentText(_ value: Double) -> String {
         let v = value.isNaN ? 0 : min(1, max(0, value))
-        return "\(JSCompat.numberToString(JSCompat.round(v * 100))) %"
+        return L("%@ %%", JSCompat.numberToString(JSCompat.round(v * 100)))
     }
 
     /// "Kein einziger Fehler in dieser Lernrunde." (results without misses).
-    public static let flawlessText = "Kein einziger Fehler in dieser Lernrunde."
+    public static var flawlessText: String { L("Kein einziger Fehler in dieser Lernrunde.") }
 
     // MARK: - Messages
 
@@ -154,42 +169,44 @@ extension WriteFlow {
         switch subset {
         case .starred:
             Message(
-                systemImage: "star", title: "Keine markierten Begriffe",
-                text: "Markiere schwierige Begriffe mit dem Stern, um sie gezielt zu üben.",
-                primaryLabel: "Alle Begriffe üben", primaryOpensEditor: false)
+                systemImage: "star", title: L("Keine markierten Begriffe"),
+                text: L("Markiere schwierige Begriffe mit dem Stern, um sie gezielt zu üben."),
+                primaryLabel: L("Alle Begriffe üben"), primaryOpensEditor: false)
         case .learning:
             Message(
-                systemImage: "trophy", title: "Alles gemeistert!",
-                text: "Du beherrschst bereits alle Begriffe in diesem Lernset. "
-                    + "Übe trotzdem alle, damit sie frisch bleiben.",
-                primaryLabel: "Alle Begriffe üben", primaryOpensEditor: false)
+                systemImage: "trophy", title: L("Alles gemeistert!"),
+                text: L(
+                    "Du beherrschst bereits alle Begriffe in diesem Lernset. Übe trotzdem alle, damit sie frisch bleiben."),
+                primaryLabel: L("Alle Begriffe üben"), primaryOpensEditor: false)
         case .missed, .cardIds:
             Message(
-                systemImage: "checkmark.circle", title: "Keine falschen Begriffe",
-                text: "Hier gibt es gerade nichts nachzuholen.", primaryLabel: "Alle Begriffe üben",
+                systemImage: "checkmark.circle", title: L("Keine falschen Begriffe"),
+                text: L("Hier gibt es gerade nichts nachzuholen."), primaryLabel: L("Alle Begriffe üben"),
                 primaryOpensEditor: false)
         case .all:
             Message(
-                systemImage: "square.stack.3d.up", title: "Noch keine Begriffe zum Üben",
-                text: "Füge diesem Lernset Begriffe mit Übersetzung hinzu, dann kann es losgehen.",
-                primaryLabel: "Begriffe hinzufügen", primaryOpensEditor: true)
+                systemImage: "square.stack.3d.up", title: L("Noch keine Begriffe zum Üben"),
+                text: L("Füge diesem Lernset Begriffe mit Übersetzung hinzu, dann kann es losgehen."),
+                primaryLabel: L("Begriffe hinzufügen"), primaryOpensEditor: true)
         }
     }
 
     /// The screen of a set that does not exist (any more).
-    public static let missingMessage = Message(
-        systemImage: "magnifyingglass", title: "Lernset nicht gefunden",
-        text: "Dieses Lernset gibt es nicht mehr. Vielleicht wurde es gelöscht.", primaryLabel: "Zur Übersicht",
-        primaryOpensEditor: false)
+    public static var missingMessage: Message {
+        Message(
+            systemImage: "magnifyingglass", title: L("Lernset nicht gefunden"),
+            text: L("Dieses Lernset gibt es nicht mehr. Vielleicht wurde es gelöscht."), primaryLabel: L("Zur Übersicht"),
+            primaryOpensEditor: false)
+    }
 
     /// What a new round of a named subset asks (`SUBSET_WHAT`), for "Laufende Runde beenden?".
     public static func subsetDescription(_ subset: StudySubset) -> String {
         switch subset {
-        case .all: "alle Begriffe"
-        case .starred: "nur die markierten Begriffe"
-        case .learning: "nur die nicht gemeisterten Begriffe"
-        case .missed: "nur die zuletzt falsch beantworteten Begriffe"
-        case .cardIds: "eine neue Runde"
+        case .all: L("alle Begriffe")
+        case .starred: L("nur die markierten Begriffe")
+        case .learning: L("nur die nicht gemeisterten Begriffe")
+        case .missed: L("nur die zuletzt falsch beantworteten Begriffe")
+        case .cardIds: L("eine neue Runde")
         }
     }
 
@@ -198,16 +215,16 @@ extension WriteFlow {
     /// The editor's field labels: "Begriff · Französisch" / "Definition · Deutsch".
     public static func editorLabels(termLang: Lang, defLang: Lang) -> (term: String, definition: String) {
         (
-            termLang == .other ? "Begriff" : "Begriff · \(Labels.langName(termLang))",
-            defLang == .other ? "Definition" : "Definition · \(Labels.langName(defLang))"
+            termLang == .other ? L("Begriff") : L("Begriff · %@", Labels.langName(termLang)),
+            defLang == .other ? L("Definition") : L("Definition · %@", Labels.langName(defLang))
         )
     }
 
     /// The editor's validation errors for an empty side (nil when the side is fine).
     public static func editorErrors(term: String, definition: String) -> (term: String?, definition: String?) {
         (
-            JSCompat.trim(term).isEmpty ? "Bitte gib den Begriff ein." : nil,
-            JSCompat.trim(definition).isEmpty ? "Bitte gib die Definition ein." : nil
+            JSCompat.trim(term).isEmpty ? L("Bitte gib den Begriff ein.") : nil,
+            JSCompat.trim(definition).isEmpty ? L("Bitte gib die Definition ein.") : nil
         )
     }
 }
@@ -217,38 +234,48 @@ extension WriteFlow {
 extension WriteFlow.Prompt {
     public var title: String {
         switch self {
-        case .restart, .restartForOptions: "Neu starten?"
-        case .replaceRound: "Laufende Runde beenden?"
+        case .restart: L("Neu starten?")
+        case .replaceRound: L("Laufende Runde beenden?")
         }
     }
 
     public var message: String {
         switch self {
         case .restart:
-            "Alle Begriffe dieser Lernrunde werden von vorne abgefragt. Dein Lernfortschritt bleibt gespeichert."
-        case let .restartForOptions(directionChanged, _, _):
-            "\(directionChanged ? "Die neue Abfragerichtung" : "Die neue Reihenfolge") gilt ab einem Neustart. "
-                + "Jetzt neu beginnen? Dein Lernfortschritt bleibt gespeichert."
+            L("Alle Begriffe dieser Lernrunde werden von vorne abgefragt. Dein Lernfortschritt bleibt gespeichert.")
         case let .replaceRound(wanted, _, _):
-            "Deine gespeicherte Runde endet, wenn du jetzt \(WriteFlow.subsetDescription(wanted)) übst. "
-                + "Dein Lernfortschritt bleibt erhalten."
+            // One whole sentence per subset (`WriteFlow.subsetDescription` names them).
+            switch wanted {
+            case .all:
+                L("Deine gespeicherte Runde endet, wenn du jetzt alle Begriffe übst. Dein Lernfortschritt bleibt erhalten.")
+            case .starred:
+                L(
+                    "Deine gespeicherte Runde endet, wenn du jetzt nur die markierten Begriffe übst. Dein Lernfortschritt bleibt erhalten.")
+            case .learning:
+                L(
+                    "Deine gespeicherte Runde endet, wenn du jetzt nur die nicht gemeisterten Begriffe übst. Dein Lernfortschritt bleibt erhalten.")
+            case .missed:
+                L(
+                    "Deine gespeicherte Runde endet, wenn du jetzt nur die zuletzt falsch beantworteten Begriffe übst. Dein Lernfortschritt bleibt erhalten.")
+            case .cardIds:
+                L("Deine gespeicherte Runde endet, wenn du jetzt eine neue Runde übst. Dein Lernfortschritt bleibt erhalten.")
+            }
         }
     }
 
     /// The default button (Return).
     public var confirmLabel: String {
         switch self {
-        case .restart, .restartForOptions: "Neu starten"
-        case .replaceRound: "Neue Runde starten"
+        case .restart: L("Neu starten")
+        case .replaceRound: L("Neue Runde starten")
         }
     }
 
     /// The cancel button (Esc).
     public var cancelLabel: String {
         switch self {
-        case .restart: "Abbrechen"
-        case .restartForOptions: "Später"
-        case .replaceRound: "Runde fortsetzen"
+        case .restart: L("Abbrechen")
+        case .replaceRound: L("Runde fortsetzen")
         }
     }
 }

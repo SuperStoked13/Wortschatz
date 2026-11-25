@@ -9,6 +9,7 @@ using Avalonia.Media;
 using Wortschatz.App.DesignSystem;
 using Wortschatz.App.Features.Study;
 using Wortschatz.Core;
+using static Wortschatz.Core.CoreText;
 using DeckPhase = Wortschatz.Core.FlashcardDeck.DeckPhase;
 
 namespace Wortschatz.App.Features.Flashcards;
@@ -67,7 +68,8 @@ public sealed class FlashcardsStage : Grid
         {
             // The stage's size in 16-point steps, so a live resize does not rebuild it on every frame.
             var stepped = new Size(Math.Round(e.NewSize.Width / 16) * 16, Math.Round(e.NewSize.Height / 16) * 16);
-            if (stepped == _size) return;
+            // Turning the phone briefly reports an empty stage: a negative card width would throw (06.11.2026).
+            if (stepped == _size || stepped.Width < 160 || stepped.Height < 160) return;
             _size = stepped;
             Layout();
         };
@@ -125,7 +127,7 @@ public sealed class FlashcardsStage : Grid
 
     // MARK: Layout
 
-    double ColumnWidth => Math.Min(760, _size.Width - 2 * (AppDevice.IsPhone ? 4 : 32));
+    double ColumnWidth => Math.Max(120, Math.Min(760, _size.Width - 2 * (AppDevice.IsPhone ? 4 : 32)));
 
     /// <summary>The card sits a little below the top row in tall windows and close to it in short ones.</summary>
     double TopInset => AppDevice.IsPhone ? 24 : Math.Max(20, Math.Min(112, (_size.Height - 560) / 2)) * 0.75;
@@ -142,6 +144,8 @@ public sealed class FlashcardsStage : Grid
     }
 
     /// <summary>A new size: the deck is rebuilt for the new card size (no animation).</summary>
+    FlashcardFront? _shownFront;
+
     void Layout()
     {
         _column.Width = ColumnWidth;
@@ -159,6 +163,14 @@ public sealed class FlashcardsStage : Grid
     /// <summary>The controller changed: the deck, the summary and the action bar follow.</summary>
     public void Update(bool animated = true)
     {
+        // Another front side: the card on top was built with the old one and kept it until the next card (06.11.2026).
+        if (_shownFront is { } front && front != _c.Front)
+        {
+            _shownFront = _c.Front;
+            Layout();
+            return;
+        }
+        _shownFront = _c.Front;
         bool empty = Phase == DeckPhase.Empty;
         _scroll.IsVisible = !empty;
         _emptyHost.IsVisible = empty;
@@ -240,7 +252,7 @@ public sealed class FlashcardsStage : Grid
 
     Control BarRow(FlashcardDeck deck, (int Learning, int Known) previous, bool compact)
     {
-        var undo = StudyChrome.FloatingIconButton(IconName.Undo, "Letzte Karte zurückholen (Rücktaste)", _c.Undo);
+        var undo = StudyChrome.FloatingIconButton(IconName.Undo, L("Letzte Karte zurückholen (Rücktaste)"), _c.Undo);
         undo.IsEnabled = deck.CanUndo;
         var trailing = new List<Control?>();
         switch (Phase)
@@ -248,21 +260,38 @@ public sealed class FlashcardsStage : Grid
             case DeckPhase.Card:
                 trailing.Add(SortButton(FlashcardVerdict.StillLearning, deck.LearningCount, previous.Learning, compact));
                 trailing.Add(SortButton(FlashcardVerdict.Know, deck.KnownInRound, previous.Known, compact));
-                trailing.Add(StudyChrome.Floating(Ui.Primary("Umdrehen", _c.Flip, "↵", height: 44)));
+                trailing.Add(StudyChrome.Floating(Ui.Primary(L("Umdrehen"), _c.Flip, "↵", height: 44)));
                 break;
             case DeckPhase.RoundDone:
-                trailing.Add(StudyChrome.Floating(Ui.Secondary("Zurück zum Lernset", _c.Exit, keyHint: "Esc", height: 44)));
+                trailing.Add(StudyChrome.Floating(Ui.Secondary(L("Zurück zum Lernset"), _c.Exit, keyHint: "Esc", height: 44)));
                 trailing.Add(StudyChrome.Floating(Ui.Primary(FlashcardCopy.NextRoundAction(deck), _c.NextRound, "↵", height: 44)));
                 break;
             case DeckPhase.Finished:
-                var learn = StudyChrome.Floating(Ui.Secondary("Lernen", _c.OpenLearn, IconName.Sparkles, height: 44));
-                ToolTip.SetTip(learn, "Die Begriffe jetzt abfragen, damit sie als gemeistert zählen");
+                var learn = StudyChrome.Floating(Ui.Secondary(L("Lernen"), _c.OpenLearn, IconName.Sparkles, height: 44));
+                ToolTip.SetTip(learn, L("Die Begriffe jetzt abfragen, damit sie als gemeistert zählen"));
                 trailing.Add(learn);
-                trailing.Add(StudyChrome.Floating(Ui.Primary("Nochmal von vorne", () => _c.Restart(), "↵", height: 44)));
+                trailing.Add(StudyChrome.Floating(Ui.Primary(L("Nochmal von vorne"), () => _c.Restart(), "↵", height: 44)));
                 break;
         }
         // Phone, after a round or at the end: the two actions share the width, like the other study screens.
         if (AppDevice.IsPhone && Phase != DeckPhase.Card) return StudyActionBarView.Create(null, trailing);
+        // Phone upright: «↺ 0» and «✓ 1» alone were not seen as buttons (Joan's test, 06.11.2026). The two sort buttons
+        // with their words share the width; «Umdrehen» goes – a tap on the card turns it, the card says so.
+        if (AppDevice.IsPhone && Phase == DeckPhase.Card && AppDevice.ViewWidth < 600)
+        {
+            var phoneBar = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*,*"), ColumnSpacing = 8, Margin = new Thickness(0, 8, 0, 12) };
+            phoneBar.Children.Add(undo);
+            var still = SortButton(FlashcardVerdict.StillLearning, deck.LearningCount, previous.Learning, compact: false, phoneLabel: L("Nochmal"));
+            var know = SortButton(FlashcardVerdict.Know, deck.KnownInRound, previous.Known, compact: false, phoneLabel: L("Weiss ich"));
+            still.HorizontalAlignment = know.HorizontalAlignment = HorizontalAlignment.Stretch;
+            Grid.SetColumn(still, 1);
+            Grid.SetColumn(know, 2);
+            phoneBar.Children.Add(still);
+            phoneBar.Children.Add(know);
+            foreach (var b in phoneBar.GetLogicalDescendants().OfType<Button>()) b.Focusable = false;
+            StudyActionBarView.RegisterPhoneBar(phoneBar);
+            return phoneBar;
+        }
         // At most the column's width (the margins keep it there); its natural width decides the compact form.
         var bar = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*,Auto"), ColumnSpacing = AppDevice.IsPhone ? 6 : 12, MaxWidth = 760, Margin = AppDevice.IsPhone ? new Thickness(0, 8, 0, 12) : new Thickness(32, 12, 32, 20) };
         bar.Children.Add(undo);
@@ -279,7 +308,7 @@ public sealed class FlashcardsStage : Grid
     /// the arrow key on the side the card goes to (Mac: FlashcardSortButton); compact without the title. The count pops
     /// when it grows.
     /// </summary>
-    Control SortButton(FlashcardVerdict verdict, int count, int previous, bool compact)
+    Control SortButton(FlashcardVerdict verdict, int count, int previous, bool compact, string? phoneLabel = null)
     {
         var palette = verdict.Palette();
         var badge = new Border
@@ -293,11 +322,13 @@ public sealed class FlashcardsStage : Grid
         var row = Ui.H(8,
             verdict == FlashcardVerdict.StillLearning ? Ui.KeyCap("←") : null,
             Icons.Icon(verdict.Icon(), 17, palette.Fill, 2.6),
-            compact ? null : Ui.Text(verdict.Title(), 14.5, FontWeight.Medium),
+            compact ? null : Ui.Text(phoneLabel ?? verdict.Title(), 14.5, FontWeight.Medium),
             badge,
             verdict == FlashcardVerdict.Know ? Ui.KeyCap("→") : null);
         row.VerticalAlignment = VerticalAlignment.Center;
+        if (phoneLabel is not null) row.HorizontalAlignment = HorizontalAlignment.Center;
         var button = new WsButton(row, ButtonKind.Glass, 44, padding: new Thickness(compact ? 10 : 14, 0));
+        if (phoneLabel is not null) button.HorizontalAlignment = HorizontalAlignment.Stretch;
         button.Click += (_, _) => _c.Sort(verdict);
         ToolTip.SetTip(button, $"{verdict.Title()} ({(verdict == FlashcardVerdict.Know ? "→" : "←")})");
         AutomationProperties.SetName(button, $"{verdict.Title()}: {FlashcardCopy.Cards(count)}");
@@ -331,7 +362,7 @@ public sealed class FlashcardsStage : Grid
         circle.Margin = new Thickness(0, 0, 0, 8);
         Effects.Pop(symbol, 1.22);
 
-        var eyebrow = Ui.Eyebrow(finished ? "Karteikarten" : $"Runde {deck.Round} geschafft", P.TextSecondary);
+        var eyebrow = Ui.Eyebrow(finished ? L("Karteikarten") : L($"Runde {deck.Round} geschafft"), P.TextSecondary);
         eyebrow.HorizontalAlignment = HorizontalAlignment.Center;
         var title = Ui.Text(finished ? FlashcardCopy.FinishedTitle(deck) : FlashcardCopy.RoundDoneTitle(deck), 34, FontWeight.Bold,
             wrap: TextWrapping.Wrap, font: WsTheme.Prompt, align: TextAlignment.Center);
@@ -343,10 +374,10 @@ public sealed class FlashcardsStage : Grid
         text.HorizontalAlignment = HorizontalAlignment.Center;
         var head = Ui.V(12, circle, eyebrow, title, text);
 
-        var tiles = new List<Control> { StatTile.Create("Weiss ich", $"{deck.KnownCount}", IconName.Check, P.Success.Fill) };
-        if (!finished) tiles.Add(StatTile.Create("Lerne ich noch", $"{deck.LearningCount}", IconName.Repeat, P.Learning.Fill));
+        var tiles = new List<Control> { StatTile.Create(L("Weiss ich"), $"{deck.KnownCount}", IconName.Check, P.Success.Fill) };
+        if (!finished) tiles.Add(StatTile.Create(L("Lerne ich noch"), $"{deck.LearningCount}", IconName.Repeat, P.Learning.Fill));
         // Its own symbol (Mac: arrow.trianglehead.2.clockwise), not the one of "Lerne ich noch".
-        tiles.Add(StatTile.Create(deck.Round == 1 ? "Runde" : "Runden", $"{deck.Round}", IconName.RotateCcw, P.Info.Fill));
+        tiles.Add(StatTile.Create(deck.Round == 1 ? L("Runde") : L("Runden"), $"{deck.Round}", IconName.RotateCcw, P.Info.Fill));
         var row = StatTile.Row(12, tiles.ToArray());
         row.MaxWidth = 620;
 
@@ -364,9 +395,9 @@ public sealed class FlashcardsStage : Grid
     /// <summary>No card with text in the set: back to the set, or add terms (Enter). Mac: FlashcardsEmptyView.</summary>
     Control EmptyView()
     {
-        var view = EmptyStateView.Create(IconName.Cards, "Keine Karten zum Umdrehen", "Dieses Lernset hat noch keine Begriffe. Füge welche hinzu, dann geht es los.",
-            Ui.Secondary("Zurück zum Lernset", _c.Exit, keyHint: "Esc", height: 44),
-            Ui.Primary("Begriffe hinzufügen", _c.AddCards, "↵", IconName.Plus));
+        var view = EmptyStateView.Create(IconName.Cards, L("Keine Karten zum Umdrehen"), L("Dieses Lernset hat noch keine Begriffe. Füge welche hinzu, dann geht es los."),
+            Ui.Secondary(L("Zurück zum Lernset"), _c.Exit, keyHint: "Esc", height: 44),
+            Ui.Primary(L("Begriffe hinzufügen"), _c.AddCards, "↵", IconName.Plus));
         view.MaxWidth = 760;
         return view;
     }

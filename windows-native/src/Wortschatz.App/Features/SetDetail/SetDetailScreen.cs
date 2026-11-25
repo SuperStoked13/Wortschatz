@@ -1,7 +1,6 @@
 using Avalonia;
 using Avalonia.Automation;
 using Avalonia.Controls;
-using Avalonia.Controls.Primitives;
 using Avalonia.Controls.Templates;
 using Avalonia.Input;
 using Avalonia.Layout;
@@ -11,6 +10,7 @@ using Avalonia.VisualTree;
 using Wortschatz.App.DesignSystem;
 using Wortschatz.App.Features.Study;
 using Wortschatz.Core;
+using static Wortschatz.Core.CoreText;
 
 namespace Wortschatz.App.Features.SetDetail;
 
@@ -48,7 +48,11 @@ public sealed class SetDetailScreen : Screen
         _filter = FilterKeys.FirstOrDefault(p => p.Value == key, new(Filter.All, "all")).Key;
         View.SizeChanged += (_, e) =>
         {
-            var layout = (e.NewSize.Width < 880, e.NewSize.Height < 700);
+            // Phone: short only in landscape. The keyboard makes the page shorter, and the rebuild for it took the focus from
+            // the search field (the keyboard closed again at once; Joan's test, 06.11.2026).
+            var layout = AppDevice.IsPhone
+                ? (true, e.NewSize.Width > e.NewSize.Height + 100)
+                : (e.NewSize.Width < 880, e.NewSize.Height < 700);
             if (layout == _layout) return;
             _layout = layout;
             Refresh();
@@ -60,17 +64,17 @@ public sealed class SetDetailScreen : Screen
     protected override Control Build()
     {
         if (Model.Summary(_setId) is not { } summary)
-            return EmptyStateView.Create(IconName.Magnifier, "Lernset nicht gefunden", "Dieses Lernset gibt es nicht mehr – vielleicht wurde es gelöscht.",
-                Ui.Primary("Zur Übersicht", Model.ShowOverview, null, IconName.ChevronLeft));
+            return EmptyStateView.Create(IconName.Magnifier, L("Lernset nicht gefunden"), L("Dieses Lernset gibt es nicht mehr – vielleicht wurde es gelöscht."),
+                Ui.Primary(L("Zur Übersicht"), Model.ShowOverview, null, IconName.ChevronLeft));
         var content = new StackPanel { Spacing = _layout.Short ? 12 : 20, Margin = AppDevice.IsPhone ? new Thickness(8, 4, 8, 24) : new Thickness(34, _layout.Short ? 8 : 14, 34, 28) };
         content.Children.Add(Header(summary));
         if (summary.IsEmpty)
         {
             content.Children.Add(Ui.Hero(Ui.V(12,
-                Ui.Text("Noch keine Begriffe", 22, FontWeight.Bold),
-                Ui.Text("Tippe Begriffe ein oder importiere eine Vokabelliste.", 14, color: P.TextSecondary),
-                Ui.H(10, Ui.Primary("Begriffe hinzufügen", () => Model.OpenEditor(_setId), icon: IconName.Plus),
-                    Ui.Secondary("Liste einfügen", () => Model.OpenEditor(_setId, startWithImport: true), IconName.Copy)))));
+                Ui.Text(L("Noch keine Begriffe"), 22, FontWeight.Bold),
+                Ui.Text(L("Tippe Begriffe ein oder importiere eine Vokabelliste."), 14, color: P.TextSecondary),
+                Ui.H(10, Ui.Primary(L("Begriffe hinzufügen"), () => Model.OpenEditor(_setId), icon: IconName.Plus),
+                    Ui.Secondary(L("Liste einfügen"), () => Model.OpenEditor(_setId, startWithImport: true), IconName.Copy)))));
             return Ui.Scroll(content);
         }
         content.Children.Add(StudyActions(summary));
@@ -138,6 +142,7 @@ public sealed class SetDetailScreen : Screen
     public override void Activate()
     {
         base.Activate();
+        Model.PrepareStudy(_setId);
         _factsTimer ??= new DispatcherTimer(TimeSpan.FromMinutes(1), DispatcherPriority.Background, (_, _) =>
         {
             if (_facts is not null && Model.Set(_setId) is { } set) _facts.Text = Facts(set);
@@ -166,7 +171,7 @@ public sealed class SetDetailScreen : Screen
     /// <summary>"52 Begriffe · Zuletzt gelernt vor 2 Tagen" (Mac: SetDetailCopy.facts).</summary>
     string Facts(VocabSet set)
     {
-        var studied = set.LastStudiedAt is { } last ? $"Zuletzt gelernt {TimeUtil.RelativeTime(last, TimeUtil.NowMs(), Model.Store.TimeZone)}" : "Noch nicht gelernt";
+        var studied = set.LastStudiedAt is { } last ? L($"Zuletzt gelernt {TimeUtil.RelativeTime(last, TimeUtil.NowMs(), Model.Store.TimeZone)}") : L("Noch nicht gelernt");
         return $"{StudyCopy.Terms(set.Cards.Count)} · {studied}";
     }
 
@@ -217,7 +222,7 @@ public sealed class SetDetailScreen : Screen
         var chevron = Icons.Icon(IconName.ChevronRight, 11, P.TextTertiary, 2.6);
         Grid.SetColumn(chevron, 3);
         row.Children.Add(chevron);
-        var b = Ui.Clickable(row, () => SetFilter(target), $"{Labels.STATUS[status]}: {StudyCopy.Terms(count)} anzeigen", 7,
+        var b = Ui.Clickable(row, () => ShowFiltered(target), L($"{Labels.STATUS[status]}: {StudyCopy.Terms(count)} anzeigen"), 7,
             _filter == target ? pal.Soft : null, pal.Soft);
         b.Width = 176;
         return b;
@@ -226,10 +231,10 @@ public sealed class SetDetailScreen : Screen
     /// <summary>The caption under the ring (Mac: SetDetailCopy.progressCaption).</summary>
     static string ProgressCaption(SetProgress stats)
     {
-        if (stats.Total == 0) return "Füge Begriffe hinzu, um loszulegen.";
-        if (stats.Mastered == stats.Total) return "Alles gemeistert – grossartig! Wiederhole ab und zu, damit es sitzt.";
-        if (stats.Mastered == 0 && stats.Learning == 0) return "Ein Begriff gilt als gemeistert, wenn du ihn zweimal hintereinander richtig beantwortest.";
-        return $"{stats.Mastered} von {Labels.Plural(stats.Total, "Begriff", "Begriffen")} gemeistert. Zweimal hintereinander richtig zählt als gemeistert.";
+        if (stats.Total == 0) return L("Füge Begriffe hinzu, um loszulegen.");
+        if (stats.Mastered == stats.Total) return L("Alles gemeistert – grossartig! Wiederhole ab und zu, damit es sitzt.");
+        if (stats.Mastered == 0 && stats.Learning == 0) return L("Ein Begriff gilt als gemeistert, wenn du ihn zweimal hintereinander richtig beantwortest.");
+        return L($"{stats.Mastered} von {Labels.Plural(stats.Total, "Begriff", "Begriffen")} gemeistert. Zweimal hintereinander richtig zählt als gemeistert.");
     }
 
     // MARK: Study actions
@@ -240,43 +245,43 @@ public sealed class SetDetailScreen : Screen
         List<Control> Make(double h)
         {
             var list = new List<Control>();
-            var learn = Ui.Primary(summary.Learn is not null ? "Weiterlernen" : "Lernen", () => Model.Study(id, StudyMode.Learn), "↵",
+            var learn = Ui.Primary(summary.Learn is not null ? L("Weiterlernen") : L("Lernen"), () => Model.Study(id, StudyMode.Learn), "↵",
                 summary.Learn is not null ? IconName.Play : IconName.Sparkles, h);
             ToolTip.SetTip(learn, summary.Learn?.Detail ?? LearnTagline(summary.Options) + " (Ctrl+L)");
             list.Add(learn);
-            list.Add(Tip(Ui.Secondary(summary.Write is null ? "Schreiben" : AppDevice.IsPhone ? "Weiterschreiben" : "Schreiben fortsetzen", () => Model.Study(id, StudyMode.Write), IconName.Keyboard, height: h),
-                summary.Write?.Detail ?? $"Jede Karte schriftlich · {WriteAnswerLabel(summary.Set, summary.Options)} (Ctrl+Shift+L)"));
-            list.Add(Tip(Ui.Secondary("Karteikarten", () => Model.Study(id, StudyMode.Flashcards), IconName.Cards, height: h),
-                Model.Preferences.Deck(id) is { IsResumable: true } deck ? FlashcardCopy.RunningDetail(deck) : "Karten umdrehen und sortieren: Weiss ich oder Lerne ich noch (Ctrl+Alt+L)"));
-            list.Add(Tip(Ui.Secondary("Prüfung", () => Model.Study(id, StudyMode.Exam), IconName.Exam, height: h),
-                "Alle Fragen auf einer Seite, mit Zeitlimit und einer Note wie in der Schule (Ctrl+Alt+Shift+L)"));
+            list.Add(Tip(Ui.Secondary(summary.Write is null ? L("Schreiben") : AppDevice.IsPhone ? L("Weiterschreiben") : L("Schreiben fortsetzen"), () => Model.Study(id, StudyMode.Write), IconName.Keyboard, height: h),
+                summary.Write?.Detail ?? L($"Jede Karte schriftlich · {WriteAnswerLabel(summary.Set, summary.Options)} (Ctrl+Shift+L)")));
+            list.Add(Tip(Ui.Secondary(L("Karteikarten"), () => Model.Study(id, StudyMode.Flashcards), IconName.Cards, height: h),
+                Model.Preferences.Deck(id) is { IsResumable: true } deck ? FlashcardCopy.RunningDetail(deck) : L("Karten umdrehen und sortieren: Weiss ich oder Lerne ich noch (Ctrl+Alt+L)")));
+            list.Add(Tip(Ui.Secondary(L("Prüfung"), () => Model.Study(id, StudyMode.Exam), IconName.Exam, height: h),
+                L("Alle Fragen auf einer Seite, mit Zeitlimit und einer Note wie in der Schule (Ctrl+Alt+Shift+L)")));
             if (summary.Starred > 0)
-                list.Add(Tip(Ui.Secondary($"Nur markierte ({summary.Starred})", () => Model.Study(id, StudyMode.Learn, StudySubset.Starred), IconName.StarFilled, height: h),
-                    "Nur die markierten Begriffe lernen"));
+                list.Add(Tip(Ui.Secondary(L($"Nur markierte ({summary.Starred})"), () => Model.Study(id, StudyMode.Learn, StudySubset.Starred), IconName.StarFilled, height: h),
+                    L("Nur die markierten Begriffe lernen")));
             if (summary.DifficultCardIds.Count > 0)
-                list.Add(Tip(Ui.Secondary($"Nur schwierige ({summary.DifficultCardIds.Count})", () => Model.Study(id, StudyMode.Learn, StudySubset.CardIds(summary.DifficultCardIds)), IconName.Flame, height: h),
-                    $"Nur die Begriffe lernen, die du mindestens {SetSummary.DifficultMistakes}× falsch beantwortet hast"));
-            list.Add(Tip(Ui.Secondary("Bearbeiten", () => Model.OpenEditor(id), IconName.Pencil, height: h), "Begriffe hinzufügen oder bearbeiten (Ctrl+E)"));
-            list.Add(Tip(Ui.Secondary("Optionen", () => StudyChrome.ShowSetOptions(Model, id), IconName.Sliders, height: h),
-                "Abfrage, Fragetypen und Toleranz für dieses Lernset"));
+                list.Add(Tip(Ui.Secondary(L($"Nur schwierige ({summary.DifficultCardIds.Count})"), () => Model.Study(id, StudyMode.Learn, StudySubset.CardIds(summary.DifficultCardIds)), IconName.Flame, height: h),
+                    L($"Nur die Begriffe lernen, die du mindestens {SetSummary.DifficultMistakes}× falsch beantwortet hast")));
+            list.Add(Tip(Ui.Secondary(L("Bearbeiten"), () => Model.OpenEditor(id), IconName.Pencil, height: h), L("Begriffe hinzufügen oder bearbeiten (Ctrl+E)")));
+            list.Add(Tip(Ui.Secondary(L("Optionen"), () => StudyChrome.ShowSetOptions(Model, id), IconName.Sliders, height: h),
+                L("Abfrage, Fragetypen und Toleranz für dieses Lernset")));
             list.Add(MoreButton(summary, h));
             return list;
         }
         Control buttons = AppDevice.IsPhone ? PhoneActions(Make(46)) : new AdaptiveRow(mode => Make(mode == AdaptiveRow.Mode.Large ? 44 : 36));
 
         var lines = new StackPanel { Spacing = 6 };
-        if (summary.Learn is { } l) lines.Children.Add(Running(IconName.Sparkles, $"Lernen läuft: {l.Detail}", l.ProgressValue));
-        if (summary.Write is { } w) lines.Children.Add(Running(IconName.Keyboard, $"Schreiben läuft: {w.Detail}", w.ProgressValue));
-        if (Model.Preferences.Deck(id) is { IsResumable: true } d) lines.Children.Add(Running(IconName.Cards, $"Karteikarten: {FlashcardCopy.RunningDetail(d)}", d.KnownShare));
+        if (summary.Learn is { } l) lines.Children.Add(Running(IconName.Sparkles, L($"Lernen läuft: {l.Detail}"), l.ProgressValue));
+        if (summary.Write is { } w) lines.Children.Add(Running(IconName.Keyboard, L($"Schreiben läuft: {w.Detail}"), w.ProgressValue));
+        if (Model.Preferences.Deck(id) is { IsResumable: true } d) lines.Children.Add(Running(IconName.Cards, L($"Karteikarten: {FlashcardCopy.RunningDetail(d)}"), d.KnownShare));
         if (!_layout.Short)
         {
             lines.Children.Add(Note(IconName.Info, StudyNote(summary.Set, summary.Options)));
             // The options this set has of its own (they differ from Einstellungen; "Optionen" shows and resets them).
             var own = LearnOptionsCopy.Deviations(summary.Options, Model.Store.GetSettings().Study,
                 LearnOptionsCopy.SideNames(summary.Set.TermLang, summary.Set.DefLang), summary.Set.TermLang);
-            if (own.Count > 0) lines.Children.Add(Note(IconName.Sliders, $"Eigene Optionen: {string.Join(" · ", own)}"));
+            if (own.Count > 0) lines.Children.Add(Note(IconName.Sliders, L($"Eigene Optionen: {string.Join(" · ", own)}")));
             if (summary.Starred == 0 && summary.Learn is null)
-                lines.Children.Add(Note(IconName.Lightbulb, "Markiere schwierige Begriffe mit dem Stern, um sie gezielt zu üben."));
+                lines.Children.Add(Note(IconName.Lightbulb, L("Markiere schwierige Begriffe mit dem Stern, um sie gezielt zu üben.")));
         }
         return Ui.V(12, buttons, lines);
     }
@@ -335,7 +340,7 @@ public sealed class SetDetailScreen : Screen
 
     Control MoreButton(SetSummary summary, double size)
     {
-        var button = Ui.IconButton(IconName.More, "Weitere Aktionen", () => { }, size);
+        var button = Ui.IconButton(IconName.More, L("Weitere Aktionen"), () => { }, size);
         // The dots need a heavier stroke to read at this size (Mac: SF Symbol "ellipsis").
         if (button.Chrome.Child is Border { Child: Viewbox { Child: Canvas canvas } }) foreach (var path in canvas.Children.OfType<Avalonia.Controls.Shapes.Path>()) path.StrokeThickness = 3.2;
         button.Click += (_, _) =>
@@ -367,57 +372,77 @@ public sealed class SetDetailScreen : Screen
 
     // MARK: Copy (Mac: SetDetailCopy)
 
-    static (string Seen, string Answered) SideName(Lang lang, bool term, bool same)
+    /// <summary>
+    /// <c>directionText(answerWith, termLang, defLang, 'learn')</c> with the side names of <c>sideNames</c>
+    /// (study-options.js), one whole sentence per case: "Du siehst Deutsch und antwortest auf Französisch." (Mac:
+    /// SetDetailCopy.learnDirection).
+    /// </summary>
+    static string LearnDirection(AnswerWith answerWith, Lang termLang, Lang defLang)
     {
-        if (same) return term ? ("den Begriff", "mit dem Begriff") : ("die Definition", "mit der Definition");
-        if (lang != Lang.Other) return (Labels.LangName(lang), $"auf {Labels.LangName(lang)}");
-        return term ? ("den Begriff in der Lernsprache", "in der Lernsprache") : ("die Übersetzung", "mit der Übersetzung");
+        if (answerWith == AnswerWith.Both) return L("Die Richtung wechselt zufällig von Frage zu Frage.");
+        if (termLang != Lang.Other && termLang == defLang)
+            return answerWith == AnswerWith.Definition
+                ? L("Du siehst den Begriff und antwortest mit der Definition.")
+                : L("Du siehst die Definition und antwortest mit dem Begriff.");
+        string? term = termLang != Lang.Other ? Labels.LangName(termLang) : null;
+        string? definition = defLang != Lang.Other ? Labels.LangName(defLang) : null;
+        if (answerWith == AnswerWith.Definition)
+        {
+            // The term side is shown, the definition side is answered.
+            return (term, definition) switch
+            {
+                ({ } t, { } d) => L($"Du siehst {t} und antwortest auf {d}."),
+                ({ } t, null) => L($"Du siehst {t} und antwortest mit der Übersetzung."),
+                (null, { } d) => L($"Du siehst den Begriff in der Lernsprache und antwortest auf {d}."),
+                _ => L("Du siehst den Begriff in der Lernsprache und antwortest mit der Übersetzung."),
+            };
+        }
+        // The definition side is shown, the term side is answered.
+        return (definition, term) switch
+        {
+            ({ } d, { } t) => L($"Du siehst {d} und antwortest auf {t}."),
+            ({ } d, null) => L($"Du siehst {d} und antwortest in der Lernsprache."),
+            (null, { } t) => L($"Du siehst die Übersetzung und antwortest auf {t}."),
+            _ => L("Du siehst die Übersetzung und antwortest in der Lernsprache."),
+        };
     }
 
-    /// <summary>The Learn explanation under the study buttons (<c>studyNote</c>).</summary>
+    /// <summary>The Learn explanation under the study buttons (<c>studyNote</c>), one whole text per question type.</summary>
     static string StudyNote(VocabSet set, StudyOptions options)
     {
-        string direction;
-        if (options.AnswerWith == AnswerWith.Both) direction = "Die Richtung wechselt zufällig von Frage zu Frage.";
-        else
-        {
-            bool same = set.TermLang != Lang.Other && set.TermLang == set.DefLang;
-            var termName = SideName(set.TermLang, true, same);
-            var defName = SideName(set.DefLang, false, same);
-            var (shown, typed) = options.AnswerWith == AnswerWith.Definition ? (termName, defName) : (defName, termName);
-            direction = $"Du siehst {shown.Seen} und antwortest {typed.Answered}.";
-        }
+        string direction = LearnDirection(options.AnswerWith, set.TermLang, set.DefLang);
         bool mc = options.Learn.Mc || !options.Learn.Written, written = options.Learn.Written || !options.Learn.Mc;
-        var how = !written ? "Alle Fragen als Multiple Choice." : !mc ? "Alle Fragen schriftlich." : "Neue Begriffe zuerst als Multiple Choice, danach schriftlich.";
-        return $"{direction} {how} Zweimal richtig = gemeistert.";
+        if (!written) return L($"{direction} Alle Fragen als Multiple Choice. Zweimal richtig = gemeistert.");
+        if (!mc) return L($"{direction} Alle Fragen schriftlich. Zweimal richtig = gemeistert.");
+        return L($"{direction} Neue Begriffe zuerst als Multiple Choice, danach schriftlich. Zweimal richtig = gemeistert.");
     }
 
     static string LearnTagline(StudyOptions options)
     {
         bool mc = options.Learn.Mc || !options.Learn.Written, written = options.Learn.Written || !options.Learn.Mc;
-        if (mc && written) return "Multiple Choice & schriftlich – bis alles sitzt";
-        return mc ? "Multiple Choice – bis alles sitzt" : "Schriftlich – bis alles sitzt";
+        if (mc && written) return L("Multiple Choice & schriftlich – bis alles sitzt");
+        return mc ? L("Multiple Choice – bis alles sitzt") : L("Schriftlich – bis alles sitzt");
     }
 
     static string WriteAnswerLabel(VocabSet set, StudyOptions options)
     {
-        if (options.AnswerWith == AnswerWith.Both) return "Antworten in beide Richtungen";
+        if (options.AnswerWith == AnswerWith.Both) return L("Antworten in beide Richtungen");
         var lang = options.AnswerWith == AnswerWith.Definition ? set.DefLang : set.TermLang;
         if (lang == Lang.Other || set.TermLang == set.DefLang)
-            return options.AnswerWith == AnswerWith.Definition ? "Antworten mit der Definition" : "Antworten mit dem Begriff";
-        return $"Antworten auf {Labels.LangName(lang)}";
+            return options.AnswerWith == AnswerWith.Definition ? L("Antworten mit der Definition") : L("Antworten mit dem Begriff");
+        return L($"Antworten auf {Labels.LangName(lang)}");
     }
 
     // MARK: Terms
 
     static string FilterLabel(Filter f) => f switch
     {
-        Filter.All => "Alle",
+        Filter.All => L("Alle"),
         Filter.New => Labels.STATUS[CardStatus.New],
         Filter.Learning => Labels.STATUS[CardStatus.Learning],
         Filter.Mastered => Labels.STATUS[CardStatus.Mastered],
-        Filter.Starred => "Markiert",
-        _ => "Schwierig",
+        Filter.Starred => L("Markiert"),
+        _ => L("Schwierig"),
     };
 
     static int FilterCount(Filter f, SetSummary s) => f switch
@@ -430,11 +455,36 @@ public sealed class SetDetailScreen : Screen
         _ => s.DifficultCardIds.Count,
     };
 
-    void SetFilter(Filter filter)
+    void SetFilter(Filter filter, bool keepScroll = true)
     {
         _filter = filter;
         Model.Preferences.SaveTermFilter(_setId, FilterKeys[filter]);
+        // Phone: the page and the filter strip stay where they were (they jumped to the top and the start, and the
+        // chosen filter was out of sight, 06.11.2026).
+        var scrolls = AppDevice.IsPhone && keepScroll ? View.GetVisualDescendants().OfType<ScrollViewer>().Select(s => s.Offset).ToList() : null;
         Refresh();
+        if (scrolls is { Count: > 0 })
+            Dispatcher.UIThread.Post(() =>
+            {
+                var now = View.GetVisualDescendants().OfType<ScrollViewer>().ToList();
+                for (int i = 0; i < Math.Min(now.Count, scrolls.Count); i++) now[i].Offset = scrolls[i];
+            }, DispatcherPriority.Background);
+    }
+
+    /// <summary>
+    /// «Gemeistert 4 ›» on the progress card: the filter, and on the phone the list comes into view with that filter
+    /// shown in the strip (it only changed the filter under the screen's edge, nothing seemed to happen, 06.11.2026).
+    /// </summary>
+    void ShowFiltered(Filter filter)
+    {
+        if (AppDevice.IsPhone) _stripOffset = Math.Max(0, Array.IndexOf(Enum.GetValues<Filter>(), filter) * 112 - 112);
+        SetFilter(filter, keepScroll: false);
+        if (!AppDevice.IsPhone) return;
+        void Show()
+        {
+            if (_searchBox is { } box) box.BringIntoView(new Rect(0, -110, box.Bounds.Width, box.Bounds.Height + 220));
+        }
+        DispatcherTimer.RunOnce(Show, TimeSpan.FromMilliseconds(250));
     }
 
     /// <summary>A sortable column of the terms table (Mac: the Table's sortOrder).</summary>
@@ -454,12 +504,17 @@ public sealed class SetDetailScreen : Screen
 
     const string TableColumns = "2*,2*,112,40,40";
 
+    double _stripOffset;
+    bool _stripRestored;
+
     Control TermsSection(SetSummary summary)
     {
         _summary = summary;
+        // Phone: with a filter the badge says how many of all are shown («1 von 11»; it said 11 under «Markiert 1»).
+        string countText = AppDevice.IsPhone && _filter != Filter.All ? L($"{FilterCount(_filter, summary)} von {summary.Stats.Total}") : $"{summary.Stats.Total}";
         var count = new Border
         {
-            Child = Ui.Text($"{summary.Stats.Total}", 13, FontWeight.SemiBold, P.TextSecondary),
+            Child = Ui.Text(countText, 13, FontWeight.SemiBold, P.TextSecondary),
             Background = WsTheme.B(P.KeyCap),
             CornerRadius = new CornerRadius(999),
             Padding = new Thickness(8, 2),
@@ -479,37 +534,64 @@ public sealed class SetDetailScreen : Screen
                 {
                     if (box.SelectedIndex >= 0 && filters[box.SelectedIndex] != _filter) SetFilter(filters[box.SelectedIndex]);
                 };
-                AutomationProperties.SetName(box, "Anzeigen");
+                AutomationProperties.SetName(box, L("Anzeigen"));
                 return [box];
             }
             bool withCounts = mode == AdaptiveRow.Mode.Large;
             var labels = filters.Select(f => withCounts ? $"{FilterLabel(f)} {FilterCount(f, summary)}" : FilterLabel(f)).ToList();
             var seg = new WsSegmented(labels, selected, withCounts ? 112 : 84);
             seg.SelectionChanged += i => SetFilter(filters[i]);
-            ToolTip.SetTip(seg, "Begriffe filtern");
-            AutomationProperties.SetName(seg, "Begriffe filtern");
+            ToolTip.SetTip(seg, L("Begriffe filtern"));
+            AutomationProperties.SetName(seg, L("Begriffe filtern"));
             AutomationProperties.SetItemStatus(seg, $"{FilterLabel(_filter)}, {StudyCopy.Terms(FilterCount(_filter, summary))}");
             return [seg];
         });
 
         var header = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*,Auto"), ColumnSpacing = 14 };
-        var heading = Ui.H(10, Ui.Text("Begriffe", 20, FontWeight.Bold, font: WsTheme.Prompt), count);
+        var heading = Ui.H(10, Ui.Text(L("Begriffe"), 20, FontWeight.Bold, font: WsTheme.Prompt), count);
         if (AppDevice.IsPhone)
         {
-            // Phone: heading, filter and search one under the other.
+            // Phone: the filter menu beside the heading (one row less before the terms), the search under them.
             var searchField = SearchField(summary);
             searchField.Width = double.NaN;
-            filterRow.HorizontalAlignment = HorizontalAlignment.Stretch;
+            // Phone: the filters as a row to swipe (with counts), not a drop-down list – the list looked like Windows,
+            // and with it beside the heading the search field under it got no keyboard (Joan's test, 06.11.2026).
+            var chips = new WsSegmented(filters.Select(f => $"{FilterLabel(f)} {FilterCount(f, summary)}").ToList(), selected, 112);
+            chips.SelectionChanged += i => SetFilter(filters[i]);
+            AutomationProperties.SetName(chips, L("Begriffe filtern"));
+            var strip = new ScrollViewer
+            {
+                Content = chips,
+                HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Hidden,
+                VerticalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled,
+                Margin = new Thickness(0, 2, 0, 0),
+            };
+            // Fades out at the edge where more filters wait (it was cut hard, «en 0»), and keeps its place when the page
+            // is rebuilt (after duplicating or a sync it jumped back to the start, 06.11.2026).
+            strip.ScrollChanged += (_, _) =>
+            {
+                strip.OpacityMask = SpecialCharacterBar.EdgeFade(strip);
+                if (strip.Extent.Width > 0) _stripOffset = strip.Offset.X;
+            };
+            strip.LayoutUpdated += (_, _) =>
+            {
+                if (_stripRestored || strip.Extent.Width <= 0) return;
+                _stripRestored = true;
+                strip.Offset = new Vector(_stripOffset, 0);
+                strip.OpacityMask = SpecialCharacterBar.EdgeFade(strip);
+            };
+            _stripRestored = false;
+            var top = Ui.V(10, heading, strip);
             _terms = new ItemsControl
             {
                 ItemsPanel = new FuncTemplate<Panel?>(() => new VirtualizingStackPanel()),
                 ItemTemplate = new FuncDataTemplate<TermItem>((item, _) => item is null ? new Border() : TermRow(item.Summary, item.Card, item.Status), supportsRecycling: false),
             };
-            AutomationProperties.SetName(_terms, "Begriffe");
+            AutomationProperties.SetName(_terms, L("Begriffe"));
             _emptyTerms = new Border();
             _tableHeader = null;
             FillTerms(summary);
-            return Ui.V(10, heading, filterRow, searchField, Ui.Glass(Ui.V(0, _terms, _emptyTerms), 20, new Thickness(4), shadow: false));
+            return Ui.V(10, top, searchField, Ui.Glass(Ui.V(0, _terms, _emptyTerms), 20, new Thickness(4), shadow: false));
         }
         header.Children.Add(heading);
         filterRow.HorizontalAlignment = HorizontalAlignment.Right;
@@ -525,7 +607,7 @@ public sealed class SetDetailScreen : Screen
             ItemsPanel = new FuncTemplate<Panel?>(() => new VirtualizingStackPanel()),
             ItemTemplate = new FuncDataTemplate<TermItem>((item, _) => item is null ? new Border() : TermRow(item.Summary, item.Card, item.Status), supportsRecycling: false),
         };
-        AutomationProperties.SetName(_terms, "Begriffe");
+        AutomationProperties.SetName(_terms, L("Begriffe"));
         _emptyTerms = new Border();
         _tableHeader = new Border();
         FillTerms(summary);
@@ -537,11 +619,11 @@ public sealed class SetDetailScreen : Screen
     /// <summary>The search field: magnifier, ✕ while it has text, Esc clears it (Mac: searchField).</summary>
     Control SearchField(SetSummary summary)
     {
-        var search = Ui.Field("Begriffe suchen", _search, 13.5, 36);
+        var search = Ui.Field(L("Begriffe suchen"), _search, 13.5, 36);
         search.Width = 200;
         search.Padding = new Thickness(8, 6);
-        search.InnerLeftContent = new Border { Child = Icons.Icon(IconName.Magnifier, 14, P.TextTertiary), Margin = new Thickness(10, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center };
-        var clear = Ui.IconButton(IconName.X, "Suche löschen", () =>
+        search.InnerLeftContent = new Border { Child = Icons.Icon(IconName.Magnifier, 14, P.TextTertiary), Margin = new Thickness(10, 0, 6, 0), VerticalAlignment = VerticalAlignment.Center };
+        var clear = Ui.IconButton(IconName.X, L("Suche löschen"), () =>
         {
             search.Text = "";
             search.Focus();
@@ -550,7 +632,7 @@ public sealed class SetDetailScreen : Screen
         clear.Focusable = false;
         clear.IsVisible = _search.Length > 0;
         search.InnerRightContent = clear;
-        AutomationProperties.SetName(search, "Begriffe durchsuchen");
+        AutomationProperties.SetName(search, L("Begriffe durchsuchen"));
         search.TextChanged += (_, _) =>
         {
             _search = search.Text ?? "";
@@ -571,7 +653,7 @@ public sealed class SetDetailScreen : Screen
     Control TableHeader()
     {
         var grid = new Grid { ColumnDefinitions = new ColumnDefinitions(TableColumns), ColumnSpacing = 14, Margin = new Thickness(10, 2, 10, 4) };
-        void Add(Column? column, int index, string label, IconName? icon, string name)
+        void Add(Column? column, int index, string label, IconName? icon, string name, string? sortTip)
         {
             bool active = column is not null && _sort?.Column == column;
             var color = active ? P.Text : P.TextTertiary;
@@ -589,8 +671,8 @@ public sealed class SetDetailScreen : Screen
             {
                 var b = Ui.Clickable(row, () => SortBy(c), name, 6, padding: new Thickness(4, 3));
                 b.HorizontalAlignment = icon is null ? HorizontalAlignment.Left : HorizontalAlignment.Center;
-                ToolTip.SetTip(b, $"Nach {name} sortieren");
-                if (active) AutomationProperties.SetItemStatus(b, _sort!.Value.Descending ? "absteigend sortiert" : "aufsteigend sortiert");
+                ToolTip.SetTip(b, sortTip);
+                if (active) AutomationProperties.SetItemStatus(b, _sort!.Value.Descending ? L("absteigend sortiert") : L("aufsteigend sortiert"));
                 cell = b;
             }
             else
@@ -602,11 +684,12 @@ public sealed class SetDetailScreen : Screen
             Grid.SetColumn(cell, index);
             grid.Children.Add(cell);
         }
-        Add(Column.Term, 0, "Begriff", null, "Begriff");
-        Add(Column.Definition, 1, "Definition", null, "Definition");
-        Add(Column.Status, 2, "Status", null, "Status");
-        Add(Column.Star, 3, "", IconName.Star, "Markierung");
-        Add(null, 4, "", IconName.Speaker, "Vorlesen");
+        // One whole tooltip per column ("Nach Begriff sortieren"), not the column's name put into a sentence.
+        Add(Column.Term, 0, L("Begriff"), null, L("Begriff"), L("Nach Begriff sortieren"));
+        Add(Column.Definition, 1, L("Definition"), null, L("Definition"), L("Nach Definition sortieren"));
+        Add(Column.Status, 2, L("Status"), null, L("Status"), L("Nach Status sortieren"));
+        Add(Column.Star, 3, "", IconName.Star, L("Markierung"), L("Nach Markierung sortieren"));
+        Add(null, 4, "", IconName.Speaker, L("Vorlesen"), null);
         return grid;
     }
 
@@ -689,9 +772,9 @@ public sealed class SetDetailScreen : Screen
     {
         Control body;
         if (searching)
-            body = Ui.V(8, Ui.H(8, Icons.Icon(IconName.Magnifier, 18, P.TextSecondary), Ui.Text($"Keine Treffer für «{JSCompat.Trim(_search)}»", 16, FontWeight.SemiBold)),
-                Ui.Text(_filter == Filter.All ? "Gesucht wird in Begriffen und Definitionen." : "Gesucht wird in den Begriffen dieses Filters.", 13.5, color: P.TextSecondary),
-                Ui.Secondary("Suche zurücksetzen", () =>
+            body = Ui.V(8, Ui.H(8, Icons.Icon(IconName.Magnifier, 18, P.TextSecondary), Ui.Text(L($"Keine Treffer für «{JSCompat.Trim(_search)}»"), 16, FontWeight.SemiBold)),
+                Ui.Text(_filter == Filter.All ? L("Gesucht wird in Begriffen und Definitionen.") : L("Gesucht wird in den Begriffen dieses Filters."), 13.5, color: P.TextSecondary),
+                Ui.Secondary(L("Suche zurücksetzen"), () =>
                 {
                     _search = "";
                     Refresh();
@@ -700,15 +783,15 @@ public sealed class SetDetailScreen : Screen
         {
             var (icon, title, text) = _filter switch
             {
-                Filter.Learning => (IconName.Book, "Gerade nichts am Lernen", "Hier erscheinen Begriffe, die du schon geübt, aber noch nicht gemeistert hast."),
-                Filter.Mastered => (IconName.Trophy, "Noch nichts gemeistert", "Ein Begriff gilt als gemeistert, wenn du ihn zweimal hintereinander richtig beantwortest."),
-                Filter.Starred => (IconName.Star, "Keine markierten Begriffe", "Klicke bei einem Begriff auf den Stern, um ihn später gezielt zu üben."),
-                Filter.Difficult => (IconName.Flame, "Keine schwierigen Begriffe", $"Hier erscheinen Begriffe, die du mindestens {SetSummary.DifficultMistakes}× falsch beantwortet hast."),
-                _ => (IconName.Sparkles, "Keine neuen Begriffe", "Du hast jeden Begriff schon mindestens einmal geübt."),
+                Filter.Learning => (IconName.Book, L("Gerade nichts am Lernen"), L("Hier erscheinen Begriffe, die du schon geübt, aber noch nicht gemeistert hast.")),
+                Filter.Mastered => (IconName.Trophy, L("Noch nichts gemeistert"), L("Ein Begriff gilt als gemeistert, wenn du ihn zweimal hintereinander richtig beantwortest.")),
+                Filter.Starred => (IconName.Star, L("Keine markierten Begriffe"), L("Klicke bei einem Begriff auf den Stern, um ihn später gezielt zu üben.")),
+                Filter.Difficult => (IconName.Flame, L("Keine schwierigen Begriffe"), L($"Hier erscheinen Begriffe, die du mindestens {SetSummary.DifficultMistakes}× falsch beantwortet hast.")),
+                _ => (IconName.Sparkles, L("Keine neuen Begriffe"), L("Du hast jeden Begriff schon mindestens einmal geübt.")),
             };
             body = Ui.V(8, Ui.H(8, Icons.Icon(icon, 18, P.TextSecondary), Ui.Text(title, 16, FontWeight.SemiBold)),
                 Ui.Text(text, 13.5, color: P.TextSecondary, wrap: TextWrapping.Wrap),
-                Ui.Secondary("Alle Begriffe anzeigen", () => SetFilter(Filter.All)));
+                Ui.Secondary(L("Alle Begriffe anzeigen"), () => SetFilter(Filter.All)));
         }
         foreach (var c in ((StackPanel)body).Children) c.HorizontalAlignment = HorizontalAlignment.Center;
         return new Border { Padding = new Thickness(20, 26), Child = body };
@@ -723,12 +806,12 @@ public sealed class SetDetailScreen : Screen
         var progress = ProgressTitle(summary.Progress.GetValueOrDefault(card.Id));
         ToolTip.SetTip(chip, progress);
         AutomationProperties.SetName(chip, $"{Labels.STATUS[status]}, {progress}");
-        var star = Ui.IconButton(card.Starred ? IconName.StarFilled : IconName.Star, card.Starred ? "Markierung entfernen" : "Markieren",
+        var star = Ui.IconButton(card.Starred ? IconName.StarFilled : IconName.Star, card.Starred ? L("Markierung entfernen") : L("Markieren"),
             () => Model.ToggleStar(set.Id, card.Id), 30, ButtonKind.Plain, card.Starred ? P.Star : P.TextTertiary);
         star.HorizontalAlignment = HorizontalAlignment.Center;
-        AutomationProperties.SetItemStatus(star, card.Starred ? "markiert" : "nicht markiert");
-        var speak = Ui.IconButton(IconName.Speaker, $"{card.Term} vorlesen", () => Model.Speech.Speak(card.Term, set.TermLang), 30, ButtonKind.Plain);
-        ToolTip.SetTip(speak, "Vorlesen");
+        AutomationProperties.SetItemStatus(star, card.Starred ? L("markiert") : L("nicht markiert"));
+        var speak = Ui.IconButton(IconName.Speaker, L($"{card.Term} vorlesen"), () => Model.Speech.Speak(card.Term, set.TermLang), 30, ButtonKind.Plain);
+        ToolTip.SetTip(speak, L("Vorlesen"));
         speak.HorizontalAlignment = HorizontalAlignment.Center;
         speak.IsEnabled = card.Term.Length > 0;
         Grid grid;
@@ -868,9 +951,10 @@ public sealed class SetDetailScreen : Screen
     static TextBlock CellText(string text, Lang lang, FontWeight weight, Color color)
     {
         var t = Ui.Text(text.Length > 0 ? text : "–", 15, weight, text.Length > 0 ? color : WsTheme.P.TextTertiary, TextWrapping.Wrap);
-        t.MaxLines = 2;
+        t.MaxLines = AppDevice.IsPhone ? 4 : 2;
         t.TextTrimming = TextTrimming.CharacterEllipsis;
-        if (text.Length == 0) AutomationProperties.SetName(t, "leer");
+        if (text.Length == 0) AutomationProperties.SetName(t, L("leer"));
+        else StudyText.HyphenateToWidth(t, text, lang);
         if (lang.IsRTL())
         {
             t.FlowDirection = FlowDirection.RightToLeft;
@@ -881,7 +965,7 @@ public sealed class SetDetailScreen : Screen
 
     /// <summary>"3× richtig · 1× falsch" (Mac: SetDetailCopy.progressTitle).</summary>
     static string ProgressTitle(CardProgress? p) =>
-        p is null || p.Correct + p.Incorrect == 0 ? "Noch nicht geübt" : $"{p.Correct}× richtig · {p.Incorrect}× falsch";
+        p is null || p.Correct + p.Incorrect == 0 ? L("Noch nicht geübt") : L($"{p.Correct}× richtig · {p.Incorrect}× falsch");
 
     /// <summary>The row menu (Mac: rowMenu): one card – star, read aloud; several – "Alle markieren" or
     /// "Markierungen entfernen"; always "Bearbeiten".</summary>
@@ -898,21 +982,27 @@ public sealed class SetDetailScreen : Screen
         if (cards.Count > 1)
         {
             bool allStarred = cards.All(c => c.Starred);
-            Item(allStarred ? "Markierungen entfernen" : "Alle markieren", allStarred ? IconName.StarFilled : IconName.Star, () =>
+            Item(allStarred ? L("Markierungen entfernen") : L("Alle markieren"), allStarred ? IconName.StarFilled : IconName.Star, () =>
             {
-                foreach (var c in cards.Where(c => c.Starred == allStarred)) Model.Store.ToggleStar(set.Id, c.Id);
-                Model.Store.Save();
-                DesignSystem.Announcer.Announce(allStarred ? "Markierungen entfernt" : $"{cards.Count} Begriffe markiert");
+                // One change for all of them (one notification, one save soon after; a failed write shows the save
+                // toast instead of ending the app from inside the menu).
+                try { Model.Store.Batch(() => { foreach (var c in cards.Where(c => c.Starred == allStarred)) Model.Store.ToggleStar(set.Id, c.Id); }); }
+                catch (Exception e)
+                {
+                    Model.Report(e);
+                    return;
+                }
+                DesignSystem.Announcer.Announce(allStarred ? L("Markierungen entfernt") : L($"{cards.Count} Begriffe markiert"));
             });
         }
         else
         {
-            Item(card.Starred ? "Markierung entfernen" : "Markieren", card.Starred ? IconName.StarFilled : IconName.Star, () => Model.ToggleStar(set.Id, card.Id));
-            Item("Begriff vorlesen", IconName.Speaker, () => Model.Speech.Speak(card.Term, set.TermLang), card.Term.Length > 0);
-            Item("Definition vorlesen", IconName.Speaker, () => Model.Speech.Speak(card.Definition, set.DefLang), card.Definition.Length > 0);
+            Item(card.Starred ? L("Markierung entfernen") : L("Markieren"), card.Starred ? IconName.StarFilled : IconName.Star, () => Model.ToggleStar(set.Id, card.Id));
+            Item(L("Begriff vorlesen"), IconName.Speaker, () => Model.Speech.Speak(card.Term, set.TermLang), card.Term.Length > 0);
+            Item(L("Definition vorlesen"), IconName.Speaker, () => Model.Speech.Speak(card.Definition, set.DefLang), card.Definition.Length > 0);
         }
         menu.Items.Add(new Separator());
-        Item("Bearbeiten", IconName.Pencil, () => Model.OpenEditor(set.Id));
+        Item(L("Bearbeiten"), IconName.Pencil, () => Model.OpenEditor(set.Id));
         return menu;
     }
 

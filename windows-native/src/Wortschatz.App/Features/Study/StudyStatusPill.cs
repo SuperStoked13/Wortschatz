@@ -5,6 +5,7 @@ using Avalonia.Layout;
 using Avalonia.Media;
 using Wortschatz.App.DesignSystem;
 using Wortschatz.App.Features.Learn;
+using static Wortschatz.Core.CoreText;
 
 namespace Wortschatz.App.Features.Study;
 
@@ -70,17 +71,19 @@ public static class StudyStatusPill
         switch (status.Kind)
         {
             case StudyStatus.Kinds.Keys:
+                // Phone: no keys to press – the hint without its key caps read «– wählen  markieren» (06.11.2026).
+                if (!AppDevice.ShowsKeyHints) return new Border();
                 var keys = Ui.H(16,
-                    Ui.H(5, Ui.KeyCap("1"), Ui.Text("–", 13.5, color: P.TextSecondary), Ui.KeyCap($"{Math.Max(1, status.Choices)}"), Ui.Text("wählen", 13.5, color: P.TextSecondary)),
-                    Ui.H(6, Ui.KeyCap("↑↓←→"), Ui.Text("markieren", 13.5, color: P.TextSecondary)));
-                AutomationProperties.SetName(keys, $"Tasten 1 bis {status.Choices} wählen eine Antwort, die Pfeiltasten markieren eine.");
+                    Ui.H(5, Ui.KeyCap("1"), Ui.Text("–", 13.5, color: P.TextSecondary), Ui.KeyCap($"{Math.Max(1, status.Choices)}"), Ui.Text(L("wählen"), 13.5, color: P.TextSecondary)),
+                    Ui.H(6, Ui.KeyCap("↑↓←→"), Ui.Text(L("markieren"), 13.5, color: P.TextSecondary)));
+                AutomationProperties.SetName(keys, L($"Tasten 1 bis {status.Choices} wählen eine Antwort, die Pfeiltasten markieren eine."));
                 return keys;
             case StudyStatus.Kinds.Typing:
-                return Ui.H(8, Icons.Icon(IconName.Keyboard, 17, P.TextSecondary), Ui.Text("Antwort schreiben", 13.5, color: P.TextSecondary));
+                return Ui.H(8, Icons.Icon(IconName.Keyboard, 17, P.TextSecondary), Ui.Text(L("Antwort schreiben"), 13.5, color: P.TextSecondary));
             default:
                 var symbol = FeedbackSymbol(status.Kind, palette!.Fill);
                 if (play) Effects.Pop(symbol, 1.22);
-                string title = status.IsStreakMilestone ? $"{status.Streak} richtig in Folge!" : status.Title;
+                string title = status.IsStreakMilestone ? L($"{status.Streak} richtig in Folge!") : status.Title;
                 // The title takes at most two lines (Mac: lineLimit(2)).
                 var titleText = Ui.Text(title, 17, FontWeight.SemiBold, palette.Text, TextWrapping.Wrap, WsTheme.UI);
                 titleText.MaxLines = 2;
@@ -90,7 +93,7 @@ public static class StudyStatusPill
                 texts.MaxWidth = 380;
                 texts.VerticalAlignment = VerticalAlignment.Center;
                 var content = Ui.H(12, symbol, texts);
-                string prefix = status.Kind switch { StudyStatus.Kinds.Correct => "Richtig", StudyStatus.Kinds.Wrong => "Falsch", _ => "Nicht gewusst" };
+                string prefix = status.Kind switch { StudyStatus.Kinds.Correct => L("Richtig"), StudyStatus.Kinds.Wrong => L("Falsch"), _ => L("Nicht gewusst") };
                 AutomationProperties.SetName(content, string.Join(". ", new[] { prefix, title, status.Message }.Where(s => s is not null)));
                 return content;
         }
@@ -117,8 +120,8 @@ public static class StudyStatusPill
             Padding = new Thickness(8, 3),
             VerticalAlignment = VerticalAlignment.Center,
         };
-        ToolTip.SetTip(badge, $"{count} richtig in Folge");
-        AutomationProperties.SetName(badge, $"{count} richtig in Folge");
+        ToolTip.SetTip(badge, L($"{count} richtig in Folge"));
+        AutomationProperties.SetName(badge, L($"{count} richtig in Folge"));
         if (grew) Effects.Pop(badge, milestone ? 1.12 : 1.05);
         return badge;
     }

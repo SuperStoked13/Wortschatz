@@ -1,3 +1,5 @@
+using static Wortschatz.Core.CoreText;
+
 namespace Wortschatz.Core;
 
 /// <summary>
@@ -14,7 +16,7 @@ public sealed class PDFTextExtractor(IPdfReader? reader, OCRService ocr)
     /// <summary>Text recognition is limited to this many scanned pages.</summary>
     public const int MaxOCRPages = 30;
 
-    /// <summary>The extracted text and the German warnings about pages that could not be read.</summary>
+    /// <summary>The extracted text and the warnings (app language) about pages that could not be read.</summary>
     public sealed record Output(string Text, IReadOnlyList<string> Warnings);
 
     public IPdfReader? Reader { get; } = reader;
@@ -48,7 +50,7 @@ public sealed class PDFTextExtractor(IPdfReader? reader, OCRService ocr)
         for (int i = 0; i < n; i++)
         {
             ImportError.CheckCancellation(ct);
-            report.Report((double)i / n * textShare, n > 1 ? $"Seite {i + 1} von {n} wird gelesen …" : ImportMessages.ReadingPDF);
+            report.Report((double)i / n * textShare, n > 1 ? L($"Seite {i + 1} von {n} wird gelesen …") : ImportMessages.ReadingPDF);
             texts[i] = "";
             List<TextItem> items;
             try { items = document.Items(i); }
@@ -79,7 +81,7 @@ public sealed class PDFTextExtractor(IPdfReader? reader, OCRService ocr)
         {
             if (ocrPages.Count > MaxOCRPages)
                 throw new ImportError(ImportErrorCode.PdfTooManyPages, ImportMessages.PdfTooManyPages(ocrPages.Count));
-            await Recognize(ocrPages, document, texts, new HashSet<int>(), languages, report, textShare, "PDF enthält keinen Text", ct).ConfigureAwait(false);
+            await Recognize(ocrPages, document, texts, new HashSet<int>(), languages, report, textShare, L("PDF enthält keinen Text"), ct).ConfigureAwait(false);
         }
         else if (ocrPages.Count > 0)
         {
@@ -92,7 +94,7 @@ public sealed class PDFTextExtractor(IPdfReader? reader, OCRService ocr)
             {
                 try
                 {
-                    await Recognize(ocrPages, document, texts, done, languages, report, 0.95, "Gescannte Seiten", ct).ConfigureAwait(false);
+                    await Recognize(ocrPages, document, texts, done, languages, report, 0.95, L("Gescannte Seiten"), ct).ConfigureAwait(false);
                 }
                 catch (ImportError error) when (error.Code != ImportErrorCode.Aborted)
                 {
@@ -136,7 +138,7 @@ public sealed class PDFTextExtractor(IPdfReader? reader, OCRService ocr)
             ImportError.CheckCancellation(ct);
             int index = pages[k];
             double width = span / pages.Count;
-            string prefix = pages.Count > 1 ? $"Seite {k + 1} von {pages.Count} – " : "";
+            string prefix = pages.Count > 1 ? L($"Seite {k + 1} von {pages.Count}") + " – " : "";
             var pageReport = report.Slice(start + span * k / pages.Count, width, prefix);
             OcrBitmap image;
             try
@@ -158,15 +160,15 @@ public sealed class PDFTextExtractor(IPdfReader? reader, OCRService ocr)
     /// <summary>Shown when scanned pages (1-based numbers) of an otherwise readable PDF could not be recognised.</summary>
     public static string SkippedPagesMessage(IReadOnlyList<int> pages, ImportError cause)
     {
-        string which = pages.Count switch
+        string missing = pages.Count switch
         {
-            1 => $"Seite {pages[0]} ist gescannt und konnte",
-            >= 2 and <= 6 => $"Die Seiten {string.Join(", ", pages.Take(pages.Count - 1))} und {pages[^1]} sind gescannt und konnten",
-            _ => $"{pages.Count} Seiten sind gescannt und konnten",
+            1 => L($"Seite {pages[0]} ist gescannt und konnte nicht gelesen werden – die Vokabeln darauf fehlen."),
+            >= 2 and <= 6 => L($"Die Seiten {string.Join(", ", pages.Take(pages.Count - 1))} und {pages[^1]} sind gescannt und konnten nicht gelesen werden – die Vokabeln darauf fehlen."),
+            _ => L($"{pages.Count} Seiten sind gescannt und konnten nicht gelesen werden – die Vokabeln darauf fehlen."),
         };
         string reason = cause.Code == ImportErrorCode.PdfTooManyPages
-            ? $"Die Texterkennung ist auf {MaxOCRPages} Seiten beschränkt – teile die Datei bitte auf."
-            : "Versuche es später noch einmal.";
-        return $"{which} nicht gelesen werden – die Vokabeln darauf fehlen. {reason}";
+            ? L($"Die Texterkennung ist auf {MaxOCRPages} Seiten beschränkt – teile die Datei bitte auf.")
+            : L("Versuche es später noch einmal.");
+        return $"{missing} {reason}";
     }
 }

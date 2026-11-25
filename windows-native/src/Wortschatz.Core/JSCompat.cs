@@ -60,9 +60,6 @@ public static class JSCompat
         return x - f >= 0.5 ? f + 1 : f;
     }
 
-    /// <summary>JS <c>Number.isInteger(x)</c>.</summary>
-    public static bool IsInteger(double x) => double.IsFinite(x) && x == Math.Truncate(x);
-
     /// <summary>JS <c>String(x)</c> of a number.</summary>
     public static string NumberToString(double x)
     {

@@ -96,7 +96,10 @@ extension LearnFlow {
                 guard isFree, case .question(.mc) = s.phase, let q = s.question else { return }
                 s.highlighted = index.flatMap { q.choices.indices.contains($0) ? $0 : nil }
             case let .draftChanged(text):
-                if acceptsText { s.draft = text }
+                if acceptsText {
+                    s.draft = text
+                    continueTypedOutCopy()
+                }
             case let .submit(text):
                 guard isFree else { return }
                 if acceptsText { s.draft = text }
@@ -120,8 +123,10 @@ extension LearnFlow {
                 optionsChanged(options)
             case let .reviewChanged(review):
                 s.review = review
+                applySwitches(review: true)
             case let .recheckChanged(recheck):
                 s.recheck = recheck
+                applySwitches(recheck: true)
             case .startReview:
                 guard isFree, s.phase == .allMastered else { return }
                 startFresh(s.subset, review: true)
@@ -139,11 +144,6 @@ extension LearnFlow {
             case let .overlayPresented(kind):
                 if s.overlay == nil { pauseAdvance() }
                 s.overlay = kind
-                if kind == .options && s.optionsBeforeOverlay == nil {
-                    s.optionsBeforeOverlay = s.options
-                    s.reviewBeforeOverlay = s.review
-                    s.recheckBeforeOverlay = s.recheck
-                }
             case .overlayDismissed:
                 overlayDismissed()
             case let .promptAnswered(confirmed):
@@ -236,7 +236,11 @@ extension LearnFlow {
             if s.typed.isEmpty && text.allSatisfy(\.isWhitespace) { return }
             guard s.typed.count + text.count <= TYPE_AHEAD_MAX else { return }
             s.typed += text
-            updateTypeAhead(q)
+            let match = updateTypeAhead(q)
+            // Typed out: chosen like Return would (Anthony 23.11.2026).
+            if let index = s.highlighted, match.isTypedOut {
+                choose(index)
+            }
         }
 
         /// ⌫ removes the last letter, ⌥⌫ the last word ("la voi" → "la ").
@@ -255,16 +259,19 @@ extension LearnFlow {
         mutating func clearTyped() {
             s.typed = ""
             s.highlighted = nil
-            announce("Eingabe gelöscht")
+            announce(L("Eingabe gelöscht"))
         }
 
-        mutating func updateTypeAhead(_ q: QuestionInfo) {
+        /// Highlights the option the letters pick; returns the match.
+        @discardableResult
+        mutating func updateTypeAhead(_ q: QuestionInfo) -> LearnFlow.TypeAhead {
             let match = LearnFlow.typeAhead(s.typed, choices: q.choices.map(\.text), lang: q.answerLang)
             let previous = s.highlighted
             s.highlighted = match.selected
             if let index = match.selected, index != previous {
-                announce("Antwort \(index + 1): \(q.choices[index].text). Eingabetaste wählt sie.")
+                announce(L("Antwort %@: %@. Eingabetaste wählt sie.", "\(index + 1)", q.choices[index].text))
             }
+            return match
         }
 
         /// After multiple-choice feedback any key continues (without picking anything in the
@@ -298,7 +305,7 @@ extension LearnFlow {
                 } else if !s.typed.isEmpty, let q = s.question {
                     // Typed letters that pick no option yet: Return cannot guess.
                     s.rejections += 1
-                    announce("Keine eindeutige Antwort – tippe weiter oder wähle mit 1 bis \(q.choices.count).")
+                    announce(L("Keine eindeutige Antwort – tippe weiter oder wähle mit 1 bis %@.", "\(q.choices.count)"))
                 }
             case .question(.written):
                 submitAnswer(s.draft)
@@ -338,7 +345,7 @@ extension LearnFlow {
             }
             guard next != s.highlighted else { return }
             s.highlighted = next
-            announce("Antwort \(next + 1): \(q.choices[next].text)")
+            announce(L("Antwort %@: %@", "\(next + 1)", q.choices[next].text))
         }
 
         // MARK: Session lifecycle (learn.js)
@@ -351,6 +358,20 @@ extension LearnFlow {
                 stored = LearnEngine.syncProgress(state, progress: env.progress, now: now)
                 synced = true
             }
+            // The rechecks follow «Nachkontrolle nach Fehlern» as it is now (switched since the
+            // session started). The repetition questions stay: a session may have been started
+            // for them («Gemeisterte wiederholen», the exam's «Falsche lernen»).
+            // Direction, question types and round size too, as they are set now (changed elsewhere
+            // since the session was left).
+            if let state = stored {
+                var switched = LearnEngine.setRecheck(state, on: s.recheck, now: now)
+                switched = LearnEngine.setOptions(
+                    switched, answerWith: s.options.answerWith, learn: s.options.learn, cards: s.cards, rng: env.rng)
+                if switched != state {
+                    stored = switched
+                    synced = true
+                }
+            }
             guard let stored, canResumeLearn(stored, forceNew: forceNew, subset: wanted) else {
                 // A requested subset must not end a session with answers without asking.
                 if let wanted, !forceNew, let stored, canResumeLearn(stored), hasLearnAnswers(stored) {
@@ -360,6 +381,9 @@ extension LearnFlow {
                     }
                     return
                 }
+                // Finished by answers given elsewhere or the switched Nachkontrolle: stored as
+                // finished, so «Weiterlernen» no longer offers it (when nothing new starts here).
+                if synced, let stored, stored.finishedAt != nil { emit(.saveLearn(stored, feedback: nil)) }
                 startFresh(wanted ?? .all)
                 return
             }
@@ -474,7 +498,8 @@ extension LearnFlow {
         // MARK: Questions
 
         func questionInfo(for q: LearnEngine.Question) -> QuestionInfo? {
-            guard let card = cardsById(s.cards)[q.cardId] else { return nil }
+            // The first card with the id, like `cardsById` (runs on every key of the copy step).
+            guard let card = s.cards.first(where: { $0.id == q.cardId }) else { return nil }
             return LearnFlow.questionInfo(q, card: card, cards: s.cards, termLang: s.termLang, defLang: s.defLang)
         }
 
@@ -517,8 +542,8 @@ extension LearnFlow {
             s.transitions += 1
             let lead = info.isReview ? "\(REVIEW_LABEL). " : ""
             if q.type == .mc {
-                announce(
-                    "\(lead)\(info.promptLabel): \(info.prompt). Wähle die richtige Antwort, 1 bis \(info.choices.count).")
+                let pick = L("Wähle die richtige Antwort, 1 bis %@.", "\(info.choices.count)")
+                announce("\(lead)\(info.promptLabel): \(info.prompt). \(pick)")
             } else {
                 announce(
                     "\(lead)\(info.promptLabel): \(info.prompt)"
@@ -614,8 +639,9 @@ extension LearnFlow {
             f.title = f.kind == .dontKnow ? DONT_KNOW_TITLE : MISS_TITLE
             s.feedback = f
             let demoted = f.demoted ? " \(DEMOTED_TEXT)." : ""
-            announce(
-                "\(f.kind == .dontKnow ? "Kein Problem." : "Nicht ganz.") Richtige Antwort: \(info.expected).\(demoted)")
+            let lead = f.kind == .dontKnow ? L("Kein Problem.") : L("Nicht ganz.")
+            let answer = L("Richtige Antwort: %@.", info.expected)
+            announce("\(lead) \(answer)\(demoted)")
             if how == .answer && f.kind == .wrong { emit(.haptic(.failure)) }
             lock()
         }
@@ -625,7 +651,7 @@ extension LearnFlow {
             let info = refreshedInfo(shown)
             guard hasText(value) else {
                 s.rejections += 1
-                announce("Gib zuerst eine Antwort ein – oder wähle «Weiss ich nicht?».")
+                announce(L("Gib zuerst eine Antwort ein – oder wähle «Weiss ich nicht?»."))
                 return
             }
             let graded = gradeQuestion(
@@ -670,7 +696,7 @@ extension LearnFlow {
                     f.title = TOLERATED_TITLE
                 }
             }
-            let exactLabel = f.synonym ? "Gesucht war:" : "Genau:"
+            let exactLabel = f.synonym ? L("Gesucht war:") : L("Genau:")
             f.exactLabel = result.exact ? nil : exactLabel
             let ms = result.exact ? ADVANCE_MS : ADVANCE_MS_WITH_NOTES
             f.autoAdvanceMs = ms
@@ -693,13 +719,27 @@ extension LearnFlow {
             if phase != s.phase { s.draft = "" }
             s.phase = phase
             if how != .refresh { s.transitions += 1 }
-            let lead = dontKnow ? "Kein Problem." : "Nicht ganz."
+            let lead = dontKnow ? L("Kein Problem.") : L("Nicht ganz.")
+            let answer = L("Richtige Antwort: %@.", info.expected)
             let hint = f.hint.map { " \($0)." } ?? ""
             let demoted = f.demoted ? " \(DEMOTED_TEXT)." : ""
-            let tail = f.copy ? " Tippe die richtige Antwort ab." : ""
-            announce("\(lead) Richtige Antwort: \(info.expected).\(hint)\(demoted)\(tail)")
+            let tail = f.copy ? " " + L("Tippe die richtige Antwort ab.") : ""
+            announce("\(lead) \(answer)\(hint)\(demoted)\(tail)")
             if how == .answer && !dontKnow { emit(.haptic(.failure)) }
             lock()
+        }
+
+        /// The copy typed out continues by itself after a short beat, like Return (`CopyStep`);
+        /// typing on so that it no longer is stops the countdown.
+        mutating func continueTypedOutCopy() {
+            guard isFree, s.phase == .copy, let shown = s.question else { return }
+            let info = refreshedInfo(shown)
+            guard CopyStep.isTypedOut(s.draft, expected: info.expected, tolerance: s.options.tolerance, lang: info.answerLang)
+            else {
+                clearAdvance()
+                return
+            }
+            if s.autoAdvanceToken == nil { startAdvance(CopyStep.advanceMs) }
         }
 
         mutating func submitCopy(_ value: String) {
@@ -709,7 +749,7 @@ extension LearnFlow {
                 continueNext(fromUser: true)
             } else {
                 s.rejections += 1
-                announce("Noch nicht ganz – tippe die richtige Antwort genau ab.")
+                announce(L("Noch nicht ganz – tippe die richtige Antwort genau ab."))
             }
         }
 
@@ -731,7 +771,7 @@ extension LearnFlow {
             _ = syncProgress(progress)
             s.pending = nil
             persist()
-            emit(.toast("Als richtig gezählt", tone: .success))
+            emit(.toast(L("Als richtig gezählt"), tone: .success))
             continueNext(fromUser: false)
         }
 
@@ -817,7 +857,8 @@ extension LearnFlow {
             s.draft = ""
             if !refresh {
                 s.transitions += 1
-                announce("Runde \(cp.round) geschafft. \(masteredLine(cp.counts.mastered, cp.counts.total)).")
+                announce(
+                    L("Runde %@ geschafft. %@ von %@ gemeistert.", "\(cp.round)", "\(cp.counts.mastered)", "\(cp.counts.total)"))
                 lock()
             }
         }
@@ -855,7 +896,7 @@ extension LearnFlow {
             s.draft = ""
             if refresh { return }
             s.transitions += 1
-            announce("Geschafft! \(finishTitle(session.subset, total: stats.total))")
+            announce(L("Geschafft! %@", finishTitle(session.subset, total: stats.total)))
             emit(.haptic(.success))
             lock()
         }
@@ -977,12 +1018,14 @@ extension LearnFlow {
             emit(.updateCard(card))
             s.cards[i] = card
             if s.isStudyStep { refreshCurrent(regrade: true) }
-            emit(.toast("Karte gespeichert", tone: .success))
+            emit(.toast(L("Karte gespeichert"), tone: .success))
         }
 
         mutating func optionsChanged(_ options: StudyOptions) {
             let before = s.options
             s.options = options
+            // Direction, question types and round size apply at once, wherever they were changed.
+            applyOptions()
             // The copy step applies at once to an open written miss.
             guard before.learn.retype != options.learn.retype, s.question?.type == .written,
                 let f = s.feedback, f.kind != .correct
@@ -995,33 +1038,53 @@ extension LearnFlow {
 
         mutating func overlayDismissed() {
             guard s.overlay != nil else { return }
-            let before = s.optionsBeforeOverlay
-            let reviewBefore = s.reviewBeforeOverlay ?? s.review
-            let recheckBefore = s.recheckBeforeOverlay ?? s.recheck
             s.overlay = nil
-            s.optionsBeforeOverlay = nil
-            s.reviewBeforeOverlay = nil
-            s.recheckBeforeOverlay = nil
-            // Direction, question types, round size, the repetition questions and the rechecks
-            // shape the session: they need a restart.
-            if let before, let session = s.session, session.finishedAt == nil {
-                // Rechecks only exist in sessions with more than RECHECK_MIN_CARDS cards.
-                let large = session.order.count > LearnEngine.RECHECK_MIN_CARDS
-                let current = sessionSettings(s.options, review: s.review, recheck: s.recheck && large)
-                let changes = settingsChanges(sessionSettings(session), current)
-                let beforeSettings = sessionSettings(before, review: reviewBefore, recheck: recheckBefore && large)
-                if !settingsChanges(beforeSettings, current).isEmpty && !changes.isEmpty {
-                    s.prompt = .restartForOptions(changes)
-                    return
-                }
-            }
+            // Every option applied when it was changed (`optionsChanged`, `applySwitches`).
             resumeAfterOverlay()
+        }
+
+        /// Direction, question types and round size apply to the running session at once (since
+        /// 25.11.2026; before, they asked «Neu starten?» in Lernen's options and were ignored when
+        /// changed elsewhere): the questions still to come follow them (`LearnEngine.setOptions`),
+        /// the one on screen too, which is asked anew when it changed.
+        mutating func applyOptions() {
+            guard let session = s.session, session.finishedAt == nil else { return }
+            let next = LearnEngine.setOptions(
+                session, answerWith: s.options.answerWith, learn: s.options.learn, cards: s.cards, rng: env.rng)
+            guard next != session else { return }
+            s.session = next
+            persist()
+            guard case .question = s.phase, let shown = s.question else { return }
+            let head = LearnEngine.current(next)
+            let same =
+                head?.qid == shown.qid && head?.type == shown.type && head?.ask == shown.ask
+                && (head?.choices ?? []) == (shown.type == .mc ? shown.storedChoices : [])
+            if !same { showQuestion() }
+        }
+
+        /// A switched «Wiederholungsfragen» (`review`) or «Nachkontrolle nach Fehlern» (`recheck`)
+        /// applies to the running session at once (`State.review`/`recheck`), also while the options
+        /// are open, so the stored session never lags behind the other stored ones: switched off,
+        /// their questions go (also the one on screen, which makes way for the next one); switched
+        /// on, they come from now on. Only the switched one: a session started for its repetition
+        /// questions keeps them when the rechecks are switched.
+        mutating func applySwitches(review: Bool = false, recheck: Bool = false) {
+            guard review || recheck, let session = s.session, session.finishedAt == nil else { return }
+            var next = session
+            if review { next = LearnEngine.setReview(next, on: s.review, progress: env.progress, now: now) }
+            if recheck { next = LearnEngine.setRecheck(next, on: s.recheck, now: now) }
+            guard next != session else { return }
+            s.session = next
+            persist()
+            guard case .question = s.phase, LearnEngine.current(next)?.qid != s.question?.qid else { return }
+            showQuestion()
         }
 
         /// A closed overlay or prompt restarts the countdown it interrupted.
         mutating func resumeAfterOverlay() {
             guard s.autoAdvancePaused else { return }
             s.autoAdvancePaused = false
+            if s.phase == .copy { return continueTypedOutCopy() }
             guard s.phase == .feedback(.correct), let f = s.feedback else { return }
             lock()
             startAdvance(f.autoAdvanceMs ?? ADVANCE_MS)
@@ -1056,7 +1119,7 @@ extension LearnFlow {
             guard let prompt = s.prompt else { return }
             s.prompt = nil
             switch prompt {
-            case .restartSession, .restartForOptions:
+            case .restartSession:
                 if confirmed { startFresh(s.session?.subset ?? s.subset) } else { resumeAfterOverlay() }
             case let .relearn(ids):
                 guard confirmed else { return resumeAfterOverlay() }

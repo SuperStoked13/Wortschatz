@@ -3,8 +3,8 @@ import SwiftUI
 import UniformTypeIdentifiers
 import WortschatzCore
 
-/// Daten: backup export and import (compatible with the web app), moving over from the web
-/// version, the library's location in the Finder and "Alle Daten löschen…". The panels and the
+/// Daten: backup export and import (compatible with the web app), updates (`SettingsUpdateSection`, download app only), the library's location in the
+/// Finder and "Alle Daten löschen…", the app's version. The panels and the
 /// import sheet open in the Settings window itself; the import runs through the shell
 /// (`BackupImportSheet` → `AppModel.performBackupImport`), which also shows the summary toast.
 struct SettingsDataTab: View {
@@ -24,12 +24,20 @@ struct SettingsDataTab: View {
         let sets = model.library.sets.map(\.set)
         Form {
             backupSection(sets: sets)
-            webMigrationSection
+            #if os(macOS)
+            SettingsUpdateSection()
+            #endif
             locationSection
         }
         .formStyle(.grouped)
         .task(id: model.revision) {
-            backupSize = SettingsBackup.byteCount(model: model)
+            // After every store change (also every answer while Lernen runs behind the
+            // Settings window): a moment after the last one, and built off the main thread.
+            if backupSize != nil { try? await Task.sleep(for: .seconds(1)) }
+            guard !Task.isCancelled else { return }
+            let size = await SettingsBackup.byteCount(model: model)
+            guard !Task.isCancelled else { return }
+            backupSize = size
         }
         .settingsBackupExporter(file: $exportFile, model: model)
         .fileImporter(isPresented: $isChoosingBackup, allowedContentTypes: [.json]) { result in
@@ -114,34 +122,6 @@ struct SettingsDataTab: View {
         }
     }
 
-    private var webMigrationSection: some View {
-        Section {
-            ForEach(Array(SettingsCopy.webMigrationSteps.enumerated()), id: \.offset) { index, step in
-                LabeledContent {
-                    if index == SettingsCopy.webMigrationSteps.count - 1 {
-                        Button("Backup-Datei wählen…") { isChoosingBackup = true }
-                    }
-                } label: {
-                    Label {
-                        Text(step.title)
-                        Text(step.text)
-                    } icon: {
-                        Text("\(index + 1)")
-                            .font(.system(.callout, design: .rounded).weight(.bold))
-                            .foregroundStyle(.white)
-                            .frame(width: 24, height: 24)
-                            .background(Theme.accent.gradient, in: Circle())
-                            .accessibilityHidden(true)
-                    }
-                    .accessibilityElement(children: .combine)
-                    .accessibilityLabel("Schritt \(index + 1): \(step.title). \(step.text)")
-                }
-            }
-        } header: {
-            Text("Aus der Web-Version übernehmen")
-        }
-    }
-
     private var locationSection: some View {
         Section {
             LabeledContent {
@@ -176,7 +156,24 @@ struct SettingsDataTab: View {
             }
         } header: {
             Text("Auf diesem Mac")
+        } footer: {
+            versionFooter
         }
+    }
+
+    /// "Wortschatz 1.4" at the foot of the tab.
+    private var versionFooter: some View {
+        Text(Self.versionLine)
+            .font(.caption)
+            .foregroundStyle(.tertiary)
+            .frame(maxWidth: .infinity, alignment: .trailing)
+    }
+
+    private static var versionLine: String {
+        let info = Bundle.main.infoDictionary
+        let version = info?["CFBundleShortVersionString"] as? String ?? ""
+        let build = info?["CFBundleVersion"] as? String ?? ""
+        return build.isEmpty || build == version ? "Wortschatz \(version)" : "Wortschatz \(version) (\(build))"
     }
 
     // MARK: Actions
@@ -185,13 +182,13 @@ struct SettingsDataTab: View {
     private func prepareImport(_ url: URL) {
         let type = UTType(filenameExtension: url.pathExtension)
         guard type?.conforms(to: .json) == true else {
-            importError = "Bitte wähle eine Backup-Datei im JSON-Format."
+            importError = String(localized: "Bitte wähle eine Backup-Datei im JSON-Format.")
             return
         }
         do {
             importPreview = try model.prepareBackupImport(from: url)
         } catch {
-            importError = AppModel.message(for: error, fallback: "Diese Datei ist kein gültiges Wortschatz-Backup.")
+            importError = AppModel.message(for: error, fallback: String(localized: "Diese Datei ist kein gültiges Wortschatz-Backup."))
         }
     }
 
@@ -250,14 +247,16 @@ enum SettingsBackup {
             let data = try Backup.jsonData(model.store.exportAll())
             return BackupExportFile(data: data, fileName: Backup.backupFileName(timeZone: model.store.timeZone))
         } catch {
-            model.report(error, fallback: "Das Backup konnte nicht erstellt werden.")
+            model.report(error, fallback: String(localized: "Das Backup konnte nicht erstellt werden."))
             return nil
         }
     }
 
-    /// The size a backup of the library has right now (nil if it cannot be built).
-    static func byteCount(model: AppModel) -> Int? {
-        try? Backup.jsonData(model.store.exportAll()).count
+    /// The size a backup of the library has right now (nil if it cannot be built). Encoded off
+    /// the main thread: it is the whole library, pretty-printed.
+    static func byteCount(model: AppModel) async -> Int? {
+        let backup = model.store.exportAll()
+        return await Task.detached(priority: .utility) { try? Backup.jsonData(backup).count }.value
     }
 }
 
@@ -275,10 +274,10 @@ private struct SettingsBackupExporter: ViewModifier {
             file = nil
             switch result {
             case let .success(url):
-                model.toasts.show("Backup gespeichert: \(url.lastPathComponent)", tone: .success)
+                model.toasts.show(String(localized: "Backup gespeichert: \(url.lastPathComponent)"), tone: .success)
             case let .failure(error):
                 if (error as? CocoaError)?.code == .userCancelled { return }
-                model.report(error, fallback: "Das Backup konnte nicht gespeichert werden.")
+                model.report(error, fallback: String(localized: "Das Backup konnte nicht gespeichert werden."))
             }
         }
     }

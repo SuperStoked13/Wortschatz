@@ -74,9 +74,6 @@ final class AppShellSnapshots: SnapshotCatalog {
                     BackupImportSheet(preview: SampleBackup.preview(for: model))
                 }
             },
-            SnapshotScene("shell-sheet-web-migration", size: CGSize(width: 540, height: 420)) {
-                ShellScreenPreview(scenario: .empty) { _ in WebMigrationSheet() }
-            },
         ]
     }
 }

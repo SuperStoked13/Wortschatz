@@ -1,4 +1,4 @@
-using System.Text;
+using static Wortschatz.Core.CoreText;
 
 namespace Wortschatz.Core;
 
@@ -26,9 +26,6 @@ public static partial class WriteFlow
         /// <summary>The engine question this info was built from.</summary>
         public SessionQuestion SessionQuestion => new(Qid, CardId, Ask);
     }
-
-    /// <summary>The named subsets a link or menu can ask for (<c>NAMED_SUBSETS</c>).</summary>
-    public static readonly StudySubset[] NamedSubsets = [StudySubset.All, StudySubset.Starred, StudySubset.Learning, StudySubset.Missed];
 
     /// <summary><c>hasText</c>: a string with at least one non-whitespace character (JS trim).</summary>
     public static bool HasText(string? value)
@@ -58,9 +55,9 @@ public static partial class WriteFlow
             askTerm ? card.Definition : card.Term,
             askTerm ? card.Term : card.Definition,
             promptLang, answerLang,
-            sameLang || promptLang == Lang.Other ? (askTerm ? "Definition" : "Begriff") : Labels.LangName(promptLang),
-            plainAnswer ? "Antwort eingeben" : $"Antwort auf {Labels.LangName(answerLang)} eingeben",
-            plainAnswer ? "Antwort eingeben" : $"Auf {Labels.LangName(answerLang)} …",
+            sameLang || promptLang == Lang.Other ? (askTerm ? L("Definition") : L("Begriff")) : Labels.LangName(promptLang),
+            plainAnswer ? L("Antwort eingeben") : L($"Antwort auf {Labels.LangName(answerLang)} eingeben"),
+            plainAnswer ? L("Antwort eingeben") : L($"Auf {Labels.LangName(answerLang)} …"),
             card.Starred);
     }
 
@@ -183,9 +180,9 @@ public static partial class WriteFlow
         long total = (long)Math.Min(seconds, 9_007_199_254_740_992);
         long h = total / 3600, m = total % 3600 / 60;
         var ss = TwoDigits(total % 60);
-        if (h > 0) return new CompactDuration($"{h}:{TwoDigits(m)}:{ss}", "Zeit (Std.)");
-        if (m > 0) return new CompactDuration($"{m}:{ss}", "Zeit (Min.)");
-        return new CompactDuration($"{total} Sek.", "Zeit");
+        if (h > 0) return new CompactDuration($"{h}:{TwoDigits(m)}:{ss}", L("Zeit (Std.)"));
+        if (m > 0) return new CompactDuration($"{m}:{ss}", L("Zeit (Min.)"));
+        return new CompactDuration(L($"{total} Sek."), L("Zeit"));
     }
 
     /// <summary>
@@ -209,7 +206,7 @@ public static partial class WriteFlow
     public sealed record TermRow(string Id, string CardId, string Term, string Definition, Lang TermLang, Lang DefLang, bool? Correct = null, int? Misses = null)
     {
         /// <summary>"2× falsch" (results rows).</summary>
-        public string? MissesLabel => Misses is { } m ? $"{m}× falsch" : null;
+        public string? MissesLabel => Misses is { } m ? L($"{m}× falsch") : null;
     }
 
     /// <summary>The card of each id like the JS Map of write.js (the last card with an id wins).</summary>

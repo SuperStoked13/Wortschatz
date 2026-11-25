@@ -39,7 +39,7 @@ extension AppModel {
             } catch {
                 failure = error
             }
-            switch ask(Self.message(for: failure, fallback: "Die Daten konnten nicht gespeichert werden.")) {
+            switch ask(Self.message(for: failure, fallback: String(localized: "Die Daten konnten nicht gespeichert werden."))) {
             case .retry:
                 continue
             case .exportBackup:
@@ -61,18 +61,19 @@ extension AppModel {
     static func askAfterFailedSave(_ message: String) -> QuitAfterFailedSave {
         let alert = NSAlert()
         alert.alertStyle = .critical
-        alert.messageText = "Deine letzten Änderungen konnten nicht gespeichert werden"
-        alert.informativeText = """
-            \(message)
+        alert.messageText = String(localized: "Deine letzten Änderungen konnten nicht gespeichert werden")
+        alert.informativeText = String(
+            localized: """
+                \(message)
 
-            Wenn du Wortschatz jetzt beendest, gehen die Änderungen seit dem letzten Speichern verloren. \
-            Mit «Backup exportieren…» sicherst du alle Lernsets in eine Datei und beendest danach.
-            """
-        alert.addButton(withTitle: "Nochmal versuchen")
-        alert.addButton(withTitle: "Backup exportieren…")
-        let quit = alert.addButton(withTitle: "Trotzdem beenden")
+                Wenn du Wortschatz jetzt beendest, gehen die Änderungen seit dem letzten Speichern verloren. \
+                Mit «Backup exportieren…» sicherst du alle Lernsets in eine Datei und beendest danach.
+                """)
+        alert.addButton(withTitle: String(localized: "Nochmal versuchen"))
+        alert.addButton(withTitle: String(localized: "Backup exportieren…"))
+        let quit = alert.addButton(withTitle: String(localized: "Trotzdem beenden"))
         quit.hasDestructiveAction = true
-        let stay = alert.addButton(withTitle: "Abbrechen")
+        let stay = alert.addButton(withTitle: String(localized: "Abbrechen"))
         stay.keyEquivalent = "\u{1b}"
         NSApp.activate()
         switch alert.runModal() {
@@ -86,8 +87,8 @@ extension AppModel {
     /// The save panel for a backup while quitting (the main window may be closed, so no sheet).
     static func exportBackupWithPanel(_ document: Data, fileName: String) -> Bool {
         let panel = NSSavePanel()
-        panel.title = "Backup exportieren"
-        panel.prompt = "Sichern"
+        panel.title = String(localized: "Backup exportieren")
+        panel.prompt = String(localized: "Sichern", comment: "Save panel button: save the backup file")
         panel.nameFieldStringValue = fileName
         panel.allowedContentTypes = [.json]
         panel.canCreateDirectories = true
@@ -98,7 +99,7 @@ extension AppModel {
         } catch {
             let alert = NSAlert()
             alert.alertStyle = .warning
-            alert.messageText = "Das Backup konnte nicht gesichert werden"
+            alert.messageText = String(localized: "Das Backup konnte nicht gesichert werden")
             alert.informativeText = error.localizedDescription
             alert.runModal()
             return false

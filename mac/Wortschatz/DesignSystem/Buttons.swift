@@ -192,21 +192,22 @@ private struct ActionButtonLabel: View {
 }
 
 private extension View {
+    /// Capsules, the Liquid Glass shape (large glass buttons are rounded rectangles on the Mac).
     @ViewBuilder
     func primaryStyle(onGlass: Bool) -> some View {
         if onGlass {
-            buttonStyle(.borderedProminent)
+            buttonStyle(.borderedProminent).buttonBorderShape(.capsule)
         } else {
-            buttonStyle(.glassProminent)
+            buttonStyle(.glassProminent).buttonBorderShape(.capsule)
         }
     }
 
     @ViewBuilder
     func secondaryStyle(onGlass: Bool) -> some View {
         if onGlass {
-            buttonStyle(.bordered)
+            buttonStyle(.bordered).buttonBorderShape(.capsule)
         } else {
-            buttonStyle(.glass)
+            buttonStyle(.glass).buttonBorderShape(.capsule)
         }
     }
 }

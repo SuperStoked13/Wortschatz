@@ -256,14 +256,51 @@ struct LearnTypeAheadTests {
         // An article (or two letters of it) is not enough.
         #expect(s.state.highlighted == nil)
         #expect(LearnFlow.returnAction(s.state) == nil)
-        s.type(String(answer.dropFirst(2)))
-        #expect(s.state.typed == answer)
+        // All but its last letter: picked, not typed out yet.
+        s.type(String(answer.dropFirst(2).dropLast()))
+        #expect(s.state.typed == String(answer.dropLast()))
         #expect(s.state.highlighted == s.correctIndex)
         #expect(LearnFlow.returnAction(s.state) == "Auswählen")
         #expect(LearnFlow.optionState(s.state, at: s.correctIndex ?? 0) == .highlighted)
         s.send(.key(.returnKey))
         #expect(s.state.phase == .feedback(.correct))
         #expect(s.state.typed.isEmpty)
+    }
+
+    @Test("Typing a whole option chooses it without Return")
+    func typedOutChooses() {
+        var s = Session()
+        let answer = s.correctText
+        s.type(answer)
+        #expect(s.state.phase == .feedback(.correct))
+        #expect(s.state.typed.isEmpty)
+    }
+
+    @Test("Typed out means to the end of the option or of an alternative, and only one option fits")
+    func typedOut() {
+        func out(_ typed: String, _ choices: [String], lang: Lang = .fr) -> Bool {
+            LearnFlow.typeAhead(typed, choices: choices, lang: lang).isTypedOut
+        }
+        let choices = ["la voiture", "le chat", "la maison", "un arbre"]
+        #expect(out("la voiture", choices))
+        #expect(out("La Voiture", choices))
+        #expect(out("voiture", choices))
+        #expect(!out("la voitur", choices))
+        // "le pain" could still become "le pain de mie": Return picks it.
+        let bread = ["le pain", "le pain de mie", "la rue", "le chemin"]
+        #expect(Self.pick("le pain", bread) == 0)
+        #expect(!out("le pain", bread))
+        #expect(out("le pain de mie", bread))
+        // One alternative is enough.
+        let brain = ["le cerveau, les cerveaux", "le cœur", "la tête", "le bras"]
+        #expect(out("le cerveau", brain))
+        #expect(out("les cerveaux", brain))
+        #expect(!out("le cervea", brain))
+        #expect(out("to affect sb", ["to affect sb/ sth", "to cover sb/ sth", "to form", "to revise"], lang: .en))
+        // A note in brackets may still follow ("Aussenminister(in)"): Return picks it.
+        let minister = ["Aussenminister(in)", "Aussenpolitik", "Bundesrat", "Kanton"]
+        #expect(Self.pick("Aussenminister", minister, lang: .de) == 0)
+        #expect(!out("Aussenminister", minister, lang: .de))
     }
 
     @Test("Options the letters do not start fade; ⌫ deletes, esc clears before leaving")

@@ -65,7 +65,7 @@ struct SetEditorView: View {
                         .padding(.bottom, Spacing.l)
                     ImportPanelView(
                         model: editor.importPanel, isTextDropTargeted: $isTextDropTargeted, focus: $focus,
-                        onApply: editor.applyImport
+                        onShowCards: { editor.scroll(to: .cards, anchor: .top) }, onClearText: editor.clearImportText
                     )
                     .id(SetEditorModel.ScrollTarget.importPanel)
                     .padding(.bottom, Spacing.xxl)
@@ -82,7 +82,8 @@ struct SetEditorView: View {
                             .transition(.opacity)
                         }
                     } header: {
-                        SetEditorColumnHeader(termLang: editor.termLang, defLang: editor.defLang)
+                        SetEditorColumnHeader(
+                            termLang: editor.termIsAuto ? nil : editor.termLang, defLang: editor.defIsAuto ? nil : editor.defLang)
                     }
                     SetEditorCardsFooter(editor: editor)
                         .padding(.top, Spacing.xxs)

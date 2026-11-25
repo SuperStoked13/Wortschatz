@@ -9,12 +9,11 @@ für HTTPS mit automatischem Zertifikat.
 
 ```
 Downloadseite/
-  public/        Seiten (index.html, datenschutz.html, _error.html, _partials/) und assets/ (CSS, JS, Bilder)
+  public/        Seiten (index.html, datenschutz.html, _error.html, _partials/), en/ (dieselben auf Englisch)
+                 und assets/ (CSS, JS, Bilder)
   server/        Node-Server: server.mjs, lib/, test/
   releases/      die Downloads und ihre Manifeste (mac.json, windows.json)
-  tools/         release-mac.sh, release-windows.sh
-  deploy/        Caddyfile (HTTPS), wortschatz-web.service (systemd)
-  compose.original.yaml   Docker: Server und Caddy zusammen (auf Joans Server nicht benutzt, siehe unten)
+  tools/         release-mac.sh, release-windows.sh, neuigkeiten.py, appcast.py, windows_update.py, handschrift.py
   .env.example   Einstellungen (nach .env kopieren)
 ```
 
@@ -32,76 +31,43 @@ Dann http://localhost:8080 öffnen. Solange `releases/` leer ist, steht bei den 
 
 ## Downloads bereitstellen
 
-Im Terminal, im Projektordner (neben `mac/`, `windows/` und `Website/`):
+Im Terminal, im Projektordner (neben `mac/` und `windows-native/`):
 
 ```bash
 Downloadseite/tools/release-mac.sh       # baut die Mac-App, erstellt Wortschatz-1.0-macOS.dmg (--notarize: notarisiert)
-Downloadseite/tools/release-windows.sh   # baut Wortschatz.exe und legt sie als Wortschatz-1.0-Windows.exe ab
+                                         # und appcast.xml (Updates der Mac-App, ../VEROEFFENTLICHEN.md)
+Downloadseite/tools/release-windows.sh   # baut Wortschatz.exe und legt sie als Wortschatz-1.0-Windows.exe ab,
+                                         # dazu windows-update.json (Updates der Windows-App, ../VEROEFFENTLICHEN.md)
 ```
 
 Mit `--skip-build` nehmen die Skripte die zuletzt gebaute App (`mac/build/Wortschatz.app`,
-`windows/dist/Wortschatz.exe`). Die Versionsnummer kommt aus dem Xcode-Projekt bzw. aus
-`windows/host/winres/winres.json`. Ältere Versionen im Ordner werden dabei entfernt.
+`windows-native/dist/Wortschatz.exe`). Die Versionsnummer kommt aus dem Xcode-Projekt bzw. aus
+`windows-native/src/Wortschatz.App/Wortschatz.App.csproj`. Ältere Versionen im Ordner werden dabei entfernt.
 
 Der Server merkt neue Dateien innert 15 Sekunden, berechnet die SHA-256-Prüfsumme und zeigt
 Version, Grösse und Prüfsumme auf der Seite an. Läuft der Server auf einem anderen Gerät, den
 Ordner `releases/` dorthin kopieren (z. B. `rsync -av Downloadseite/releases/ pi@raspberrypi:/opt/wortschatz-web/releases/`).
 
-## Online stellen unter wortschatz.duckdns.org
+**Downloads auf GitHub.** Statt einer Datei im Ordner kann ein Manifest auf die Datei in einem GitHub-Release zeigen:
 
-> **Auf Joans Server läuft es anders** (seit 14.10.2026): Dort ist schon ein Caddy für mehrere Adressen, die Seite
-> läuft als Container hinter ihm, und neue Versionen gehen über **GitHub-Releases** online – siehe
-> `../VEROEFFENTLICHEN.md` und `../CLAUDE.md`. Die Schritte unten (eigener Caddy, `compose.original.yaml`, systemd)
-> gelten nur für ein anderes, eigenes Gerät. Auf Joans Server nie `docker compose` in diesem Ordner starten.
-
-### 1. DuckDNS
-
-1. Auf https://www.duckdns.org anmelden und die Subdomain `wortschatz` anlegen.
-2. Den Token (steht oben auf der Seite) in `.env` bei `DUCKDNS_TOKEN` eintragen. Der Server
-   meldet dann alle fünf Minuten die aktuelle IP-Adresse deines Anschlusses an DuckDNS.
-   Kann dein Router DuckDNS selbst aktualisieren (z. B. eine FRITZ!Box unter «DynDNS»), das Feld leer lassen.
-
-### 2. Router
-
-Im Router eine **Portweiterleitung** für TCP 80 und TCP 443 (und UDP 443 für HTTP/3) auf den
-Computer einrichten, auf dem die Seite läuft. Gib diesem Computer im Router eine feste lokale Adresse.
-
-Manche Anschlüsse haben keine eigene öffentliche IPv4-Adresse (CGNAT oder DS-Lite, oft bei
-Kabelanschlüssen). Dann kommt aus dem Internet nichts an; beim Anbieter eine öffentliche IPv4 verlangen.
-
-### 3a. Mit Docker (am einfachsten)
-
-```bash
-cd Downloadseite
-cp .env.example .env      # ausfüllen: DUCKDNS_TOKEN, OPERATOR_NAME, CONTACT_EMAIL
-docker compose up -d
-docker compose logs -f    # zuschauen, wie Caddy das Zertifikat holt
+```json
+{ "file": "Wortschatz-1.5-Windows.exe", "version": "1.5", "size": 92000000, "sha256": "…",
+  "url": "https://github.com/SuperStoked13/Wortschatz/releases/download/v1.5/Wortschatz-1.5-Windows.exe" }
 ```
 
-Neue Releases einfach in `releases/` legen, ein Neustart ist nicht nötig.
+Dann ist «Laden» ein gewöhnlicher Link dorthin (kein Formular, kein signierter Link), Version, Grösse und
+Prüfsumme kommen aus dem Manifest, und der Server schickt selbst keine Datei. Erlaubt sind nur Release-Dateien von
+`DOWNLOAD_REPO` (Standard `SuperStoked13/Wortschatz`) unter `https://github.com/<repo>/releases/download/<tag>/<file>`,
+genau so geschrieben; alles andere gilt als fehlende Version. Eine Seite von vorher, die noch das Formular schickt,
+und alte Download-Links bekommen «Seite neu laden» (410). Mac und Windows dürfen dabei verschieden kommen.
 
-### 3b. Ohne Docker (Linux, z. B. Raspberry Pi)
+## Online
 
-Node 20 oder neuer und Caddy installieren. Debian und Raspberry Pi OS liefern oft ein älteres
-Node (`node --version` prüfen); dann Node 22 von https://nodejs.org nehmen (für den Raspberry Pi
-die ARM64-Version). Caddy gibt es mit `sudo apt install caddy`.
-
-```bash
-sudo useradd --system --home /opt/wortschatz-web --shell /usr/sbin/nologin wortschatz
-sudo mkdir -p /opt/wortschatz-web
-sudo cp -R server public releases deploy .env.example /opt/wortschatz-web/
-sudo cp /opt/wortschatz-web/.env.example /opt/wortschatz-web/.env   # dann ausfüllen
-sudo mkdir -p /opt/wortschatz-web/data && sudo chown wortschatz: /opt/wortschatz-web/data
-sudo chmod 640 /opt/wortschatz-web/.env && sudo chgrp wortschatz /opt/wortschatz-web/.env
-
-sudo cp deploy/wortschatz-web.service /etc/systemd/system/
-sudo systemctl daemon-reload && sudo systemctl enable --now wortschatz-web
-
-sudo cp deploy/Caddyfile /etc/caddy/Caddyfile && sudo systemctl reload caddy
-```
-
-Der Mac eignet sich zum Ausprobieren, aber nicht als dauerhafter Server: er schläft, und die
-Seite ist dann weg. Besser ist ein Raspberry Pi, ein alter Laptop mit Linux oder ein kleiner VPS.
+Im Betrieb läuft die Seite als Container hinter Caddy, der HTTPS macht und `X-Forwarded-For` selbst setzt
+(`TRUST_PROXY`). Neue Versionen gehen über **GitHub-Releases** online (`../VEROEFFENTLICHEN.md`). Der Betrieb
+selbst (Container, Caddy, Deploy-Skript, `.env`) liegt bewusst nicht in diesem Repo. Der Server braucht Node 20
+oder neuer, `server/`, `public/`, `releases/` und die Einstellungen aus `.env.example`. Mit `DUCKDNS_TOKEN` meldet
+er alle fünf Minuten die aktuelle IP-Adresse an DuckDNS (leer lassen, wenn das schon jemand anderes tut).
 
 ## Sicherheit
 
@@ -120,6 +86,19 @@ Was der Server tut (alle Werte lassen sich in `.env` ändern, siehe `.env.exampl
   nicht auffällt. Skripte dürfen das Passwort weiterhin per HTTP Basic Auth schicken (Benutzername
   egal, gleiche Grenzen); der Browser fragt aber nie danach. Das Passwort reist nur dank HTTPS
   geschützt, und es sollte lang und zufällig sein: Gegen viele Adressen hilft nur das.
+- **Downloads auf GitHub (empfohlen für eine öffentliche Seite).** Zeigen die Manifeste auf GitHub (siehe
+  «Downloads bereitstellen»), liefert der Server keine Datei mehr aus: kein Upload für Fremde, keine Download-Plätze
+  zum Belegen, und die Seite verteilt selbst keine Programme. Die Punkte zu Downloads unten gelten dann nicht.
+- **Ohne Netz im Container (optional).** Mit `LISTEN_SOCKET=/pfad/web.sock` hört der Server zusätzlich auf einer
+  Unix-Socket-Datei, über die der Proxy kommt (Caddy: `reverse_proxy unix//pfad/web.sock`). Dann braucht der
+  Container gar kein Netz (Docker `network_mode: none`): Wer eine Lücke im Server fände, käme von dort weder an den
+  Rechner noch ins Heimnetz oder ins Internet. Alles über den Socket gilt als vom Proxy (seine `X-Forwarded-For`
+  zählt, nie «lokal»); `HOST:PORT` dient dann nur noch dem Gesundheitscheck im Container. Den Ordner der
+  Socket-Datei teilen sich Container und Proxy; verbinden dürfen nur Besitzer und Gruppe. Lauscht am Pfad noch ein
+  anderer Server, startet der neue nicht (er nimmt ihm den Socket nicht weg). **Wichtig:** Der Container darf diesen
+  Ordner beschreiben, könnte die Datei also durch einen Verweis auf einen anderen Socket ersetzen, dem der Proxy
+  folgt. Darum gibt es im Proxy-Container keine anderen Unix-Sockets (nie `docker.sock` oder einen Admin-Socket
+  einbinden), und der Ordner dient nur dieser einen Seite.
 - **Signierte Download-Links.** Ein Klick auf «Laden» schickt ein Formular an `/download/mac`.
   Der Server antwortet mit einem Link, der mit HMAC-SHA256 signiert ist, nach zwei Minuten
   abläuft, höchstens dreimal benutzt werden kann und nur für die Internetadresse gilt, die ihn
@@ -187,6 +166,14 @@ ist vorbereitet, siehe `VEROEFFENTLICHEN.md`). Deshalb erklärt die Seite die Wa
 ist; sie schützen nicht davor, dass jemand den Server selbst übernimmt. Halte deshalb das
 Betriebssystem, Node und Caddy aktuell.
 
+### Geplant: öffentlich ohne Passwort (Joan, 25.11.2026)
+
+Ersetzt den Einladungslink (Issue #2) und «Das Passwort bleibt» vom 05.11.2026, dessen Grund war: Eine offene
+DuckDNS-Seite, die selbst eine unsignierte exe verteilt, würde schnell als gefährlich markiert. Darum in dieser
+Reihenfolge: zuerst kommen die Apps aus Releases des öffentlichen Repos («Downloads auf GitHub» oben), dann läuft der
+Container ohne Netz (`LISTEN_SOCKET`, Docker `network_mode: none`), Name und Kontakt stehen in der
+Datenschutzerklärung (`OPERATOR_NAME`, `CONTACT_EMAIL`) – erst dann fällt `SITE_PASSWORD` weg. Bis dahin bleibt es.
+
 ## Tests
 
 ```bash
@@ -194,19 +181,37 @@ cd Downloadseite/server
 node --test test/*.test.mjs
 ```
 
-101 Tests: Bausteine (Adressen, Links, Limits, Templates, Neuigkeiten) und der ganze Server mit echten
+140 Tests: Bausteine (Adressen, Links, Limits, Templates, Neuigkeiten, Sprachen) und der ganze Server mit echten
 Angriffsversuchen (Path Traversal, gefälschte Links, fremde Origins, Bots, Fluten, langsame Clients,
-abgelaufene Links, hängende Downloads, ersetzte Dateien, falsche Passwörter, gefälschte Login-Cookies).
+abgelaufene Links, hängende Downloads, ersetzte Dateien, falsche Passwörter, gefälschte Login-Cookies,
+falsche GitHub-Links in Manifesten, Besucheradressen über den Socket).
 
 ## Anpassen
 
-- Texte der Startseite: `public/index.html`, Datenschutz: `public/datenschutz.html`
-- Neuigkeiten (`/neuigkeiten`): die Einträge in `public/_neuigkeiten.md` (Format oben in der Datei; die Datei selbst
-  wird nie ausgeliefert), die Seite in `public/neuigkeiten.html`. `tools/release-*.sh` setzt beim Bauen die
+- Texte der Startseite: `public/index.html`, Datenschutz: `public/datenschutz.html`. Jede Seite gibt es auch auf
+  Englisch in `public/en/` (`index.html`, `privacy.html`, `whats-new.html`, `_login.html`, `_error.html`; Navigation
+  und Fusszeile in `_partials/nav-en.html`, `footer-en.html`): beide Sprachen zusammen ändern.
+- Sprachen: Deutsch unter `/`, Englisch unter `/en`. `assets/js/lang.js` (im `<head>`, vor dem Stylesheet) schickt
+  Besucher, die von aussen kommen, auf ihre Sprache: die mit dem DE/EN-Schalter gewählte (im localStorage gemerkt,
+  geht nie an den Server), sonst Deutsch, wenn der Browser Deutsch vor Englisch nennt, und sonst Englisch. Links
+  innerhalb der Seite leitet es nie um. Was der Server selbst sagt (Fehlerseiten, Login, Meldungen beim Download),
+  steht in `server/lib/lang.mjs` und folgt der Seite (`/en…`, auch die vorherige) oder `Accept-Language`.
+- Sprachen der Apps: `server/lib/languages.mjs`. Bis Mac 1.6.2 und Windows 1.4 nur Deutsch, jede neuere Version auch
+  Englisch (Releases kommen von `main`). Danach richten sich der Hinweis oben, der Satz im Download-Abschnitt und die
+  Zeile «Sprache» jeder Karte – ein neues Release schaltet die Seite von selbst um. Tests: `test/languages.test.mjs`.
+- Updates der Apps: Ist eine Mac- bzw. Windows-Version nach 1.7.1 online, sagen die Datenschutzerklärung (die eine, die
+  andere oder beide Apps) und die Hilfe der App, dass sie bei GitHub nach Updates fragt (`updatesView` in
+  `server/lib/app.mjs`: `macUpdates`, `windowsUpdates`, `appUpdates`).
+- Spenden: der gezeichnete Kaffee im Hero (`_partials/coffee.html`, `coffee-en.html`, die Tasse in `cup.html`) und
+  der Abschnitt «Wortschatz unterstützen» unten auf der Startseite verlinken Ko-fi. Nichts davon lädt etwas von dort.
+  Die Worte daneben schreiben sich Strich für Strich (`coffee-note.html`, `coffee-note-en.html`); die Dateien
+  erzeugt `tools/handschrift.py`, nur wenn sich der Text ändert, nicht von Hand ändern.
+- Neuigkeiten (`/neuigkeiten`, `/en/whats-new`): die Einträge in `public/_neuigkeiten.md` (Format oben in der Datei,
+  mit eingerückter `EN:`-Zeile für die englische Seite; die Datei selbst wird nie ausgeliefert), die Seiten in
+  `public/neuigkeiten.html` und `public/en/whats-new.html`. `tools/release-*.sh` setzt beim Bauen die
   Versionsnummer über `tools/neuigkeiten.py`.
 - Design: `public/assets/css/site.css` (oben die Farben und Radien aus dem Design-System der App)
 - Animierte App-Vorschau: `public/assets/js/demo.js`, Mesh-Hintergrund: `public/assets/js/backdrop.js`
 - Download-Knöpfe, Enter-Taste, Meldungen: `public/assets/js/site.js`
 
-Nach Änderungen in `public/` den Server neu starten (oder `kill -HUP` an den Prozess,
-`sudo systemctl reload wortschatz-web`, `docker compose restart web`).
+Nach Änderungen in `public/` den Server neu starten (oder `kill -HUP` an den Prozess).

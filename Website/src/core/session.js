@@ -406,7 +406,6 @@ export function finalStats(state) {
   const hardest = missedCards
     .map((entry, i) => ({ entry, i }))
     .sort((x, y) => y.entry.misses - x.entry.misses || x.i - y.i)
-    .slice(0, 10)
     .map(({ entry }) => entry);
 
   return {

@@ -5,6 +5,7 @@ import WortschatzCore
 /// the checkpoint or the finish screen in a scrolling column, and the floating action bar at
 /// the bottom; the message screens (everything mastered, nothing to study) on their own.
 struct LearnStage: View {
+    @Environment(\.studyScale) private var studyScale
     let controller: LearnController
     var focus: FocusState<LearnKeyRouter.Focus?>.Binding
     @Binding var selection: TextSelection?
@@ -23,7 +24,7 @@ struct LearnStage: View {
             case .question, .feedback, .copy, .checkpoint, .finished:
                 ScrollView {
                     column
-                        .frame(maxWidth: LayoutMetrics.studyColumnWidth)
+                        .frame(maxWidth: LayoutMetrics.studyColumnWidth * StudyScale.widthFactor(studyScale))
                         .padding(.horizontal, Spacing.xxl)
                         .padding(.top, topInset)
                         .padding(.bottom, Spacing.xl)
@@ -68,7 +69,7 @@ struct LearnStage: View {
             if let stats = state.finalStats {
                 LearnFinishView(
                     stats: stats, subset: state.session?.subset ?? state.subset, cards: state.cards,
-                    termLang: state.termLang, defLang: state.defLang,
+                    termLang: state.termLang, defLang: state.defLang, setID: controller.setID,
                     bestStreak: controller.streak.best, review: state.session.flatMap(LearnEngine.reviewStats))
                     .transition(.opacity)
             }
@@ -118,7 +119,7 @@ struct LearnQuestionView: View {
                     ChoiceGrid(
                         choices: question.choices.map(\.text),
                         lang: question.answerLang,
-                        state: { ChoiceTileState(LearnFlow.optionState(state, at: $0)) },
+                        state: { ChoiceTileState(LearnFlow.optionState(state, at: $0, typeAhead: typeAhead)) },
                         emphasis: { typeAhead.ranges[$0] },
                         onChoose: { controller.send(.choose($0)) })
                     // The first question's tiles rise like every later question's.
@@ -127,7 +128,7 @@ struct LearnQuestionView: View {
                     .transition(questionTransition)
                 }
                 .accessibilityElement(children: .contain)
-                .accessibilityLabel("Antworten")
+                .accessibilityLabel(Text(String(localized: "Antworten (Mehrzahl)", defaultValue: "Antworten", comment: "Noun: the answers (not the button to answer)")))
 
                 if typeAhead.isActive {
                     LearnTypeAheadHint(
@@ -191,7 +192,7 @@ private struct LearnTypeAheadHint: View {
                 .truncationMode(.head)
             if let selected = typeAhead.selected, choices.indices.contains(selected) {
                 Keycap(.returnKey, size: .small)
-                Text(AttributedString("wählt «") + LearnText.spoken(choices[selected], lang: lang) + AttributedString("»"))
+                Text(AttributedString(localized: "wählt «\(LearnText.spoken(choices[selected], lang: lang))»"))
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
             } else {

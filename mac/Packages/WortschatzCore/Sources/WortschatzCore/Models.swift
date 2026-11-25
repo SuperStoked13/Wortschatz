@@ -505,6 +505,41 @@ public struct StudyOptionsPatch: Codable, Sendable, Equatable, Hashable {
         }
         return out
     }
+
+    /// The options `touched` sets that are here the same as in `standard` dropped: a set's own
+    /// option set back to the standard is no longer its own (`LibraryStore.updateOwnStudyOptions`,
+    /// issue #8). The values in effect stay the same. Port of Windows' `DroppingStandard`.
+    public func droppingStandard(_ touched: StudyOptionsPatch, standard: StudyOptions) -> StudyOptionsPatch {
+        func drop<T: Equatable>(_ touchedValue: T?, _ value: T?, _ standardValue: T) -> T? {
+            touchedValue != nil && value == standardValue ? nil : value
+        }
+        var out = self
+        out.answerWith = drop(touched.answerWith, answerWith, standard.answerWith)
+        out.shuffle = drop(touched.shuffle, shuffle, standard.shuffle)
+        out.copyAnswer = drop(touched.copyAnswer, copyAnswer, standard.copyAnswer)
+        out.autoAdvance = drop(touched.autoAdvance, autoAdvance, standard.autoAdvance)
+        out.audio = drop(touched.audio, audio, standard.audio)
+        if let t = tolerance, let tt = touched.tolerance {
+            let s = standard.tolerance
+            let kept = TolerancePatch(
+                articles: drop(tt.articles, t.articles, s.articles),
+                abbreviations: drop(tt.abbreviations, t.abbreviations, s.abbreviations),
+                multipleAnswers: drop(tt.multipleAnswers, t.multipleAnswers, s.multipleAnswers),
+                parentheses: drop(tt.parentheses, t.parentheses, s.parentheses),
+                ignoreCase: drop(tt.ignoreCase, t.ignoreCase, s.ignoreCase),
+                ignoreAccents: drop(tt.ignoreAccents, t.ignoreAccents, s.ignoreAccents),
+                typos: drop(tt.typos, t.typos, s.typos))
+            out.tolerance = kept.isEmpty ? nil : kept
+        }
+        if let l = learn, let tl = touched.learn {
+            let s = standard.learn
+            let kept = LearnOptionsPatch(
+                roundSize: drop(tl.roundSize, l.roundSize, s.roundSize), mc: drop(tl.mc, l.mc, s.mc),
+                written: drop(tl.written, l.written, s.written), retype: drop(tl.retype, l.retype, s.retype))
+            out.learn = kept.isEmpty ? nil : kept
+        }
+        return out
+    }
 }
 
 // MARK: - Settings

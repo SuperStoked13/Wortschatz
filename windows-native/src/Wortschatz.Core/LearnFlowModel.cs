@@ -1,34 +1,44 @@
+using static Wortschatz.Core.CoreText;
+
 namespace Wortschatz.Core;
 
 // Port of LearnFlowModel.swift: pure helpers of the Learn screen, a port of src/screens/learn-model.js
 // (praise, resuming a stored session and its open "Nicht ganz" screen, options that need a restart,
-// option texts after edits, checkpoint status, the segmented progress bar and the German copy texts) and
-// of the parts of src/screens/write-model.js the Learn screen uses. Swiss spelling: "ss", never "ß".
+// option texts after edits, checkpoint status, the segmented progress bar and the copy texts – German source, Swiss
+// spelling ("ss", never "ß"), translated with CoreText.L) and of the parts of src/screens/write-model.js the Learn
+// screen uses.
 
 public static partial class LearnFlow
 {
     // MARK: - Copy
 
     /// <summary>Praise after a correct answer, varied (never the same twice in a row).</summary>
-    public static readonly string[] PRAISE = ["Super!", "Klasse!", "Genau!", "Weiter so!", "Stark!"];
+    public static string[] PRAISE => [L("Super!"), L("Klasse!"), L("Genau!"), L("Weiter so!"), L("Stark!")];
     /// <summary>Title after a wrong answer.</summary>
-    public const string MISS_TITLE = "Nicht ganz – das lernst du noch!";
+    public static string MISS_TITLE => L("Nicht ganz – das lernst du noch!");
     /// <summary>Title after "Weiss ich nicht?" (short enough for one line).</summary>
-    public const string DONT_KNOW_TITLE = "Kein Problem – merk sie dir!";
+    public static string DONT_KNOW_TITLE => L("Kein Problem – merk sie dir!");
     /// <summary>Title of a correct answer that belongs to another card with the same prompt.</summary>
-    public const string SYNONYM_TITLE = "Auch richtig!";
+    public static string SYNONYM_TITLE => L("Auch richtig!");
     /// <summary>Title of a correct answer that was accepted with a tolerance (not exact).</summary>
-    public const string TOLERATED_TITLE = "Richtig!";
+    public static string TOLERATED_TITLE => L("Richtig!");
     /// <summary>The intro hint shown until the first checkpoint.</summary>
-    public const string INTRO_HINT = "Neue Begriffe kommen zuerst als Multiple Choice – beim nächsten Mal schreibst du sie.";
+    public static string INTRO_HINT => L("Neue Begriffe kommen zuerst als Multiple Choice – beim nächsten Mal schreibst du sie.");
     /// <summary>Shown when the edited card now accepts what was typed.</summary>
-    public const string EDITED_CORRECT_TEXT = "Mit deiner Korrektur stimmt deine Antwort jetzt.";
+    public static string EDITED_CORRECT_TEXT => L("Mit deiner Korrektur stimmt deine Antwort jetzt.");
     /// <summary>Toast when a session is resumed with answers.</summary>
-    public const string WELCOME_BACK = "Willkommen zurück – weiter geht's";
+    public static string WELCOME_BACK => L("Willkommen zurück – weiter geht's");
     /// <summary>The mark of a repetition question (Wiederholungsfrage) of a mastered card.</summary>
-    public const string REVIEW_LABEL = "Wiederholung";
+    public static string REVIEW_LABEL => L("Wiederholung");
     /// <summary>After a missed repetition question: the card is learned again.</summary>
-    public const string DEMOTED_TEXT = "Wieder am Lernen";
+    public static string DEMOTED_TEXT => L("Wieder am Lernen");
+    /// <summary>The mark of a recheck (Nachkontrolle) of a card missed earlier in the session.</summary>
+    public static string RECHECK_LABEL => L("Nachkontrolle");
+    /// <summary>Its tooltip.</summary>
+    public static string RECHECK_HELP => L("Diesen Begriff hattest du vorhin falsch. Er kommt zur Kontrolle nochmals.");
+    /// <summary>The hint at the first recheck of a session (a toast with "Optionen", RECHECK_HINT_MS long).</summary>
+    public static string RECHECK_HINT => L("Merke: Die Nachkontrolle kannst du in den Optionen ausschalten.");
+    public const int RECHECK_HINT_MS = 10_000;
 
     /// <summary>Auto-advance after a correct answer, and after one with notes ("Genau: …" needs reading).</summary>
     public const int ADVANCE_MS = 900;
@@ -147,43 +157,52 @@ public static partial class LearnFlow
         return output;
     }
 
-    /// <summary>"Neu starten?" after options that only apply to a new session.</summary>
-    public static string RestartMessage(IReadOnlyList<SettingsChange> changes)
+    /// <summary>The options a running session is checked against: its own repetition questions and rechecks (they apply at once).</summary>
+    public static SessionSettings CurrentSettingsOf(StudyOptions options, LearnState session) =>
+        SessionSettingsOf(options, session.Review is not null, session.Recheck is not null);
+
+    /// <summary>The settings «Später» keeps (KeptOptions.Settings): direction, question types, round size.</summary>
+    public static JSONValue KeptSettingsJson(SessionSettings s) =>
+        JSONValue.Obj(("answerWith", s.AnswerWith.ToJson()), ("roundSize", s.RoundSize), ("mc", s.Mc), ("written", s.Written));
+
+    /// <summary>
+    /// The note at the top of Lernen's options while the session runs with other settings than the options show (changed
+    /// elsewhere, «Später»; issue #7); null when they match.
+    /// </summary>
+    public static string? RunningSettingsNote(State s)
     {
-        var lead = changes.Count == 1
-            ? changes[0] switch
-            {
-                SettingsChange.Direction => "Die neue Abfragerichtung gilt",
-                SettingsChange.Types => "Die neuen Fragetypen gelten",
-                SettingsChange.RoundSize => "Die neue Rundengrösse gilt",
-                SettingsChange.Recheck => "Die Einstellung für die Nachkontrolle gilt",
-                _ => "Die Einstellung für Wiederholungsfragen gilt",
-            }
-            : "Die neuen Einstellungen gelten";
-        return $"{lead} ab einem Neustart. Jetzt neu beginnen? Dein Lernfortschritt bleibt gespeichert.";
+        if (s.Session is not { FinishedAt: null } session) return null;
+        var changes = SettingsChanges(SessionSettingsOf(session), CurrentSettingsOf(s.Options, session));
+        if (changes.Count == 0) return null;
+        // One whole sentence per change.
+        if (changes.Count > 1) return L("Diese Lerneinheit läuft noch mit den bisherigen Einstellungen. Mit «Neu starten» gelten die Optionen von hier.");
+        return changes[0] switch
+        {
+            SettingsChange.Direction => L("Diese Lerneinheit läuft noch mit der bisherigen Abfragerichtung. Mit «Neu starten» gelten die Optionen von hier."),
+            SettingsChange.Types => L("Diese Lerneinheit läuft noch mit den bisherigen Fragetypen. Mit «Neu starten» gelten die Optionen von hier."),
+            _ => L("Diese Lerneinheit läuft noch mit der bisherigen Rundengrösse. Mit «Neu starten» gelten die Optionen von hier."),
+        };
     }
+
+    /// <summary>"Neu starten?" after options that only apply to a new session.</summary>
+    public static string RestartMessage(IReadOnlyList<SettingsChange> changes) => changes.Count == 1
+        ? changes[0] switch
+        {
+            SettingsChange.Direction => L("Die neue Abfragerichtung gilt ab einem Neustart. Jetzt neu beginnen? Dein Lernfortschritt bleibt gespeichert."),
+            SettingsChange.Types => L("Die neuen Fragetypen gelten ab einem Neustart. Jetzt neu beginnen? Dein Lernfortschritt bleibt gespeichert."),
+            SettingsChange.RoundSize => L("Die neue Rundengrösse gilt ab einem Neustart. Jetzt neu beginnen? Dein Lernfortschritt bleibt gespeichert."),
+            SettingsChange.Recheck => L("Die Einstellung für die Nachkontrolle gilt ab einem Neustart. Jetzt neu beginnen? Dein Lernfortschritt bleibt gespeichert."),
+            _ => L("Die Einstellung für Wiederholungsfragen gilt ab einem Neustart. Jetzt neu beginnen? Dein Lernfortschritt bleibt gespeichert."),
+        }
+        : L("Die neuen Einstellungen gelten ab einem Neustart. Jetzt neu beginnen? Dein Lernfortschritt bleibt gespeichert.");
 
     /// <summary>"Neu starten?" in a running session: what the new one covers.</summary>
-    public static string RestartSessionMessage(StudySubset? subset = null)
+    public static string RestartSessionMessage(StudySubset? subset = null) => (subset ?? StudySubset.All).Kind switch
     {
-        var what = (subset ?? StudySubset.All).Kind switch
-        {
-            StudySubsetKind.Starred => "mit allen markierten Begriffen, die noch nicht sitzen",
-            StudySubsetKind.Missed => "mit allen zuletzt falsch beantworteten Begriffen",
-            StudySubsetKind.CardIds => "mit den ausgewählten Begriffen, die noch nicht sitzen",
-            _ => "mit allen Begriffen, die noch nicht sitzen",
-        };
-        return $"Du beginnst eine neue Lerneinheit {what}. Dein Lernfortschritt bleibt gespeichert.";
-    }
-
-    /// <summary>What a new session with a subset asks (for "Laufende Lerneinheit beenden?").</summary>
-    public static string SubsetWhat(StudySubset subset) => subset.Kind switch
-    {
-        StudySubsetKind.All => "alle Begriffe",
-        StudySubsetKind.Starred => "nur die markierten Begriffe",
-        StudySubsetKind.Learning => "nur die nicht gemeisterten Begriffe",
-        StudySubsetKind.Missed => "nur die zuletzt falsch beantworteten Begriffe",
-        _ => "eine neue Auswahl",
+        StudySubsetKind.Starred => L("Du beginnst eine neue Lerneinheit mit allen markierten Begriffen, die noch nicht sitzen. Dein Lernfortschritt bleibt gespeichert."),
+        StudySubsetKind.Missed => L("Du beginnst eine neue Lerneinheit mit allen zuletzt falsch beantworteten Begriffen. Dein Lernfortschritt bleibt gespeichert."),
+        StudySubsetKind.CardIds => L("Du beginnst eine neue Lerneinheit mit den ausgewählten Begriffen, die noch nicht sitzen. Dein Lernfortschritt bleibt gespeichert."),
+        _ => L("Du beginnst eine neue Lerneinheit mit allen Begriffen, die noch nicht sitzen. Dein Lernfortschritt bleibt gespeichert."),
     };
 
     // MARK: - Question texts
@@ -209,10 +228,10 @@ public static partial class LearnFlow
         IReadOnlyList<Choice> stored = q.Type == QuestionType.Mc ? q.Choices ?? [] : [];
         return new QuestionInfo(q.Qid, card.Id, q.Type, q.Ask, askTerm ? card.Definition : card.Term, askTerm ? card.Term : card.Definition,
             promptLang, answerLang,
-            sameLang || promptLang == Lang.Other ? (askTerm ? "Definition" : "Begriff") : Labels.LangName(promptLang),
-            sameLang || answerLang == Lang.Other ? "Antwort eingeben" : $"Antwort auf {Labels.LangName(answerLang)} eingeben",
-            sameLang || answerLang == Lang.Other ? "Antwort eingeben" : $"Auf {Labels.LangName(answerLang)} …",
-            card.Starred, ChoiceTexts(stored, cards, q.Ask), stored, q.IsReview);
+            sameLang || promptLang == Lang.Other ? (askTerm ? L("Definition") : L("Begriff")) : Labels.LangName(promptLang),
+            sameLang || answerLang == Lang.Other ? L("Antwort eingeben") : L($"Antwort auf {Labels.LangName(answerLang)} eingeben"),
+            sameLang || answerLang == Lang.Other ? L("Antwort eingeben") : L($"Auf {Labels.LangName(answerLang)} …"),
+            card.Starred, ChoiceTexts(stored, cards, q.Ask), stored, q.IsReview, q.IsRecheck);
     }
 
     /// <summary>
@@ -237,47 +256,46 @@ public static partial class LearnFlow
 
     /// <summary>Gemeistert / Am Lernen / Noch neu.</summary>
     public static StageStatus StageStatusOf(int stage) =>
-        stage >= 2 ? new(CardStatus.Mastered, "Gemeistert", Tone.Success, "checkmark")
-        : stage == 1 ? new(CardStatus.Learning, "Am Lernen", Tone.Warning, null)
-        : new(CardStatus.New, "Noch neu", Tone.Neutral, null);
+        stage >= 2 ? new(CardStatus.Mastered, L("Gemeistert"), Tone.Success, "checkmark")
+        : stage == 1 ? new(CardStatus.Learning, L("Am Lernen"), Tone.Warning, null)
+        : new(CardStatus.New, L("Noch neu"), Tone.Neutral, null);
 
     /// <summary>The checkpoint chip of a card answered in the round: stage 0 there means "answered wrong" (Am Lernen, not Neu).</summary>
     public static StageStatus CheckpointStatus(int stage) => StageStatusOf(stage >= 1 ? stage : 1);
 
     /// <summary>"18 von 52 gemeistert"</summary>
-    public static string MasteredLine(int mastered, int total) => $"{mastered} von {total} gemeistert";
+    public static string MasteredLine(int mastered, int total) => L($"{mastered} von {total} gemeistert");
 
     /// <summary>The checkpoint title by the round's share of correct answers.</summary>
     public static string CheckpointTitle(double ratio) =>
-        ratio >= 0.9 ? "Hervorragend!" : ratio >= 0.7 ? "Gut gemacht!" : ratio >= 0.4 ? "Du machst Fortschritte!" : "Dranbleiben – das wird!";
+        ratio >= 0.9 ? L("Hervorragend!") : ratio >= 0.7 ? L("Gut gemacht!") : ratio >= 0.4 ? L("Du machst Fortschritte!") : L("Dranbleiben – das wird!");
 
     /// <summary>What is left after a checkpoint, e.g. "Noch 34 Begriffe, bis alles sitzt."</summary>
     public static string RemainingText(int mastered, int total)
     {
         int left = Math.Max(0, total - mastered);
-        return left == 0 ? "Alles sitzt!" : $"Noch {Labels.Plural(left, "Begriff", "Begriffe")}, bis alles sitzt.";
+        return left == 0 ? L("Alles sitzt!") : L($"Noch {Labels.Plural(left, "Begriff", "Begriffe")}, bis alles sitzt.");
     }
 
     /// <summary>"5 richtige Antworten von 7 in dieser Runde. Noch 34 Begriffe, bis alles sitzt."</summary>
     public static string CheckpointText(LearnEngine.Checkpoint cp) =>
-        $"{Labels.Plural(cp.Correct, "richtige Antwort", "richtige Antworten")} von {cp.Answered} in dieser Runde. "
-        + RemainingText(cp.Counts.Mastered, cp.Counts.Total);
+        L($"{Labels.Plural(cp.Correct, "richtige Antwort", "richtige Antworten")} von {cp.Answered} in dieser Runde. {RemainingText(cp.Counts.Mastered, cp.Counts.Total)}");
 
-    /// <summary>The adjective naming a session's scope ("markierten ", …, with a trailing space; "" for the whole set).</summary>
-    static string ScopeAdjective(StudySubset subset) => subset.Kind switch
-    {
-        StudySubsetKind.CardIds => "ausgewählten ",
-        StudySubsetKind.Starred => "markierten ",
-        StudySubsetKind.Learning => "offenen ",
-        StudySubsetKind.Missed => "falsch beantworteten ",
-        _ => "",
-    };
-
-    /// <summary>"Du hast alle markierten Begriffe gemeistert!" (the finish screen's title).</summary>
+    /// <summary>
+    /// "Du hast alle markierten Begriffe gemeistert!" (the finish screen's title). The scope's adjective (ausgewählten,
+    /// markierten, offenen, falsch beantworteten; none for the whole set) is part of each whole sentence.
+    /// </summary>
     public static string FinishTitle(StudySubset? subset = null, int total = 2)
     {
-        var adj = ScopeAdjective(subset ?? StudySubset.All);
-        return total == 1 ? $"Du hast den {adj}Begriff gemeistert!" : $"Du hast alle {adj}Begriffe gemeistert!";
+        bool one = total == 1;
+        return (subset ?? StudySubset.All).Kind switch
+        {
+            StudySubsetKind.CardIds => one ? L("Du hast den ausgewählten Begriff gemeistert!") : L("Du hast alle ausgewählten Begriffe gemeistert!"),
+            StudySubsetKind.Starred => one ? L("Du hast den markierten Begriff gemeistert!") : L("Du hast alle markierten Begriffe gemeistert!"),
+            StudySubsetKind.Learning => one ? L("Du hast den offenen Begriff gemeistert!") : L("Du hast alle offenen Begriffe gemeistert!"),
+            StudySubsetKind.Missed => one ? L("Du hast den falsch beantworteten Begriff gemeistert!") : L("Du hast alle falsch beantworteten Begriffe gemeistert!"),
+            _ => one ? L("Du hast den Begriff gemeistert!") : L("Du hast alle Begriffe gemeistert!"),
+        };
     }
 
     /// <summary>
@@ -286,14 +304,46 @@ public static partial class LearnFlow
     /// </summary>
     public static string FinishSubtitle(int total, int rounds, int alreadyMastered = 0, StudySubset? subset = null)
     {
-        var when = rounds > 0 ? $" in {Labels.Plural(rounds, "Runde", "Runden")}" : "";
         int before = Math.Max(0, alreadyMastered);
         int learned = total - before;
         if (before > 0 && learned > 0)
-            return $"{Labels.Plural(learned, "Begriff", "Begriffe")}{when} gemeistert, {before} {(before == 1 ? "sass" : "sassen")} schon vorher – stark!";
-        var adj = ScopeAdjective(subset ?? StudySubset.All);
-        var what = total == 1 ? $"Den {adj}Begriff" : $"Alle {total} {adj}Begriffe";
-        return $"{what}{when} gemeistert – stark!";
+        {
+            var cards = Labels.Plural(learned, "Begriff", "Begriffe");
+            if (rounds > 0)
+            {
+                var inRounds = Labels.Plural(rounds, "Runde", "Runden");
+                return before == 1
+                    ? L($"{cards} in {inRounds} gemeistert, {before} sass schon vorher – stark!")
+                    : L($"{cards} in {inRounds} gemeistert, {before} sassen schon vorher – stark!");
+            }
+            return before == 1 ? L($"{cards} gemeistert, {before} sass schon vorher – stark!") : L($"{cards} gemeistert, {before} sassen schon vorher – stark!");
+        }
+        if (rounds > 0) return FinishSubtitleInRounds(subset ?? StudySubset.All, total, Labels.Plural(rounds, "Runde", "Runden"));
+        bool one = total == 1;
+        return (subset ?? StudySubset.All).Kind switch
+        {
+            StudySubsetKind.CardIds => one ? L("Den ausgewählten Begriff gemeistert – stark!") : L($"Alle {total} ausgewählten Begriffe gemeistert – stark!"),
+            StudySubsetKind.Starred => one ? L("Den markierten Begriff gemeistert – stark!") : L($"Alle {total} markierten Begriffe gemeistert – stark!"),
+            StudySubsetKind.Learning => one ? L("Den offenen Begriff gemeistert – stark!") : L($"Alle {total} offenen Begriffe gemeistert – stark!"),
+            StudySubsetKind.Missed => one ? L("Den falsch beantworteten Begriff gemeistert – stark!") : L($"Alle {total} falsch beantworteten Begriffe gemeistert – stark!"),
+            _ => one ? L("Den Begriff gemeistert – stark!") : L($"Alle {total} Begriffe gemeistert – stark!"),
+        };
+    }
+
+    /// <summary>FinishSubtitle with rounds ("Alle 3 markierten Begriffe in 2 Runden gemeistert – stark!"); rounds is the plural text ("2 Runden").</summary>
+    static string FinishSubtitleInRounds(StudySubset subset, int total, string rounds)
+    {
+        bool one = total == 1;
+        return subset.Kind switch
+        {
+            StudySubsetKind.CardIds => one ? L($"Den ausgewählten Begriff in {rounds} gemeistert – stark!") : L($"Alle {total} ausgewählten Begriffe in {rounds} gemeistert – stark!"),
+            StudySubsetKind.Starred => one ? L($"Den markierten Begriff in {rounds} gemeistert – stark!") : L($"Alle {total} markierten Begriffe in {rounds} gemeistert – stark!"),
+            StudySubsetKind.Learning => one ? L($"Den offenen Begriff in {rounds} gemeistert – stark!") : L($"Alle {total} offenen Begriffe in {rounds} gemeistert – stark!"),
+            StudySubsetKind.Missed => one
+                ? L($"Den falsch beantworteten Begriff in {rounds} gemeistert – stark!")
+                : L($"Alle {total} falsch beantworteten Begriffe in {rounds} gemeistert – stark!"),
+            _ => one ? L($"Den Begriff in {rounds} gemeistert – stark!") : L($"Alle {total} Begriffe in {rounds} gemeistert – stark!"),
+        };
     }
 
     public static string FinishSubtitle(LearnEngine.FinalStats stats, StudySubset? subset = null) =>
@@ -305,19 +355,13 @@ public static partial class LearnFlow
         if (stats.Asked <= 0) return null;
         var asked = Labels.Plural(stats.Asked, "gemeisterten Begriff", "gemeisterte Begriffe");
         int missed = stats.Asked - stats.Kept;
-        if (missed == 0) return $"{asked} wiederholt, {(stats.Asked == 1 ? "er sass" : "alle sassen")} noch.";
-        return $"{asked} wiederholt, {missed} davon {(missed == 1 ? "ist" : "sind")} wieder am Lernen.";
-    }
-
-    /// <summary>How many cards a scope covers, for the "everything mastered" screen.</summary>
-    public static string ScopeText(StudySubset subset, int count)
-    {
-        if (subset.Equals(StudySubset.Starred)) return count == 1 ? "den markierten Begriff" : $"alle {count} markierten Begriffe";
-        return count == 1 ? "den Begriff" : $"alle {count} Begriffe";
+        if (missed == 0) return stats.Asked == 1 ? L($"{asked} wiederholt, er sass noch.") : L($"{asked} wiederholt, alle sassen noch.");
+        return missed == 1 ? L($"{asked} wiederholt, {missed} davon ist wieder am Lernen.") : L($"{asked} wiederholt, {missed} davon sind wieder am Lernen.");
     }
 
     /// <summary>"18 von 52 gemeistert, 7 am Lernen, 27 neu"</summary>
-    public static string ProgressText(int fresh, int learning, int mastered, int total) => $"{MasteredLine(mastered, total)}, {learning} am Lernen, {fresh} neu";
+    public static string ProgressText(int fresh, int learning, int mastered, int total) =>
+        L($"{mastered} von {total} gemeistert, {learning} am Lernen, {fresh} neu");
 
     public static string ProgressText(LearnEngine.Counts counts) => ProgressText(counts.Fresh, counts.Learning, counts.Mastered, counts.Total);
 
@@ -329,20 +373,6 @@ public static partial class LearnFlow
         if (total <= 0) return 1;
         int size = (roundSize ?? 0) >= 1 ? roundSize!.Value : DefaultRoundSize;
         return Math.Max(1, Math.Min(MAX_SEGMENTS, (total + size - 1) / size));
-    }
-
-    /// <summary>The fill of one bar segment (0…1): mastered (green) and reached = mastered + learning.</summary>
-    public sealed record SegmentFill(double Mastered, double Reached);
-
-    /// <summary>Fills the bar from the left: mastered, then learning.</summary>
-    public static List<SegmentFill> SegmentFills(int mastered, int learning, int total, int count)
-    {
-        int n = Math.Max(1, count);
-        double t = Math.Max(0, total);
-        double Share(int v) => t > 0 ? Math.Max(0, v) / t * n : 0;
-        double m = Share(mastered), r = Share(mastered + learning);
-        static double Clamp01(double v) => Math.Min(1, Math.Max(0, v));
-        return Enumerable.Range(0, n).Select(i => new SegmentFill(Clamp01(m - i), Clamp01(r - i))).ToList();
     }
 
     // MARK: - Internals

@@ -1,4 +1,5 @@
 using Wortschatz.Core;
+using static Wortschatz.Core.CoreText;
 
 namespace Wortschatz.App;
 
@@ -152,13 +153,29 @@ public sealed class LearnResume
     }
 
     /// <summary>"Runde 3" or "Runde 3 geschafft".</summary>
-    public string RoundText => RoundOver ? $"Runde {Round} geschafft" : $"Runde {Round}";
+    public string RoundText => RoundOver ? L($"Runde {Round} geschafft") : L($"Runde {Round}");
     /// <summary>"18 von 52 gemeistert".</summary>
-    public string MasteredText => $"{Counts.Mastered} von {Counts.Total} gemeistert";
+    public string MasteredText => L($"{Counts.Mastered} von {Counts.Total} gemeistert");
     /// <summary>"Nur markierte · Runde 3 · 18 von 52 gemeistert".</summary>
-    public string Detail => StudyCopy.Join(StudyCopy.SubsetLabel(Subset, "Ausgewählte Begriffe"), RoundText, MasteredText);
-    /// <summary>"Runde 3 · 18/52" or "Runde 3 · 0/3 markierte".</summary>
-    public string ShortDetail => $"{RoundText} · {Counts.Mastered}/{Counts.Total}{(StudyCopy.SubsetNoun(Subset) is { } n ? " " + n : "")}";
+    public string Detail => StudyCopy.Join(StudyCopy.SubsetLabel(Subset, L("Ausgewählte Begriffe")), RoundText, MasteredText);
+
+    /// <summary>"Runde 3 · 18/52" or "Runde 3 · 0/3 markierte" (one whole text per subset, Mac: shortDetail).</summary>
+    public string ShortDetail
+    {
+        get
+        {
+            int mastered = Counts.Mastered, total = Counts.Total;
+            string count = Subset.Kind switch
+            {
+                StudySubsetKind.Starred => L($"{mastered}/{total} markierte"),
+                StudySubsetKind.Learning => L($"{mastered}/{total} offene"),
+                StudySubsetKind.Missed => L($"{mastered}/{total} falsche"),
+                StudySubsetKind.CardIds => L($"{mastered}/{total} ausgewählte"),
+                _ => $"{mastered}/{total}",
+            };
+            return $"{RoundText} · {count}";
+        }
+    }
     public double ProgressValue => Counts.Progress;
 }
 
@@ -186,49 +203,40 @@ public sealed class WriteResume
     }
 
     /// <summary>"Runde 2 · 5 übrig" or "Runde 2 geschafft".</summary>
-    public string RoundText => Counters.Remaining == 0 ? $"Runde {Counters.Round} geschafft" : $"Runde {Counters.Round} · {Counters.Remaining} übrig";
+    public string RoundText => Counters.Remaining == 0 ? L($"Runde {Counters.Round} geschafft") : L($"Runde {Counters.Round} · {Counters.Remaining} übrig");
 
     public string Detail
     {
         get
         {
-            var parts = new List<string?> { StudyCopy.SubsetLabel(Subset, "Falsche Begriffe") };
+            var parts = new List<string?> { StudyCopy.SubsetLabel(Subset, L("Falsche Begriffe")) };
             if (Counters.Remaining > 0)
             {
-                parts.Add($"Runde {Counters.Round}");
-                parts.Add($"{Counters.Remaining} übrig");
+                parts.Add(L($"Runde {Counters.Round}"));
+                parts.Add(L($"{Counters.Remaining} übrig"));
             }
             else
             {
-                parts.Add($"Runde {Counters.Round} geschafft");
-                if (Counters.Incorrect > 0) parts.Add($"{Counters.Incorrect} zum Wiederholen");
+                parts.Add(L($"Runde {Counters.Round} geschafft"));
+                if (Counters.Incorrect > 0) parts.Add(L($"{Counters.Incorrect} zum Wiederholen"));
             }
             return StudyCopy.Join([.. parts]);
         }
     }
 
-    public string ShortDetail => Counters.Remaining > 0 ? $"{Counters.Remaining} übrig" : "Runde geschafft";
+    public string ShortDetail => Counters.Remaining > 0 ? L($"{Counters.Remaining} übrig") : L("Runde geschafft");
     public double ProgressValue => Counters.Progress;
 }
 
-/// <summary>German copy shared by the overview, the sidebar and the set page (Mac: StudyCopy).</summary>
+/// <summary>Copy shared by the overview, the sidebar and the set page, in the app's language (Mac: StudyCopy).</summary>
 public static class StudyCopy
 {
     public static string? SubsetLabel(StudySubset subset, string objectLabel) => subset.Kind switch
     {
-        StudySubsetKind.Starred => "Nur markierte",
-        StudySubsetKind.Learning => "Nur nicht gemeisterte",
-        StudySubsetKind.Missed => "Nur falsche",
+        StudySubsetKind.Starred => L("Nur markierte"),
+        StudySubsetKind.Learning => L("Nur nicht gemeisterte"),
+        StudySubsetKind.Missed => L("Nur falsche"),
         StudySubsetKind.CardIds => objectLabel,
-        _ => null,
-    };
-
-    public static string? SubsetNoun(StudySubset subset) => subset.Kind switch
-    {
-        StudySubsetKind.Starred => "markierte",
-        StudySubsetKind.Learning => "offene",
-        StudySubsetKind.Missed => "falsche",
-        StudySubsetKind.CardIds => "ausgewählte",
         _ => null,
     };
 

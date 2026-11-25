@@ -85,7 +85,7 @@ Die Flows (`WriteFlow`, später `LearnFlow`) sind reine Reducer: `(State, Event,
 | `Labels.swift` | `Labels.cs` | – |
 | `TextMemo.swift` | `TextMemo.cs` | – |
 | `Synonyms.swift` | `Synonyms.cs` | `SynonymsParityTests` |
-| `ExtendedSynonyms.swift` | `ExtendedSynonyms.cs` (nur der reine Teil; Windows hat kein Apple-Sprachmodell, die App übergibt keine `extraAnswers`) | – |
+| `ExtendedSynonyms.swift` | `ExtendedSynonyms.cs` (reiner Teil) + `ExtendedSynonyms.Thesaurus.cs`, `SynonymLexicon.cs`: statt Apple-Sprachmodell eingebaute Synonymwörterbücher (`SynonymData/README.md`) | – |
 | `LangDetect.swift` | `LangDetect.cs` | `LangDetectParityTests` |
 | `LangDetectLexicon.swift` | `LangDetectLexicon.cs` (**generiert**: `node windows-native/tools/gen-langdetect-lexicon.mjs`) | – |
 
@@ -113,6 +113,7 @@ die JS-Muster direkt über `JsRegex`.
 | `LearnFlowModel.swift` | `LearnFlowModel.cs` (`questionInfo` → `QuestionInfoOf`, `pendingFeedback` → `PendingFeedbackOf`, `sessionSettings` → `SessionSettingsOf`, `stageStatus` → `StageStatusOf`) | über `LearnFlowTests` |
 | `LearnFlowReducer.swift` | `LearnFlowReducer.cs` (Methode für Methode; `Graphemes` bildet Swifts `Character`-Zählung für getippte Buchstaben nach) | `LearnFlowTests`, `LearnTypeAheadTests` |
 | `LearnEngine.swift` | `LearnEngine.cs` | `LearnEngineParityTests` (Fixture `learn`), `LearnReviewTests` (Wiederholungsfragen, nur Mac) |
+| `WordClass.swift` | `WordClass.cs` (Wortart und Ähnlichkeit der Multiple-Choice-Antworten; `sideProfile` → `SideProfileOf`, `textClass` → `TextClassOf`, `optionShape` → `OptionShapeOf`, `listProfiles` → `ListProfilesOf`) | `WordClassParityTests` (Fixture `wordclass`) |
 | `TextLayout.swift` | `TextLayout.cs` (`TextItem`, `LayoutOptions`, `BaselineSegment`, `ItemsToLines`, `EstimateSlope`, `DeskewItems`; nach `layout.js` mit UTF-16-Indizes) | `TextLayoutParityTests` (Fixture `layout`, 4 Teile), `TextLayoutTests`, `TextLayoutScriptsTests` |
 | `OCRPostprocess.swift` | `OCRPostprocess.cs` (`joinCJK` → `JoinCJK`) | `OCRPostprocessParityTests` (Fixture `ocr`), `OCRPostprocessTests`, `OCRPostprocessCJKTests` |
 
@@ -201,6 +202,9 @@ Die Oberfläche ist **C#-Code, kein XAML**: eine SwiftUI-Datei ↔ eine C#-Datei
 | SF Symbols | `DesignSystem/Icons.cs` (`IconName`, Pfade 24×24; `Icons.ForSymbol("trophy")` für Namen aus den Flows) |
 | Mesh-Hintergrund | `DesignSystem/Backdrop.cs` |
 | `Features/Library/LibrarySidebar.swift` | `Features/Library/LibrarySidebar.cs` |
+| `Features/Library/UpdateNoticeCard.swift` | `Features/Library/UpdateNoticeCard.cs` (Popover → Blatt mit allen Neuerungen) |
+| `Features/Settings/SettingsUpdateSection.swift` | `Features/Settings/SettingsUpdateSection.cs` (Teil von `SettingsScreen`) |
+| `Services/AppUpdater.swift` (Sparkle), `Services/UpdateFeed.swift` | `Services/AppUpdater.cs`, `HttpUpdateTransport.cs`; Kern `UpdateFeed.cs`, `UpdateDownload.cs` (was Sparkle tut: Signatur, Laden, Ersetzen) |
 | `Features/Overview/*` | `Features/Overview/OverviewScreen.cs` |
 | `Features/SetDetail/*` | `Features/SetDetail/SetDetailScreen.cs` |
 | `Features/Learn/LearnController.swift` | `Features/Learn/LearnController.cs` (Effekte → Speicher/Timer/Sprache) |
@@ -225,6 +229,53 @@ Noch nicht portiert (bewusste Lücken, Stand 3.11.2026): Menüleisten-Befehle (W
 Kürzel gibt es), App-Updates (bewusst nicht, auch auf dem Mac verworfen), Tippfehler in der Import-Vorschau (Mac:
 ImportDetectionPanel; hier nur in der Kartenliste). Windows-Dienste: `Services/ImportServices.cs` (PDF, Bilder, OCR),
 `Services/WindowsSpellEngine.cs` (Rechtschreibung), `DesignSystem/Announcer.cs` (Bildschirmleser).
+
+Seit 24.11.2026 auf beiden: «Wiederholungsfragen» und «Nachkontrolle» gelten sofort, auch für angefangenes Lernen
+(Mac 99c6f42/83edec5; Windows: `README.md` › «Anthonys Issues #7, #8 und #9»).
+
+### Mac und Windows gleichziehen (Vergleich beider Apps, 25.11.2026)
+
+Joan: «alle Features der Mac-App auf Windows und umgekehrt». Von Mac nach Windows fehlt nichts ausser Apple-Eigenem
+(Apple Intelligence – Windows nimmt eingebaute Synonymwörterbücher –, Force Touch, Menüleiste); Englisch hat Windows seit
+25.11.2026 auch. Joans Liste, was dem Mac fehlte, und der Stand auf dem Mac (Anthony, 25.11.2026):
+1. **#7 Optionen, die ausserhalb der Sitzung geändert wurden** – Mac erledigt, aber **anders als Windows**: Richtung,
+   Fragetypen, Rundengrösse (Lernen) bzw. Richtung und «Mischen» (Schreiben) gelten **sofort**, wo man sie auch ändert
+   (Optionen der Sitzung, des Lernsets, Einstellungen), und eine gespeicherte Sitzung folgt ihnen beim Weitermachen;
+   kein «Neu starten?» mehr (Anthony: «ungeniert weiter lernen mit den neuen Einstellungen aktiv statt neu starten
+   zu müssen»). Lernen: die Stufen bleiben, die noch kommenden Fragen der Runde (auch die auf dem Bildschirm) kommen
+   in der neuen Richtung und mit den neuen Fragetypen; eine kleinere Runde endet früher, eine grössere gilt ab der
+   nächsten. Schreiben: Richtiges bleibt richtig; die andere Richtung dreht die Fragen um (mit ihren Antworten), eine
+   Richtung dazu bringt eine Frage pro Karte noch in dieser Runde, eine Richtung weg nimmt ihre offenen Fragen heraus;
+   «Mischen» ordnet die kommenden Fragen neu. Mac: `LearnEngine.setOptions`, `WriteSession.setOptions`, Tests
+   `OptionsAtOnceTests.swift`. **Für Windows offen:** ebenso umbauen statt `KeptOptions`/`AskForChangedOptions`
+   (`LearnFlowReducer.cs`/`WriteFlowMachine.cs`, Tests `OptionsChangedElsewhereTests.cs`).
+2. **#8 Option zurück auf den Standard ist keine eigene mehr** – Mac erledigt wie Windows:
+   `StudyOptionsPatch.droppingStandard`, `LibraryStore.updateOwnStudyOptions`, Tests `OwnStudyOptionsTests.swift`.
+3. **Editor «Zweimal dieselbe Sprache?»** – Mac erledigt (`SetEditorActionBar.status`).
+4. **Lernbildschirme wachsen auf grossen Bildschirmen** (Windows: als Ganzes um min(Breite/1280, Höhe/800), mindestens
+   1, `MainView.StudyScale`) – **Mac erledigt** (25.11.2026), anders gelöst: SwiftUI vergrössert mit `scaleEffect`
+   Text als Bild (weich); darum rechnen die Hauptgrössen mit einem Faktor (`studyScale`, siehe «Mac, 25.11.2026» unten):
+   Spalte, Fragen-, Antwort- und Kartenschrift, Antwortkacheln. Abstände und Leisten wachsen nicht mit.
+5. **Lange Wörter mit Silbentrennung** – Mac erledigt: Schrift höchstens auf etwa 70 % (nie unter 26), dann Trennung
+   nach Silben mit «-» (`LongWords` im Kern wie `StudyText.FitWords`, `LongWordText` in der App), mit der
+   Silbentrennung des Systems statt der hyph-utf8-Muster; die Trennstellen können darum leicht abweichen. Der Mac
+   trennt Karteikarten und die Fragen beim Lernen und Schreiben (Windows auf dem PC nur Karteikarten).
+6. **Aufteilung** – erledigt, die Probe läuft wieder durch: Texte, die die Mac-App der Downloadseite nicht hat,
+   stehen in einer eigenen Tabelle (`mac/Wortschatz/Resources/README.md` › «Sprachen»).
+
+**Mac, 25.11.2026 (Anthony, Mac näher an Windows):** leere Übersicht mit «Backup laden…» statt «Aus der Web-Version
+übernehmen…»; Einstellungen › Daten ohne «Aus der Web-Version übernehmen»; Lernbildschirme wachsen mit dem
+Fenster (Punkt 4 oben, jetzt scharf: `studyScale` aus `StudyScale.factor` – min(Breite/980, Höhe/600), 1 bis 1,2, in
+0,05-Schritten – multipliziert Fragen-, Antwort- und Kartenschrift und die Höhe der Antwortkacheln; Spalte und
+Karteikarte wachsen nur halb so stark, `StudyScale.widthFactor`, die Karteikarte behält ihre Form).
+**Für Windows offen – Editor nur mit Kartenliste:** keine Import-Vorschau und kein «N Karten übernehmen» mehr; jede
+Erkennung steht sofort in den Karten (`SetEditorModel.syncImport`: Karten aus dem Importfeld tragen `importKey`, werden
+bei jeder Erkennung an Ort und Stelle ersetzt; Änderungen des Benutzers an ihnen bleiben, nach Paar gemerkt, auch
+umgedreht – `importEdits`); «Trennung» und «Seiten tauschen» ändern die Karten direkt; Knopf «Lernset erstellen»;
+Sprachen eines neuen Lernsets zuerst «Automatisch» (ohne Erkennung beim Sichern aus den Karten, `LangDetect`).
+
+Nicht nötig auf dem Mac (nur Windows): ältere Downloads löschen, Fenster nach Bildschirmwechsel zurückholen, Übernahme
+der früheren Windows-App.
 
 ### Wie ein Bildschirm funktioniert
 
@@ -296,6 +347,8 @@ Für Claude. Vorgehen in dieser Reihenfolge; jeder Schritt hat ein prüfbares Er
    (`Features/*/…Controller.cs`) führt neue Effects aus (Speicher, Timer, Sprache, Navigation).
 5. **Oberfläche.** Mac-View lesen, im entsprechenden C#-Bildschirm denselben Abschnitt anpassen. Bausteine aus `Ui`/
    `StudyChrome` nehmen statt neuer Controls. Deutsch mit «ss», Texte möglichst aus dem Kern (`…Copy`, `LearnFlow.*_TEXT`).
+   Jeder neue Text durch `L("…")`/`L($"…")` (ganze Sätze, keine Satzteile); Englisch: hat der Mac den Text schon,
+   `python3 tools/strings.py sync`, sonst Eintrag in `Strings/en.json` (README › «Englisch»).
    Tastenkürzel in `HandleKey` (Ctrl statt ⌘). Hell **und** dunkel prüfen.
 6. **Ansehen.** Screenshot-Werkzeug laufen lassen (ggf. Schritt in `Samples.Steps` ergänzen), PNGs anschauen.
 7. **Bauen.** `./build.sh` → `dist/Wortschatz.exe`. Ohne Windows-Gerät nicht als «getestet» bezeichnen.

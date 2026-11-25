@@ -17,6 +17,10 @@ struct ContentView: View {
                 // sidebar themselves.
                 .toolbar(removing: .sidebarToggle)
                 .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
+                // Last: wrapped in `.toolbar(removing:)` the widths were ignored (any width from
+                // 140 pt to the whole window, measured in the app's window setup).
+                .navigationSplitViewColumnWidth(
+                    min: SidebarColumn.minWidth, ideal: SidebarColumn.idealWidth, max: SidebarColumn.maxWidth)
         } detail: {
             DetailColumn()
                 .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { _ in model.detailWidthChanged() }
@@ -27,13 +31,6 @@ struct ContentView: View {
         // settings from the column whose content changed last, so set only here the band came
         // back now and then (after switching pages or leaving Lernen).
         .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
-        // The sidebar may be dragged out to half the window at most (in 10-pt steps, so a live
-        // resize does not update it on every frame).
-        .onGeometryChange(for: CGFloat.self) { proxy in
-            max(SidebarColumn.minWidth, (proxy.size.width / 2 / 10).rounded(.down) * 10)
-        } action: { width in
-            model.sidebarMaxWidth = width
-        }
         .alert(
             model.confirmation?.title ?? "",
             isPresented: isPresented(\.confirmation),
@@ -54,7 +51,7 @@ struct ContentView: View {
         } message: { alert in
             Text(alert.message)
         }
-        .sheet(item: $model.editorRequest) { request in
+        .sheet(item: $model.editorRequest, onDismiss: editorClosed) { request in
             EditorSheet(request: request)
         }
         .sheet(item: $model.textExport) { request in
@@ -62,9 +59,6 @@ struct ContentView: View {
         }
         .sheet(item: $model.backupImport) { preview in
             BackupImportSheet(preview: preview)
-        }
-        .sheet(isPresented: $model.isShowingWebMigration, onDismiss: model.webMigrationDismissed) {
-            WebMigrationSheet()
         }
         .fileImporter(isPresented: $model.isChoosingBackup, allowedContentTypes: [.json]) { result in
             model.backupFileChosen(result.map { [$0] })
@@ -100,6 +94,10 @@ struct ContentView: View {
             get: { model[keyPath: keyPath] != nil },
             set: { shown in if !shown { model[keyPath: keyPath] = nil } })
     }
+
+    /// The set editor closed.
+    private func editorClosed() {
+    }
 }
 
 /// The detail column for the current route.
@@ -122,6 +120,9 @@ private struct DetailColumn: View {
                 }
                 DetailCover()
             }
+            // The study screens' size (`StudyScale`), known before a study screen is built:
+            // the column is always there, so the screen lays out once.
+            .studyScaled()
         }
     }
 
@@ -230,14 +231,15 @@ private struct SidebarColumn: View {
     /// Wide enough that the Lernserie at its foot ("2 Tage Lernserie" over "Heute geschafft")
     /// never wraps, also when an earlier, narrower width is restored.
     nonisolated static let minWidth: CGFloat = 250
+    /// A new window's sidebar: the set titles fit, the page gets the room (Anthony, 23.11.2026).
+    nonisolated static let idealWidth: CGFloat = 270
+    /// Dragged out, the sidebar stops here: the set page beside it always stays in view.
+    nonisolated static let maxWidth: CGFloat = 360
 
     @Environment(AppModel.self) private var model
 
     var body: some View {
         LibrarySidebar()
             .opacity(model.sidebarFade)
-            // At most half the window (`AppModel.sidebarMaxWidth`): the page keeps the rest.
-            .navigationSplitViewColumnWidth(
-                min: Self.minWidth, ideal: 280, max: model.sidebarMaxWidth)
     }
 }

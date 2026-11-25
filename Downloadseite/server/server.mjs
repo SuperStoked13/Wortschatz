@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 // Wortschatz website: `node server/server.mjs` (Node 20 or newer, no packages needed).
-// Behind Caddy (HTTPS) in production, see deploy/ and README.md.
+// Behind Caddy (HTTPS) in production, see README.md.
 
 import { createApp } from './lib/app.mjs';
 import { loadConfig } from './lib/config.mjs';
 import { startDuckDns } from './lib/duckdns.mjs';
-import { createHttpServer } from './lib/http.mjs';
+import { createHttpServer, listenOnSocket } from './lib/http.mjs';
 import { createLogger } from './lib/log.mjs';
 
 const [major] = process.versions.node.split('.').map(Number);
@@ -34,6 +34,20 @@ server.on('error', (error) => {
 
 const stopDuckDns = startDuckDns(config.duckdns, log);
 
+// LISTEN_SOCKET: the proxy comes through a socket file, so the container can do without any network.
+let socketServer = null;
+if (config.socket) {
+  socketServer = createHttpServer(app.handleProxied);
+  socketServer.on('error', (error) => log.error('socket', { message: error.message, code: error.code }));
+  try {
+    await listenOnSocket(socketServer, config.socket);
+    log.info('listening.socket', { path: config.socket });
+  } catch (error) {
+    log.error('socket', { path: config.socket, message: error.message });
+    process.exit(1);
+  }
+}
+
 server.listen(config.port, config.host, () => {
   const { mac, windows } = app.state.releases;
   log.info('listening', {
@@ -57,6 +71,8 @@ async function shutdown(signal) {
   stopDuckDns();
   server.close();
   server.closeIdleConnections();
+  socketServer?.close();
+  socketServer?.closeIdleConnections();
   setTimeout(() => process.exit(0), 10_000).unref();
   await app.close();
   process.exit(0);

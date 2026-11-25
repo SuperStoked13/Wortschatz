@@ -1,8 +1,9 @@
 import Foundation
 import UniformTypeIdentifiers
+import WortschatzCore
 
 // Shared types of the native importers (port of the contracts of src/import/files.js, pdf.js and
-// ocr.js). All user-facing text is German with Swiss spelling.
+// ocr.js). All user-facing text is German with Swiss spelling, in the app's language through `L`.
 
 /// What an imported file contained (JS `kind`).
 public enum ImportFileKind: String, Sendable, Codable, Hashable, CaseIterable {
@@ -48,7 +49,7 @@ public struct ImportedFile: Sendable, Equatable, Hashable {
     public var text: String
     public var kind: ImportFileKind
     public var name: String
-    /// German messages about content that could not be read although the import worked (e.g.
+    /// Messages about content that could not be read although the import worked (e.g.
     /// scanned pages of a text PDF); empty when everything was read.
     public var warnings: [String]
 
@@ -60,7 +61,7 @@ public struct ImportedFile: Sendable, Equatable, Hashable {
     }
 }
 
-/// Progress of a running import: a fraction 0…1 and a German status line.
+/// Progress of a running import: a fraction 0…1 and a status line (in the app's language).
 public struct ImportProgress: Sendable, Equatable, Hashable {
     public var fraction: Double
     public var message: String
@@ -74,7 +75,7 @@ public struct ImportProgress: Sendable, Equatable, Hashable {
 /// Receives progress updates. It is called from background threads; a UI hops to the main actor.
 public typealias ImportProgressHandler = @Sendable (ImportProgress) -> Void
 
-/// An import failure with a German, user-presentable message (JS errors with `err.code`).
+/// An import failure with a user-presentable message (JS errors with `err.code`; German source).
 public struct ImportError: Error, LocalizedError, Sendable, Equatable, Hashable, CustomStringConvertible {
     public enum Code: String, Sendable, Codable, Hashable {
         /// Not a text file, PDF or image (also binary data in a "text" file).
@@ -115,7 +116,7 @@ public struct ImportError: Error, LocalizedError, Sendable, Equatable, Hashable,
     public var description: String { "\(code.rawValue): \(message)" }
 
     /// `Import abgebrochen.`
-    public static let aborted = ImportError(.aborted, ImportMessages.aborted)
+    public static var aborted: ImportError { ImportError(.aborted, ImportMessages.aborted) }
 
     /// Maps any error of an import step: cancellation becomes `.aborted`, an `ImportError` stays,
     /// anything else becomes `fallback`.
@@ -126,42 +127,52 @@ public struct ImportError: Error, LocalizedError, Sendable, Equatable, Hashable,
     }
 }
 
-/// The German messages of the web importers (Swiss spelling).
+/// The messages of the web importers (German source with Swiss spelling, translated with `L`).
 public enum ImportMessages {
-    public static let unsupported = "Dieses Dateiformat wird nicht unterstützt."
-    public static let document =
-        "\(unsupported) Kopiere den Text aus dem Dokument und füge ihn ins Textfeld ein – oder speichere es als PDF."
-    public static let empty = "Die Datei ist leer."
-    public static let tooLarge = "Die Textdatei ist zu gross (maximal 5 MB)."
-    public static let pdfEmpty = "In der PDF-Datei wurde kein Text gefunden."
-    public static let read = "Die Datei konnte nicht gelesen werden. Ist sie noch vorhanden und vollständig heruntergeladen?"
-    public static let aborted = "Import abgebrochen."
-    public static let imageEmpty =
-        "Auf dem Bild wurde kein Text erkannt. Achte auf gutes Licht und eine scharfe Aufnahme und fotografiere die Seite möglichst gerade."
-    public static let ocrFailed =
-        "Die Texterkennung ist fehlgeschlagen. Versuche es mit einem schärferen Foto oder einem Screenshot."
-    public static let decode = "Das Bild konnte nicht geöffnet werden."
-    public static let pdfPassword =
-        "Diese PDF-Datei ist passwortgeschützt. Entferne den Schutz oder kopiere den Text direkt aus der PDF."
-    public static let pdfInvalid = "Die PDF-Datei ist beschädigt oder keine gültige PDF."
-    public static let pdfFailed = "Die PDF-Datei konnte nicht gelesen werden."
+    public static var unsupported: String { L("Dieses Dateiformat wird nicht unterstützt.") }
+    public static var document: String {
+        L(
+            "Dieses Dateiformat wird nicht unterstützt. Kopiere den Text aus dem Dokument und füge ihn ins Textfeld ein – oder speichere es als PDF.")
+    }
+    public static var empty: String { L("Die Datei ist leer.") }
+    public static var tooLarge: String { L("Die Textdatei ist zu gross (maximal 5 MB).") }
+    public static var pdfEmpty: String { L("In der PDF-Datei wurde kein Text gefunden.") }
+    public static var read: String {
+        L("Die Datei konnte nicht gelesen werden. Ist sie noch vorhanden und vollständig heruntergeladen?")
+    }
+    public static var aborted: String { L("Import abgebrochen.") }
+    public static var imageEmpty: String {
+        L(
+            "Auf dem Bild wurde kein Text erkannt. Achte auf gutes Licht und eine scharfe Aufnahme und fotografiere die Seite möglichst gerade.")
+    }
+    public static var ocrFailed: String {
+        L("Die Texterkennung ist fehlgeschlagen. Versuche es mit einem schärferen Foto oder einem Screenshot.")
+    }
+    public static var decode: String { L("Das Bild konnte nicht geöffnet werden.") }
+    public static var pdfPassword: String {
+        L("Diese PDF-Datei ist passwortgeschützt. Entferne den Schutz oder kopiere den Text direkt aus der PDF.")
+    }
+    public static var pdfInvalid: String { L("Die PDF-Datei ist beschädigt oder keine gültige PDF.") }
+    public static var pdfFailed: String { L("Die PDF-Datei konnte nicht gelesen werden.") }
     /// Fallback for a failed file in a batch (editor-import.js).
-    public static let fileFailed = "Die Datei konnte nicht gelesen werden."
+    public static var fileFailed: String { L("Die Datei konnte nicht gelesen werden.") }
 
     static func pdfTooManyPages(_ count: Int) -> String {
-        "Diese PDF-Datei enthält \(count) gescannte Seiten. Die Texterkennung ist auf \(PDFTextExtractor.maxOCRPages) Seiten beschränkt – teile die Datei bitte auf."
+        L(
+            "Diese PDF-Datei enthält %@ gescannte Seiten. Die Texterkennung ist auf %@ Seiten beschränkt – teile die Datei bitte auf.",
+            "\(count)", "\(PDFTextExtractor.maxOCRPages)")
     }
 
     // Progress lines.
-    static let readingFile = "Datei wird gelesen …"
-    static let fileRead = "Datei gelesen"
-    static let preparingImage = "Bild wird vorbereitet …"
-    static let recognizing = "Texterkennung läuft …"
-    static let recognized = "Text erkannt"
-    static let openingPDF = "PDF wird geöffnet …"
-    static let readingPDF = "PDF wird gelesen …"
-    static let pdfRead = "PDF gelesen"
-    static let pdfReadPartially = "PDF gelesen – gescannte Seiten konnten nicht erkannt werden."
+    static var readingFile: String { L("Datei wird gelesen …") }
+    static var fileRead: String { L("Datei gelesen") }
+    static var preparingImage: String { L("Bild wird vorbereitet …") }
+    static var recognizing: String { L("Texterkennung läuft …") }
+    static var recognized: String { L("Text erkannt") }
+    static var openingPDF: String { L("PDF wird geöffnet …") }
+    static var readingPDF: String { L("PDF wird gelesen …") }
+    static var pdfRead: String { L("PDF gelesen") }
+    static var pdfReadPartially: String { L("PDF gelesen – gescannte Seiten konnten nicht erkannt werden.") }
 }
 
 // MARK: - Progress

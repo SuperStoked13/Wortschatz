@@ -38,14 +38,20 @@ struct BackupImportSheet: View {
                         .font(.headline)
                     Picker("Wie möchtest du importieren?", selection: $mode) {
                         choice(
-                            title: "Zusammenführen",
-                            text: "Lernsets aus dem Backup kommen dazu. Deine übrigen Lernsets und Einstellungen bleiben erhalten.",
+                            title: String(localized: "Zusammenführen"),
+                            text: String(
+                                localized:
+                                    "Lernsets aus dem Backup kommen dazu. Deine übrigen Lernsets und Einstellungen bleiben erhalten."
+                            ),
                             detail: preview.mergeDetail, isDanger: false
                         )
                         .tag(ImportMode.merge)
                         choice(
-                            title: "Alles ersetzen",
-                            text: "Alle aktuellen Lernsets, der Fortschritt und die Einstellungen werden durch das Backup ersetzt.",
+                            title: String(localized: "Alles ersetzen"),
+                            text: String(
+                                localized:
+                                    "Alle aktuellen Lernsets, der Fortschritt und die Einstellungen werden durch das Backup ersetzt."
+                            ),
                             detail: preview.replaceDetail, isDanger: true
                         )
                         .tag(ImportMode.replace)
@@ -61,7 +67,7 @@ struct BackupImportSheet: View {
                     .keyboardShortcut(.cancelAction)
                     .controlSize(.large)
                 PrimaryActionButton(
-                    verbatim: isDestructive ? "Alles ersetzen" : "Importieren",
+                    verbatim: isDestructive ? String(localized: "Alles ersetzen") : String(localized: "Importieren"),
                     tint: isDestructive ? Theme.failure.fill : nil
                 ) {
                     model.performBackupImport(preview, mode: mode)

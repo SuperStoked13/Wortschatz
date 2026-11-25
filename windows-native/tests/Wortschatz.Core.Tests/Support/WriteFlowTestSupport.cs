@@ -69,20 +69,21 @@ public sealed class WriteFlowDriver
     }
 
     /// <summary>Opens Write mode from what the store holds (WriteFlow.Start).</summary>
-    public List<Effect> Open(StudySubset? subset = null, bool forceNew = false, double? marker = null, double after = 1000)
+    public List<Effect> Open(StudySubset? subset = null, bool forceNew = false, double? marker = null, double after = 1000, KeptOptions? kept = null)
     {
         Clock.Now += after;
-        var (s, fx) = WriteFlow.Start(Store.GetSet(SetId), Store.GetStudyOptions(SetId), Store.GetSessionJSON(SetId), Env, subset, forceNew, marker);
+        var (s, fx) = WriteFlow.Start(Store.GetSet(SetId), Store.GetStudyOptions(SetId), Store.GetSessionJSON(SetId), Env, subset, forceNew, marker, kept);
         State = s;
         Record(fx);
         return fx;
     }
 
     /// <summary>A new driver on the same store, opened after ms (the old screen is gone).</summary>
-    public WriteFlowDriver Reopen(uint seed = 2, StudySubset? subset = null, bool forceNew = false, double? marker = null, double after = 60_000)
+    public WriteFlowDriver Reopen(uint seed = 2, StudySubset? subset = null, bool forceNew = false, double? marker = null, double after = 60_000,
+        KeptOptions? kept = null)
     {
         var d = new WriteFlowDriver(Store, SetId, Clock, seed);
-        d.Open(subset, forceNew, marker, after);
+        d.Open(subset, forceNew, marker, after, kept);
         return d;
     }
 

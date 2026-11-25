@@ -9,6 +9,7 @@ using Avalonia.Threading;
 using Avalonia.VisualTree;
 using Wortschatz.App.DesignSystem;
 using Wortschatz.Core;
+using static Wortschatz.Core.CoreText;
 
 namespace Wortschatz.App.Features.Editor;
 
@@ -100,7 +101,7 @@ public sealed partial class SetEditorScreen
     Control CardsHeader()
     {
         var p = WsTheme.P;
-        var title = Ui.Text("Karten", 22, FontWeight.Bold, font: WsTheme.Prompt);
+        var title = Ui.Text(L("Karten"), 22, FontWeight.Bold, font: WsTheme.Prompt);
         AutomationProperties.SetHeadingLevel(title, 2);
         Detach(_countLabel);
         Detach(_issueChips);
@@ -124,15 +125,15 @@ public sealed partial class SetEditorScreen
         _countLabel.Text = $"{stats.Filled}";
         AutomationProperties.SetName(_countLabel, Labels.Plural(stats.Filled, "Karte", "Karten"));
         _issueChips.Children.Clear();
-        if (stats.Duplicates > 0) _issueChips.Children.Add(Ui.Chip($"{Labels.Plural(stats.Duplicates, "Begriff", "Begriffe")} doppelt", p.Warning, IconName.Copy));
-        if (stats.Flagged > 0) _issueChips.Children.Add(Ui.Chip($"{stats.Flagged} bitte prüfen", p.Warning, IconName.Warning));
+        if (stats.Duplicates > 0) _issueChips.Children.Add(Ui.Chip(L($"{Labels.Plural(stats.Duplicates, "Begriff", "Begriffe")} doppelt"), p.Warning, IconName.Copy));
+        if (stats.Flagged > 0) _issueChips.Children.Add(Ui.Chip(L($"{stats.Flagged} bitte prüfen"), p.Warning, IconName.Warning));
         if (stats.Typos > 0)
         {
             var chip = Ui.Chip(SetEditorCopy.TypoCount(stats.Typos), p.Warning, IconName.Pencil);
-            ToolTip.SetTip(chip, "Klicke in einer Karte auf den markierten Begriff, um ihn zu korrigieren oder zu ignorieren.");
+            ToolTip.SetTip(chip, L("Klicke in einer Karte auf den markierten Begriff, um ihn zu korrigieren oder zu ignorieren."));
             _issueChips.Children.Add(chip);
         }
-        if (stats.Invalid > 0) _issueChips.Children.Add(Ui.Chip($"{stats.Invalid} unvollständig", p.Failure, IconName.Info));
+        if (stats.Invalid > 0) _issueChips.Children.Add(Ui.Chip(L($"{stats.Invalid} unvollständig"), p.Failure, IconName.Info));
         _emptyLead.IsVisible = stats.Filled == 0;
         SetErrorText(_cardsError, _attempted ? SetEditorCopy.CardsMessage(stats.Complete, stats.Invalid) : null);
         UpdateActionBar(stats);
@@ -163,10 +164,10 @@ public sealed partial class SetEditorScreen
         number.TextAlignment = TextAlignment.Right;
         number.HorizontalAlignment = HorizontalAlignment.Right;
         grid.Children.Add(number);
-        var term = Ui.Eyebrow($"Begriff · {Labels.LangName(_termLang)}");
+        var term = Ui.Eyebrow(L($"Begriff · {Labels.LangName(_termLang)}"));
         Grid.SetColumn(term, 1);
         grid.Children.Add(term);
-        var def = Ui.Eyebrow($"Definition · {Labels.LangName(_defLang)}");
+        var def = Ui.Eyebrow(L($"Definition · {Labels.LangName(_defLang)}"));
         Grid.SetColumn(def, 2);
         grid.Children.Add(def);
     }
@@ -209,7 +210,7 @@ public sealed partial class SetEditorScreen
     Control CardsFooter()
     {
         var p = WsTheme.P;
-        var label = Ui.H(8, Icons.Icon(IconName.Plus, 16, p.AccentText, 2.2), Ui.Text("Karte hinzufügen", 14.5, FontWeight.Medium, p.AccentText));
+        var label = Ui.H(8, Icons.Icon(IconName.Plus, 16, p.AccentText, 2.2), Ui.Text(L("Karte hinzufügen"), 14.5, FontWeight.Medium, p.AccentText));
         label.HorizontalAlignment = HorizontalAlignment.Center;
         label.Margin = new Thickness(0, 10);
         var dashed = new Grid();
@@ -219,10 +220,10 @@ public sealed partial class SetEditorScreen
             Stroke = new SolidColorBrush(p.Accent, 0.4), StrokeDashArray = [4, 3.3],
         });
         dashed.Children.Add(label);
-        var add = Ui.Clickable(dashed, () => AddRow(focus: true), "Karte hinzufügen", 12, Colors.Transparent, Palette.Hex(Ui.Rgb(p.Accent), 0.08));
+        var add = Ui.Clickable(dashed, () => AddRow(focus: true), L("Karte hinzufügen"), 12, Colors.Transparent, Palette.Hex(Ui.Rgb(p.Accent), 0.08));
 
         var hints = new WrapPanel { ItemSpacing = 18, LineSpacing = 6 };
-        foreach (var (key, text) in new[] { ("↵", "nächstes Feld"), ("Alt ↵", "Zeilenumbruch"), ("Tab", "in der letzten Karte: neue Karte"), ("Ctrl ↵", SaveLabel) })
+        foreach (var (key, text) in new[] { ("↵", L("nächstes Feld")), ("Alt ↵", L("Zeilenumbruch")), ("Tab", L("in der letzten Karte: neue Karte")), ("Ctrl ↵", SaveLabel) })
             hints.Children.Add(Ui.H(6, Ui.KeyCap(key), Ui.Text(text, 13, color: p.TextSecondary)));
         AutomationProperties.SetAccessibilityView(hints, AccessibilityView.Raw);
         // Phone: keyboard shortcuts mean nothing without a keyboard.
@@ -289,20 +290,20 @@ public sealed partial class SetEditorScreen
         var def = RowField(d, isTerm: false, number);
 
         WsButton? star = null;
-        star = Ui.IconButton(d.Starred ? IconName.StarFilled : IconName.Star, d.Starred ? "Markierung entfernen" : "Markieren", () =>
+        star = Ui.IconButton(d.Starred ? IconName.StarFilled : IconName.Star, d.Starred ? L("Markierung entfernen") : L("Markieren"), () =>
         {
             d.Starred = !d.Starred;
-            Announcer.Announce(d.Starred ? "Markiert" : "Markierung entfernt");
+            Announcer.Announce(d.Starred ? L("Markiert") : L("Markierung entfernt"));
             if (star?.Chrome.Child is Border holder)
             {
                 holder.Child = Icons.Icon(d.Starred ? IconName.StarFilled : IconName.Star, 18, d.Starred ? p.Star : p.TextTertiary);
-                ToolTip.SetTip(star, d.Starred ? "Markierung entfernen" : "Markieren");
+                ToolTip.SetTip(star, d.Starred ? L("Markierung entfernen") : L("Markieren"));
             }
-            AutomationProperties.SetName(star!, d.Starred ? $"Karte {number}: Markierung entfernen" : $"Karte {number} markieren");
+            AutomationProperties.SetName(star!, d.Starred ? L($"Karte {number}: Markierung entfernen") : L($"Karte {number} markieren"));
         }, 32, ButtonKind.Plain, d.Starred ? p.Star : p.TextTertiary);
-        AutomationProperties.SetName(star, d.Starred ? $"Karte {number}: Markierung entfernen" : $"Karte {number} markieren");
-        var delete = Ui.IconButton(IconName.Trash, "Karte löschen", () => DeleteRow(d), 32, ButtonKind.Plain, p.TextTertiary);
-        AutomationProperties.SetName(delete, $"Karte {number} löschen");
+        AutomationProperties.SetName(star, d.Starred ? L($"Karte {number}: Markierung entfernen") : L($"Karte {number} markieren"));
+        var delete = Ui.IconButton(IconName.Trash, L("Karte löschen"), () => DeleteRow(d), 32, ButtonKind.Plain, p.TextTertiary);
+        AutomationProperties.SetName(delete, L($"Karte {number} löschen"));
 
         var numberColumn = new StackPanel { Spacing = 6, Margin = new Thickness(0, 11, 0, 0) };
         numberColumn.Children.Add(Ui.Text($"{number}", 13, FontWeight.SemiBold, p.TextTertiary, align: TextAlignment.Right));
@@ -360,7 +361,7 @@ public sealed partial class SetEditorScreen
         box.MaxLines = 6;
         box.Padding = new Thickness(12, 8);
         if (lang.IsRTL()) box.FlowDirection = FlowDirection.RightToLeft;
-        AutomationProperties.SetName(box, $"Karte {number}: {(isTerm ? "Begriff" : "Definition")} ({Labels.LangName(lang)})");
+        AutomationProperties.SetName(box, isTerm ? L($"Karte {number}: Begriff ({Labels.LangName(lang)})") : L($"Karte {number}: Definition ({Labels.LangName(lang)})"));
         box.TextChanged += (_, _) => UpdateField(d, isTerm, box.Text ?? "");
         box.GotFocus += (_, _) => _focusedField = (d, isTerm);
         OnKeys(box, e =>
@@ -402,14 +403,14 @@ public sealed partial class SetEditorScreen
             marker.IsHitTestVisible = true;
             var holder = new Border { Background = Brushes.Transparent, Child = marker, HorizontalAlignment = HorizontalAlignment.Right };
             ToolTip.SetTip(holder, tooltip);
-            AutomationProperties.SetName(holder, $"Karte {number}: {tooltip}");
+            AutomationProperties.SetName(holder, L($"Karte {number}: {tooltip}"));
             view.NumberColumn.Children.Add(holder);
         }
 
         var notes = view.Notes;
         notes.Children.Clear();
-        if (d.IsInvalid) notes.Children.Add(Ui.Chip(d.TrimmedTerm.Length == 0 ? "Begriff fehlt" : "Definition fehlt", p.Failure, IconName.Info));
-        if (d.IsDuplicate) notes.Children.Add(Ui.Chip("Doppelter Begriff", p.Warning, IconName.Copy));
+        if (d.IsInvalid) notes.Children.Add(Ui.Chip(d.TrimmedTerm.Length == 0 ? L("Begriff fehlt") : L("Definition fehlt"), p.Failure, IconName.Info));
+        if (d.IsDuplicate) notes.Children.Add(Ui.Chip(L("Doppelter Begriff"), p.Warning, IconName.Copy));
         var spelling = d.TermSpelling.Select(i => (Issue: i, IsTerm: true)).Concat(d.DefSpelling.Select(i => (Issue: i, IsTerm: false))).ToList();
         foreach (var (issue, isTerm) in spelling.Take(3)) notes.Children.Add(SpellingChip(d, issue, isTerm));
         if (spelling.Count > 3) notes.Children.Add(Ui.Text($"+{spelling.Count - 3}", 12, FontWeight.Medium, p.Warning.Text));
@@ -542,11 +543,11 @@ public sealed partial class SetEditorScreen
             _drafts.RemoveAt(index);
             if (_drafts.Count == 0) _drafts.Add(new Draft());
         }
-        if (d.IsFilled) Undoable("Karte löschen", "Karte gelöscht", ToastTone.Neutral, includesImport: false, Change);
+        if (d.IsFilled) Undoable(L("Karte löschen"), L("Karte gelöscht"), ToastTone.Neutral, includesImport: false, Change);
         else
         {
             Change();
-            Announcer.Announce("Karte gelöscht");
+            Announcer.Announce(L("Karte gelöscht"));
         }
         FillCards();
         ScheduleDuplicates();
@@ -672,17 +673,20 @@ public sealed partial class SetEditorScreen
     Control SpellingChip(Draft d, SpellingIssue issue, bool isTerm)
     {
         var p = WsTheme.P;
-        var label = issue.Suggestions.Count > 0 ? $"«{issue.Word}» → {issue.Suggestions[0]}?" : $"«{issue.Word}» unbekannt";
-        var chip = Ui.Clickable(Ui.Chip(label, p.Warning, IconName.Pencil), () => { }, $"Möglicher Tippfehler «{issue.Word}»", 10, Colors.Transparent, Colors.Transparent, new Thickness(0));
-        ToolTip.SetTip(chip, "Möglicher Tippfehler – klicken für Vorschläge");
-        AutomationProperties.SetName(chip, $"Karte {_drafts.IndexOf(d) + 1}: möglicher Tippfehler «{issue.Word}»{(issue.Suggestions.Count > 0 ? $", Vorschlag {issue.Suggestions[0]}" : "")}");
+        int number = _drafts.IndexOf(d) + 1;
+        var label = issue.Suggestions.Count > 0 ? L($"«{issue.Word}» → {issue.Suggestions[0]}?") : L($"«{issue.Word}» unbekannt");
+        var chip = Ui.Clickable(Ui.Chip(label, p.Warning, IconName.Pencil), () => { }, L($"Möglicher Tippfehler «{issue.Word}»"), 10, Colors.Transparent, Colors.Transparent, new Thickness(0));
+        ToolTip.SetTip(chip, L("Möglicher Tippfehler – klicken für Vorschläge"));
+        AutomationProperties.SetName(chip, issue.Suggestions.Count > 0
+            ? L($"Karte {number}: möglicher Tippfehler «{issue.Word}», Vorschlag {issue.Suggestions[0]}")
+            : L($"Karte {number}: möglicher Tippfehler «{issue.Word}»"));
         chip.Click += (_, _) =>
         {
             var menu = new ContextMenu();
-            if (issue.Suggestions.Count == 0) menu.Items.Add(new MenuItem { Header = "Keine Vorschläge", IsEnabled = false });
+            if (issue.Suggestions.Count == 0) menu.Items.Add(new MenuItem { Header = L("Keine Vorschläge"), IsEnabled = false });
             else
             {
-                menu.Items.Add(new MenuItem { Header = "Ersetzen durch", IsEnabled = false });
+                menu.Items.Add(new MenuItem { Header = L("Ersetzen durch"), IsEnabled = false });
                 foreach (var suggestion in issue.Suggestions)
                 {
                     var item = new MenuItem { Header = suggestion, FontWeight = FontWeight.SemiBold };
@@ -691,11 +695,11 @@ public sealed partial class SetEditorScreen
                 }
             }
             menu.Items.Add(new Separator());
-            var ignore = new MenuItem { Header = $"«{issue.Word}» ignorieren", Icon = Icons.Icon(IconName.X, 15, p.TextSecondary, 1.9) };
+            var ignore = new MenuItem { Header = L($"«{issue.Word}» ignorieren"), Icon = Icons.Icon(IconName.X, 15, p.TextSecondary, 1.9) };
             ignore.Click += (_, _) =>
             {
                 Model.Speller.Ignore(issue.Word, isTerm ? _termLang : _defLang);
-                Announcer.Announce($"«{issue.Word}» wird nicht mehr als Tippfehler markiert");
+                Announcer.Announce(L($"«{issue.Word}» wird nicht mehr als Tippfehler markiert"));
                 CheckSpelling();
                 CheckImportTypos();
             };
@@ -715,7 +719,7 @@ public sealed partial class SetEditorScreen
             start = text.IndexOf(issue.Word, StringComparison.Ordinal);
         if (start < 0) return;
         var corrected = text[..start] + replacement + text[(start + issue.Length)..];
-        Undoable("Tippfehler korrigieren", $"«{issue.Word}» durch «{replacement}» ersetzt", ToastTone.Success, includesImport: false, () =>
+        Undoable(L("Tippfehler korrigieren"), L($"«{issue.Word}» durch «{replacement}» ersetzt"), ToastTone.Success, includesImport: false, () =>
         {
             if (isTerm) d.Term = corrected;
             else d.Definition = corrected;

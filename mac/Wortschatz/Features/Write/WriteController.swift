@@ -13,7 +13,16 @@ import WortschatzCore
 @Observable
 final class WriteController {
     let setID: String
-    private(set) var state: WriteFlow.State
+    /// The flow state. A change of the answer field's text alone notifies only `input`: a typed
+    /// letter then updates the field instead of rebuilding the whole screen, which reads `state`
+    /// everywhere.
+    var state: WriteFlow.State {
+        access(keyPath: \.state)
+        return flowState
+    }
+    @ObservationIgnored private var flowState: WriteFlow.State
+    /// The answer (or copy) field's text, `state.input`, observed on its own (the field reads it).
+    private(set) var input: String
     private(set) var countdown: StudyCountdown?
     /// Correct answers in a row while this screen is open (the flame in the action bar).
     private(set) var streak = AnswerStreak()
@@ -76,7 +85,8 @@ final class WriteController {
             set: store.getSet(request.setID), options: store.getStudyOptions(request.setID),
             stored: store.getSessionJSON(request.setID), subset: request.subset, forceNew: request.forceNew,
             resultsMarker: Self.resultsMarkers[request.id], env: env)
-        self.state = state
+        flowState = state
+        input = state.input
         pendingStartEffects = effects
     }
 
@@ -151,21 +161,82 @@ final class WriteController {
 
     private func reduce(_ event: WriteFlow.Event) {
         let query = state.question?.synonymQuery
-        let extras = isLive && Self.mayGrade(event) ? query.map(synonyms.extraAnswers(for:)) ?? [] : []
+        let extras = isLive && Self.mayGrade(event) && synonymsOn ? query.map(synonyms.extraAnswers(for:)) ?? [] : []
         let env = WriteFlow.Env(
             now: clock(), rng: rng, progress: store.getProgress(setID), extraAnswers: { $0 == query ? extras : [] })
         let previousPhase = state.phase
         let (next, effects) = WriteFlow.reduce(state, event, env: env)
-        if next != state { state = next }
+        update(to: next)
         perform(effects)
         rememberResults()
+        askIfSameTerm()
         if isLive { playSound(for: effects, after: previousPhase) }
         prefetchSynonyms()
+    }
+
+    /// Takes the reducer's next state (see `state`).
+    private func update(to next: WriteFlow.State) {
+        guard next != flowState else { return }
+        if next.differsOnlyInInput(from: flowState) {
+            flowState = next
+        } else {
+            withMutation(keyPath: \.state) { flowState = next }
+        }
+        if input != next.input { input = next.input }
+    }
+
+    // MARK: Same word, other card
+
+    /// The open "Andere Karte mit dem gleichen Begriff" sheet (`SameTermSheet`), if any.
+    private(set) var sameTerm: SameTermQuestion?
+    @ObservationIgnored private var sameTermAsked: WriteFlow.Feedback?
+
+    /// A wrong answer that is the answer of another card with the same word: asks what it counts
+    /// as, once per answer (Joan 10.11.2026; Windows: WriteController.AskIfSameTerm).
+    private func askIfSameTerm() {
+        guard let feedback = state.feedback else {
+            sameTermAsked = nil
+            return
+        }
+        guard isLive, !feedback.isCorrect, feedback.canOverride, feedback != sameTermAsked,
+            let question = state.question, let cards = state.set?.cards,
+            let card = cards.first(where: { $0.id == question.cardId })
+        else { return }
+        sameTermAsked = feedback
+        guard
+            let other = SameTermCards.answerOfOtherCard(
+                feedback.given, card: card, cards: cards, ask: question.ask, tolerance: state.options.tolerance,
+                promptLang: question.promptLang, answerLang: question.answerLang)
+        else { return }
+        sameTerm = SameTermQuestion(
+            asked: card, other: other, ask: question.ask, promptLang: question.promptLang,
+            answerLang: question.answerLang, given: feedback.given)
+    }
+
+    /// The learner's choice in `SameTermSheet`.
+    func answerSameTerm(_ choice: SameTermChoice) {
+        guard let question = sameTerm else { return }
+        sameTerm = nil
+        switch choice {
+        case .right:
+            send(.override)
+        case .forOtherCard:
+            guard (try? store.recordAnswer(setID, question.other.id, correct: true)) != nil else { return }
+            model.toasts.show(
+                SameTermCards.countedForOther(askedPrompt: question.askedPrompt, otherPrompt: question.otherPrompt),
+                tone: .success, duration: .seconds(5))
+        case .wrong:
+            break
+        }
     }
 
     // MARK: Synonyms outside the set
 
     private var synonyms: SynonymAssistant { .shared }
+
+    /// Synonyms outside the set are on for this set (Einstellungen, Apple Intelligence and the
+    /// set's own switch in its options), read at every answer so a change applies at once.
+    private var synonymsOn: Bool { synonyms.isActive(forSet: setID) }
 
     /// Events that may grade an answer (the others need no synonyms).
     private static func mayGrade(_ event: WriteFlow.Event) -> Bool {
@@ -188,7 +259,7 @@ final class WriteController {
         }
         guard state.phase == .question else { return false }
         if isCheckingSynonym { return true }
-        guard isLive, isCurrent, synonyms.isActive, !state.isBlocked, clock() >= state.lockUntil,
+        guard isLive, isCurrent, synonymsOn, !state.isBlocked, clock() >= state.lockUntil,
             let question = state.question
         else { return false }
         let query = question.synonymQuery
@@ -223,7 +294,9 @@ final class WriteController {
     /// A question is on screen: its prompt's translations are looked up in the background, so an
     /// answer among them counts at once.
     private func prefetchSynonyms() {
-        guard isLive, state.phase == .question, let question = state.question, question.qid != prefetchedQid
+        // The cheap checks first: this runs after every key.
+        guard isLive, state.phase == .question, let question = state.question, question.qid != prefetchedQid,
+            synonymsOn
         else { return }
         prefetchedQid = question.qid
         synonyms.prefetch(question.synonymQuery)
@@ -368,21 +441,22 @@ final class WriteController {
         }
     }
 
-    /// Writes an options change (popover) and applies it to the running session.
+    /// Writes an options change (popover) and applies it to the running session. An option set
+    /// back to the standard is no longer the set's own (`LibraryStore.updateOwnStudyOptions`).
     func updateOptions(_ patch: StudyOptionsPatch) {
         do {
-            let options = try store.updateStudyOptions(setID, patch)
+            let options = try store.updateOwnStudyOptions(setID, patch)
             send(.optionsChanged(options))
         } catch {
-            model.report(error, fallback: "Die Option konnte nicht gespeichert werden.")
+            model.report(error, fallback: String(localized: "Die Option konnte nicht gespeichert werden."))
         }
     }
 
     /// The standard of every set (Einstellungen), for the note at the top of the options.
     var standardOptions: StudyOptions { model.settings.study }
 
-    /// "Auf Standard zurücksetzen" (Optionen): this set follows the standard again; a new
-    /// direction or order asks to restart when the popover closes, like after any other change.
+    /// "Auf Standard zurücksetzen" (Optionen): this set follows the standard again, the running
+    /// session too, like after any other change.
     func resetOptionsToStandard() {
         if let options = model.resetStudyOptions(setID: setID) { send(.optionsChanged(options)) }
     }
@@ -390,16 +464,20 @@ final class WriteController {
     // MARK: Effects
 
     private func perform(_ effects: [WriteFlow.Effect]) {
+        // The step's store writes first, as one change: the app rebuilds its derived data (every
+        // set's summary) once per answer, not once for the answer and once more for the session.
+        let writes = effects.filter(\.writesStore)
+        if !writes.isEmpty {
+            write { store in try store.batch { for effect in writes { try apply(effect, to: store) } } }
+        }
         for effect in effects {
             switch effect {
-            case let .recordAnswer(cardId, correct, at):
+            case let .recordAnswer(_, correct, _):
                 streak.record(correct: correct)
-                write { _ = try $0.recordAnswer(setID, cardId, correct: correct, at: at) }
-            case let .overrideLastAnswer(cardId):
+            case .overrideLastAnswer:
                 streak.overrideMiss()
-                write { _ = try $0.overrideLastAnswer(setID, cardId) }
-            case let .saveSession(session, feedback):
-                write { try $0.saveSessionJSON(setID, WriteFlow.storedJSON(session: session, feedback: feedback)) }
+            case .saveSession, .updateCard, .toggleStar:
+                break
             case let .speak(text, lang):
                 if isLive { speech.speak(text, lang: lang) }
             case let .haptic(kind):
@@ -408,13 +486,6 @@ final class WriteController {
                 scheduleAutoAdvance(ms: ms, token: token)
             case let .announce(text):
                 if isLive { Announcer.announce(text, important: state.phase.isMiss) }
-            case let .updateCard(card):
-                write { _ = try $0.updateCard(setID, card.id, CardChanges(term: card.term, definition: card.definition)) }
-            case let .toggleStar(cardId):
-                write { store in
-                    let starred = try store.toggleStar(setID, cardId)
-                    if isLive { Announcer.announce(starred ? "Markiert" : "Markierung entfernt") }
-                }
             case let .toast(toast):
                 if heldToasts != nil {
                     heldToasts?.append(toast)
@@ -429,6 +500,25 @@ final class WriteController {
                     model.finishStudy()
                 }
             }
+        }
+    }
+
+    /// Applies one store effect (`WriteFlow.Effect.writesStore`).
+    private func apply(_ effect: WriteFlow.Effect, to store: LibraryStore) throws {
+        switch effect {
+        case let .recordAnswer(cardId, correct, at):
+            _ = try store.recordAnswer(setID, cardId, correct: correct, at: at)
+        case let .overrideLastAnswer(cardId):
+            _ = try store.overrideLastAnswer(setID, cardId)
+        case let .saveSession(session, feedback):
+            try store.saveSessionJSON(setID, WriteFlow.storedJSON(session: session, feedback: feedback))
+        case let .updateCard(card):
+            _ = try store.updateCard(setID, card.id, CardChanges(term: card.term, definition: card.definition))
+        case let .toggleStar(cardId):
+            let starred = try store.toggleStar(setID, cardId)
+            if isLive { Announcer.announce(starred ? String(localized: "Markiert") : String(localized: "Markierung entfernt")) }
+        default:
+            break
         }
     }
 
@@ -483,6 +573,18 @@ final class WriteController {
     private static var currentKeyIsRepeat: Bool {
         guard let event = NSApp.currentEvent, event.type == .keyDown else { return false }
         return event.isARepeat
+    }
+}
+
+private extension WriteFlow.Effect {
+    /// Effects that write to the library store (`WriteController.apply`).
+    var writesStore: Bool {
+        switch self {
+        case .recordAnswer, .overrideLastAnswer, .saveSession, .updateCard, .toggleStar:
+            true
+        default:
+            false
+        }
     }
 }
 

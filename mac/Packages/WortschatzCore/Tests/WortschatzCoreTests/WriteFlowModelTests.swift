@@ -364,15 +364,11 @@ struct WriteFlowModelTests {
         }
         let prompts: [WriteFlow.Prompt] = [
             .restart(resumesTimer: false),
-            .restartForOptions(directionChanged: true, resumesTimer: false, copyChanged: false),
-            .restartForOptions(directionChanged: false, resumesTimer: false, copyChanged: false),
             .replaceRound(wanted: .starred, saved: Self.finishedSession(), feedback: nil),
         ]
         for p in prompts { texts += [p.title, p.message, p.confirmLabel, p.cancelLabel] }
         for t in [WriteFlow.Toast.welcomeBack, .countedAsCorrect, .cardSaved] { texts.append(t.message) }
         #expect(!texts.contains { $0.contains("ß") })
-        #expect(prompts[1].message.hasPrefix("Die neue Abfragerichtung gilt ab einem Neustart."))
-        #expect(prompts[2].message.hasPrefix("Die neue Reihenfolge gilt"))
-        #expect(prompts[3].message.contains("wenn du jetzt nur die markierten Begriffe übst."))
+        #expect(prompts[1].message.contains("wenn du jetzt nur die markierten Begriffe übst."))
     }
 }

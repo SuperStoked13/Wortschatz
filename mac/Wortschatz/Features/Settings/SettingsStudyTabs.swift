@@ -80,8 +80,11 @@ struct SettingsLearnTab: View {
                     Text("Begriffe in der Lernsprache automatisch vorlesen. Gilt auch für Schreiben.")
                 }
             } footer: {
-                SettingsDefaultsFooter(isDefault: SettingsDefaults.learnIsDefault(options)) {
-                    writer.restoreDefaults(SettingsDefaults.learnPatch, scope: "Lernen")
+                // The two switches above are on this tab too: their standard is off / on.
+                SettingsDefaultsFooter(isDefault: SettingsDefaults.learnIsDefault(options) && !review && recheck) {
+                    writer.restoreDefaults(SettingsDefaults.learnPatch, scope: String(localized: "Lernen"))
+                    review = false
+                    recheck = true
                 }
             }
         }
@@ -117,7 +120,7 @@ struct SettingsWriteTab: View {
                 Text("Jede Karte schriftlich")
             } footer: {
                 SettingsDefaultsFooter(isDefault: SettingsDefaults.writeIsDefault(options)) {
-                    writer.restoreDefaults(SettingsDefaults.writePatch, scope: "Schreiben")
+                    writer.restoreDefaults(SettingsDefaults.writePatch, scope: String(localized: "Schreiben"))
                 }
             }
         }
@@ -154,7 +157,7 @@ struct SettingsToleranceTab: View {
                 Text("Was trotzdem als richtig zählt")
             } footer: {
                 SettingsDefaultsFooter(isDefault: options.tolerance == .default) {
-                    writer.restoreDefaults(StudyOptionsPatch(tolerance: TolerancePatch(.default)), scope: "Toleranz")
+                    writer.restoreDefaults(StudyOptionsPatch(tolerance: TolerancePatch(.default)), scope: String(localized: "Toleranz"))
                 }
             }
         }

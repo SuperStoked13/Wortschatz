@@ -6,10 +6,10 @@ using Avalonia.Interactivity;
 using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Threading;
-using Avalonia.VisualTree;
 using Wortschatz.App.DesignSystem;
 using Wortschatz.App.Services;
 using Wortschatz.Core;
+using static Wortschatz.Core.CoreText;
 
 namespace Wortschatz.App.Features.Editor;
 
@@ -152,12 +152,12 @@ public sealed partial class SetEditorScreen : Screen
     Control Header()
     {
         var p = WsTheme.P;
-        var heading = Ui.Text(IsEditing ? "Lernset bearbeiten" : "Neues Lernset", AppDevice.IsPhone ? 22 : 28, FontWeight.Bold, font: WsTheme.Prompt);
+        var heading = Ui.Text(IsEditing ? L("Lernset bearbeiten") : L("Neues Lernset"), AppDevice.IsPhone ? 22 : 28, FontWeight.Bold, font: WsTheme.Prompt);
         heading.TextWrapping = TextWrapping.Wrap;
         AutomationProperties.SetHeadingLevel(heading, 1);
-        var lead = Ui.Text(IsEditing ? "Ändere Begriffe, ergänze neue oder importiere eine weitere Liste."
-            : AppDevice.ReadsPhotos ? "Tippe deine Vokabeln ein oder importiere eine ganze Liste – aus Text, Datei oder Foto."
-            : "Tippe deine Vokabeln ein oder importiere eine ganze Liste – aus Text oder Datei.", 15, color: p.TextSecondary, wrap: TextWrapping.Wrap);
+        var lead = Ui.Text(IsEditing ? L("Ändere Begriffe, ergänze neue oder importiere eine weitere Liste.")
+            : AppDevice.ReadsPhotos ? L("Tippe deine Vokabeln ein oder importiere eine ganze Liste – aus Text, Datei oder Foto.")
+            : L("Tippe deine Vokabeln ein oder importiere eine ganze Liste – aus Text oder Datei."), 15, color: p.TextSecondary, wrap: TextWrapping.Wrap);
         Detach(_capsuleHost);
         _capsuleHost.VerticalAlignment = VerticalAlignment.Top;
         _capsuleHost.Margin = new Thickness(0, 10, 0, 0);
@@ -176,7 +176,7 @@ public sealed partial class SetEditorScreen : Screen
         var p = WsTheme.P;
         _titleBox = Field(SetEditorCopy.TitlePlaceholder, _title, 20, maxLines: 2);
         _titleBox.FontWeight = FontWeight.SemiBold;
-        AutomationProperties.SetName(_titleBox, "Titel");
+        AutomationProperties.SetName(_titleBox, L("Titel"));
         _titleBox.TextChanged += (_, _) => SetTitle(_titleBox.Text ?? "");
         OnKeys(_titleBox, e =>
         {
@@ -192,7 +192,7 @@ public sealed partial class SetEditorScreen : Screen
         _titleNote = note;
 
         _detailsBox = Field(SetEditorCopy.DescriptionPlaceholder, _details, 14, maxLines: 4);
-        AutomationProperties.SetName(_detailsBox, "Beschreibung");
+        AutomationProperties.SetName(_detailsBox, L("Beschreibung"));
         _detailsBox.TextChanged += (_, _) => SetDetails(_detailsBox.Text ?? "");
         OnKeys(_detailsBox, e =>
         {
@@ -204,13 +204,13 @@ public sealed partial class SetEditorScreen : Screen
             return e.Key is Key.Enter or Key.Return && e.KeyModifiers == KeyModifiers.Alt && InsertLineBreak(_detailsBox);
         });
 
-        _termBox = LangBox(SetEditorCopy.TermLanguages, _termLang, "Ich lerne");
-        _defBox = LangBox(SetEditorCopy.DefinitionLanguages, _defLang, "Übersetzung");
+        _termBox = LangBox(SetEditorCopy.TermLanguages, _termLang, L("Ich lerne"));
+        _defBox = LangBox(SetEditorCopy.DefinitionLanguages, _defLang, L("Übersetzung"));
         _termBox.SelectionChanged += (_, _) => { if (!_settingLangs) SetTermLang(SetEditorCopy.TermLanguages[Math.Max(0, _termBox.SelectedIndex)]); };
         _defBox.SelectionChanged += (_, _) => { if (!_settingLangs) SetDefLang(SetEditorCopy.DefinitionLanguages[Math.Max(0, _defBox.SelectedIndex)]); };
         _termDetectedLabel = DetectedLabel();
         _defDetectedLabel = DetectedLabel();
-        var flip = Ui.IconButton(IconName.Repeat, "Begriffe und Definitionen tauschen", FlipSides, 38);
+        var flip = Ui.IconButton(IconName.Repeat, L("Begriffe und Definitionen tauschen"), FlipSides, 38);
         if (flip.Chrome.Child is Border holder) holder.Child = EditorGlyphs.Swap(16, p.TextSecondary);
         flip.Margin = new Thickness(0, 22, 0, 0);
         flip.VerticalAlignment = VerticalAlignment.Top;
@@ -224,22 +224,22 @@ public sealed partial class SetEditorScreen : Screen
             flip.Width = flip.Height = 34;
             flip.Margin = new Thickness(0, 24, 0, 0);
             var row = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto,*"), ColumnSpacing = 6 };
-            row.Children.Add(Ui.V(6, Label("Ich lerne"), _termBox, _termDetectedLabel));
+            row.Children.Add(Ui.V(6, Label(L("Ich lerne")), _termBox, _termDetectedLabel));
             Grid.SetColumn(flip, 1);
             row.Children.Add(flip);
-            var second = Ui.V(6, Label("Übersetzung"), _defBox, _defDetectedLabel);
+            var second = Ui.V(6, Label(L("Übersetzung")), _defBox, _defDetectedLabel);
             Grid.SetColumn(second, 2);
             row.Children.Add(second);
             langs = row;
         }
         else langs = Ui.H(14,
-            Ui.V(6, Label("Ich lerne"), _termBox, _termDetectedLabel),
+            Ui.V(6, Label(L("Ich lerne")), _termBox, _termDetectedLabel),
             flip,
-            Ui.V(6, Label("Übersetzung"), _defBox, _defDetectedLabel));
+            Ui.V(6, Label(L("Übersetzung")), _defBox, _defDetectedLabel));
 
         var body = Ui.V(16,
-            Ui.V(6, Label("Titel"), _titleBox, _titleError, _titleNote),
-            Ui.V(6, Label("Beschreibung"), _detailsBox),
+            Ui.V(6, Label(L("Titel")), _titleBox, _titleError, _titleNote),
+            Ui.V(6, Label(L("Beschreibung")), _detailsBox),
             langs);
         return Ui.Glass(body, 22, AppDevice.IsPhone ? new Thickness(14, 14) : new Thickness(20, 18), strong: true);
 
@@ -317,7 +317,7 @@ public sealed partial class SetEditorScreen : Screen
     Control ActionBar()
     {
         var p = WsTheme.P;
-        _cancelButton = Ui.Secondary("Abbrechen", Cancel, keyHint: "Esc", height: 40);
+        _cancelButton = Ui.Secondary(L("Abbrechen"), Cancel, keyHint: "Esc", height: 40);
         _saveButton = Ui.Primary(SaveLabel, Save, "Ctrl ↵", height: 40);
         Detach(_status);
         var capsule = new Border
@@ -332,7 +332,7 @@ public sealed partial class SetEditorScreen : Screen
             HorizontalAlignment = HorizontalAlignment.Left,
             ClipToBounds = true,
         };
-        AutomationProperties.SetName(capsule, "Status");
+        AutomationProperties.SetName(capsule, L("Status"));
         var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto,Auto"), ColumnSpacing = AppDevice.IsPhone ? 6 : 10, Margin = AppDevice.IsPhone ? new Thickness(8, 6, 8, 10) : new Thickness(34, 8, 34, 14), MaxWidth = ContentWidth };
         if (AppDevice.IsPhone) capsule.Padding = new Thickness(12, 0);
         grid.Children.Add(capsule);
@@ -350,12 +350,44 @@ public sealed partial class SetEditorScreen : Screen
         var p = WsTheme.P;
         var blocker = SetEditorCopy.Readiness(IsTitleEmpty, stats.Complete);
         var extras = new List<string>();
-        if (stats.Duplicates > 0) extras.Add($"{stats.Duplicates} doppelt");
-        if (stats.Invalid > 0) extras.Add($"{stats.Invalid} unvollständig");
-        if (stats.Typos > 0) extras.Add($"{stats.Typos} Tippfehler?");
+        if (stats.Duplicates > 0) extras.Add(L($"{stats.Duplicates} doppelt"));
+        if (stats.Invalid > 0) extras.Add(L($"{stats.Invalid} unvollständig"));
+        if (stats.Typos > 0) extras.Add(L($"{stats.Typos} Tippfehler?"));
+        // Both sides in the same language (Deutsch → Deutsch) went through without a word (Joan's test, 06.11.2026):
+        // said first, before what still blocks saving.
+        string? sameLang = _termLang == _defLang && _termLang != Lang.Other ? L("Zweimal dieselbe Sprache?") : null;
         _status.Children.Clear();
+        if (AppDevice.IsPhone)
+        {
+            // Phone: two short lines – in one line «0 Karten FR → DE · Noch keine vollständige Karte» was cut to «· No…»
+            // (06.11.2026). The count and languages on top, what blocks saving (or the warnings) small below.
+            _status.Orientation = Orientation.Vertical;
+            _status.Spacing = 0;
+            var top = Ui.H(6, Ui.Text(Labels.Plural(stats.Filled, "Karte", "Karten"), 13.5, FontWeight.SemiBold),
+                Ui.Text(Labels.LangPair(_termLang, _defLang), 13.5, color: p.TextSecondary));
+            _status.Children.Add(top);
+            // Short words: the bar has room for about 22 letters («Noch keine vollständig…» was cut). Told by the state,
+            // not by the blocker's text (which is in the app's language).
+            string? shortBlocker = blocker is not null && !IsTitleEmpty && stats.Complete == 0 ? L("Noch keine Karte") : blocker;
+            string? note = (sameLang is null ? null : L("Gleiche Sprache?")) ?? shortBlocker ?? (extras.Count > 0 ? string.Join(" · ", extras) : null);
+            if (note is not null)
+            {
+                var line = Ui.Text(note, 11.5, color: blocker is not null && sameLang is null ? p.TextSecondary : p.Warning.Text);
+                line.TextTrimming = TextTrimming.CharacterEllipsis;
+                _status.Children.Add(line);
+            }
+            var phoneText = string.Join(" ", new[] { Labels.Plural(stats.Filled, "Karte", "Karten"), Labels.LangPair(_termLang, _defLang), note }.Where(s => s is not null));
+            if (_status.Parent is Control phoneCapsule) AutomationProperties.SetHelpText(phoneCapsule, phoneText);
+            ToolTip.SetTip(_saveButton, blocker is not null ? SaveHelp(blocker) : SaveLabel);
+            return;
+        }
         _status.Children.Add(Ui.Text(Labels.Plural(stats.Filled, "Karte", "Karten"), 13.5, FontWeight.SemiBold));
         _status.Children.Add(Ui.Text(Labels.LangPair(_termLang, _defLang), 13.5, color: p.TextSecondary));
+        if (sameLang is not null)
+        {
+            _status.Children.Add(Ui.Text("·", 13.5, color: p.TextTertiary));
+            _status.Children.Add(Ui.Text(sameLang, 13.5, color: p.Warning.Text));
+        }
         if (blocker is not null || extras.Count > 0)
         {
             _status.Children.Add(Ui.Text("·", 13.5, color: p.TextTertiary));
@@ -363,9 +395,18 @@ public sealed partial class SetEditorScreen : Screen
         }
         var statusText = string.Join(" ", _status.Children.OfType<TextBlock>().Select(t => t.Text));
         if (_status.Parent is Control capsule) AutomationProperties.SetHelpText(capsule, statusText);
-        ToolTip.SetTip(_saveButton, blocker is not null ? $"{blocker} – {SaveLabel} zeigt, was fehlt" : $"{SaveLabel} (Ctrl+Enter oder Ctrl+S)");
-        ToolTip.SetTip(_cancelButton, _importCts is not null ? "Import abbrechen (Esc)" : "Ohne Speichern schliessen (Esc)");
+        ToolTip.SetTip(_saveButton, SaveHelp(blocker));
+        ToolTip.SetTip(_cancelButton, _importCts is not null ? L("Import abbrechen (Esc)") : L("Ohne Speichern schliessen (Esc)"));
     }
+
+    /// <summary>The save button's tooltip: what still blocks saving, else its keys (Mac: SetEditorActionBar.saveHelp).</summary>
+    string SaveHelp(string? blocker) => (blocker, IsEditing) switch
+    {
+        ({ } b, true) => L($"{b} – Sichern zeigt, was fehlt"),
+        ({ } b, false) => L($"{b} – Erstellen zeigt, was fehlt"),
+        (null, true) => L("Sichern (Ctrl+Enter oder Ctrl+S)"),
+        (null, false) => L("Erstellen (Ctrl+Enter oder Ctrl+S)"),
+    };
 
     /// <summary>Shown while files are dragged over the editor (Mac: SetEditorDropOverlay).</summary>
     static Control DropOverlay()
@@ -380,9 +421,9 @@ public sealed partial class SetEditorScreen : Screen
         });
         var icon = Icons.Icon(IconName.Download, 30, p.Accent, 2);
         icon.HorizontalAlignment = HorizontalAlignment.Center;
-        var title = Ui.Text("Datei loslassen zum Importieren", 20, FontWeight.Bold);
+        var title = Ui.Text(L("Datei loslassen zum Importieren"), 20, FontWeight.Bold);
         title.HorizontalAlignment = HorizontalAlignment.Center;
-        var note = Ui.Text("Text, CSV, PDF oder Foto – mehrere Dateien gehen auch.", 14, color: p.TextSecondary);
+        var note = Ui.Text(L("Text, CSV, PDF oder Foto – mehrere Dateien gehen auch."), 14, color: p.TextSecondary);
         note.HorizontalAlignment = HorizontalAlignment.Center;
         var card = Ui.Glass(Ui.V(8, icon, title, note), 22, new Thickness(40, 28), strong: true);
         card.HorizontalAlignment = HorizontalAlignment.Center;
@@ -495,7 +536,7 @@ public sealed partial class SetEditorScreen : Screen
     /// <summary>"Begriffe und Definitionen tauschen": languages and every row (undoable).</summary>
     void FlipSides()
     {
-        Undoable("Seiten tauschen", "Begriffe und Definitionen getauscht", ToastTone.Neutral, includesImport: false, () =>
+        Undoable(L("Seiten tauschen"), L("Begriffe und Definitionen getauscht"), ToastTone.Neutral, includesImport: false, () =>
         {
             _termTouched = _defTouched = true;
             _termDetected = _defDetected = false;
@@ -539,8 +580,8 @@ public sealed partial class SetEditorScreen : Screen
         _settingLangs = false;
         _termDetectedLabel.Opacity = _termDetected ? 1 : 0;
         _defDetectedLabel.Opacity = _defDetected ? 1 : 0;
-        AutomationProperties.SetHelpText(_termBox, _termDetected ? $"{Labels.LangName(_termLang)}, automatisch erkannt" : Labels.LangName(_termLang));
-        AutomationProperties.SetHelpText(_defBox, _defDetected ? $"{Labels.LangName(_defLang)}, automatisch erkannt" : Labels.LangName(_defLang));
+        AutomationProperties.SetHelpText(_termBox, _termDetected ? L($"{Labels.LangName(_termLang)}, automatisch erkannt") : Labels.LangName(_termLang));
+        AutomationProperties.SetHelpText(_defBox, _defDetected ? L($"{Labels.LangName(_defLang)}, automatisch erkannt") : Labels.LangName(_defLang));
         _capsuleHost.Child = Ui.Chip(Labels.LangPair(_termLang, _defLang));
         foreach (var header in new[] { _columnHeaderInFlow, _pinnedColumns }) if (header is not null) FillColumnHeader(header);
         if (rows) FillCards();
@@ -604,7 +645,7 @@ public sealed partial class SetEditorScreen : Screen
         if (Model.Prompt is not null || _closed) return;
         if (_importCts is not null)
         {
-            Model.ShowToast(new ToastMessage("Bitte warte, bis der Import fertig ist."));
+            Model.ShowToast(new ToastMessage(L("Bitte warte, bis der Import fertig ist.")));
             return;
         }
         int pending = PendingCount();
@@ -613,16 +654,18 @@ public sealed partial class SetEditorScreen : Screen
             if (!_drafts.Any(d => d.IsFilled)) TakeOverPending(append: false);
             else
             {
-                var waiting = pending == 1 ? "wartet noch 1 erkanntes Paar" : $"warten noch {pending} erkannte Paare";
-                Model.Ask(new PromptRequest("Liste noch nicht übernommen", $"Im Importfeld {waiting}. Sollen sie vor dem Speichern angehängt werden?",
+                var question = pending == 1
+                    ? L("Im Importfeld wartet noch 1 erkanntes Paar. Sollen sie vor dem Speichern angehängt werden?")
+                    : L($"Im Importfeld warten noch {pending} erkannte Paare. Sollen sie vor dem Speichern angehängt werden?");
+                Model.Ask(new PromptRequest(L("Liste noch nicht übernommen"), question,
                 [
-                    new PromptButton($"{Labels.Plural(pending, "Karte", "Karten")} anhängen", () =>
+                    new PromptButton(L($"{Labels.Plural(pending, "Karte", "Karten")} anhängen"), () =>
                     {
                         TakeOverPending(append: true);
                         Commit();
                     }, IsDefault: true),
-                    new PromptButton("Ohne Liste", Commit),
-                    new PromptButton("Abbrechen", IsCancel: true),
+                    new PromptButton(L("Ohne Liste"), Commit),
+                    new PromptButton(L("Abbrechen"), IsCancel: true),
                 ]));
                 return;
             }
@@ -642,7 +685,7 @@ public sealed partial class SetEditorScreen : Screen
             {
                 var set = Model.CreateSet(title, _termLang, _defLang, cards, description);
                 Close();
-                Model.ShowToast(new ToastMessage("Lernset erstellt", ToastTone.Success));
+                Model.ShowToast(new ToastMessage(L("Lernset erstellt"), ToastTone.Success));
                 Model.OpenSet(set.Id);
             }
             else
@@ -650,7 +693,7 @@ public sealed partial class SetEditorScreen : Screen
                 Model.Store.UpdateSet(_setId!, new SetPatch(title, description, _termLang, _defLang, Cards: cards));
                 Model.Store.Save();
                 Close();
-                Model.ShowToast(new ToastMessage("Änderungen gespeichert", ToastTone.Success));
+                Model.ShowToast(new ToastMessage(L("Änderungen gespeichert"), ToastTone.Success));
                 Model.OpenSet(_setId!);
             }
         }
@@ -717,15 +760,15 @@ public sealed partial class SetEditorScreen : Screen
     bool AskBeforeLeaving(Action leave)
     {
         if (!IsDirty || Model.Prompt is not null) return false;
-        Model.Ask(new PromptRequest("Änderungen verwerfen?",
-            IsNew ? "Dein neues Lernset ist noch nicht gespeichert und geht verloren." : "Deine Änderungen an diesem Lernset sind noch nicht gespeichert und gehen verloren.",
+        Model.Ask(new PromptRequest(L("Änderungen verwerfen?"),
+            IsNew ? L("Dein neues Lernset ist noch nicht gespeichert und geht verloren.") : L("Deine Änderungen an diesem Lernset sind noch nicht gespeichert und gehen verloren."),
             [
-                new PromptButton("Verwerfen", () =>
+                new PromptButton(L("Verwerfen"), () =>
                 {
                     Close();
                     leave();
                 }, IsDestructive: true),
-                new PromptButton("Weiter bearbeiten", IsDefault: true, IsCancel: true),
+                new PromptButton(L("Weiter bearbeiten"), IsDefault: true, IsCancel: true),
             ]));
         return true;
     }
@@ -765,7 +808,7 @@ public sealed partial class SetEditorScreen : Screen
         if (Model.Set(_setId!) is not { } fresh)
         {
             Close();
-            Model.ShowToast(new ToastMessage("Dieses Lernset wurde gelöscht.", ToastTone.Danger));
+            Model.ShowToast(new ToastMessage(L("Dieses Lernset wurde gelöscht."), ToastTone.Danger));
             Model.ShowOverview();
             return;
         }
@@ -781,7 +824,7 @@ public sealed partial class SetEditorScreen : Screen
         CheckDuplicates();
         base.Refresh();
         CheckSpelling();
-        Model.ShowToast(new ToastMessage("Das Lernset wurde anderswo geändert – die neue Version ist geladen."));
+        Model.ShowToast(new ToastMessage(L("Das Lernset wurde anderswo geändert – die neue Version ist geladen.")));
     }
 
     public override void Refresh()
@@ -873,7 +916,7 @@ public sealed partial class SetEditorScreen : Screen
         var before = CurrentUndoState(includesImport);
         change();
         var record = _history.Register(actionName, before, CurrentUndoState(includesImport));
-        var message = new ToastMessage(toast, tone, "Rückgängig", () =>
+        var message = new ToastMessage(toast, tone, L("Rückgängig"), () =>
         {
             if (_closed || !_activated) return;
             _history.Revert(record);
@@ -887,7 +930,7 @@ public sealed partial class SetEditorScreen : Screen
     {
         if (_history.Undo() is not { } record) return false;
         Restore(record.Before);
-        Announcer.Announce($"Rückgängig: {record.Name}");
+        Announcer.Announce(L($"Rückgängig: {record.Name}"));
         return true;
     }
 
@@ -895,7 +938,7 @@ public sealed partial class SetEditorScreen : Screen
     {
         if (_history.Redo() is not { } record) return false;
         Restore(record.After);
-        Announcer.Announce($"Wiederholen: {record.Name}");
+        Announcer.Announce(L($"Wiederholen: {record.Name}"));
         return true;
     }
 

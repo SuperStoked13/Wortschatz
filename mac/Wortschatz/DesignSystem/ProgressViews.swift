@@ -50,11 +50,11 @@ struct StatusCounts: Hashable, Sendable {
     }
 
     /// "45 %" (with a no-break space, like the web app).
-    nonisolated var percentText: String { "\(percent)\u{00A0}%" }
+    nonisolated var percentText: String { String(localized: "\(percent)\u{00A0}%") }
 
     /// VoiceOver description, as in the web app: "3 gemeistert, 5 am Lernen, 12 neu".
     nonisolated var accessibilityDescription: String {
-        "\(mastered) gemeistert, \(learning) am Lernen, \(fresh) neu"
+        String(localized: "\(mastered) gemeistert, \(learning) am Lernen, \(fresh) neu")
     }
 }
 
@@ -165,57 +165,11 @@ struct ProgressCapsule: View {
     }
 }
 
-// MARK: - Round progress
-
-/// Progress through the current round ("3 von 7"), a slim accent bar.
-struct RoundProgressBar: View {
-    var value: Int
-    var total: Int
-    /// Optional leading label, e.g. "Runde 2".
-    var label: String?
-    var tint: Color = Theme.accent
-
-    private var fraction: Double {
-        total > 0 ? min(1, max(0, Double(value) / Double(total))) : 0
-    }
-
-    var body: some View {
-        HStack(spacing: Spacing.s) {
-            if let label {
-                Text(label)
-                    .font(.callout.weight(.semibold))
-                    .foregroundStyle(.secondary)
-                    .fixedSize()
-            }
-            GeometryReader { proxy in
-                ZStack(alignment: .leading) {
-                    Capsule(style: .continuous)
-                        .fill(Color.primary.opacity(0.08))
-                    Capsule(style: .continuous)
-                        .fill(tint.gradient)
-                        .frame(width: fraction > 0 ? max(6, proxy.size.width * fraction) : 0)
-                }
-            }
-            .frame(height: 6)
-            .motionAnimation(Motion.gentle, value: fraction)
-            Text("\(min(value, total)) von \(total)")
-                .font(.callout.weight(.medium))
-                .monospacedDigit()
-                .foregroundStyle(.secondary)
-                .contentTransition(.numericText())
-                .fixedSize()
-        }
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(label ?? "Fortschritt der Runde")
-        .accessibilityValue("\(min(value, total)) von \(total)")
-    }
-}
-
 // MARK: - Mastery gauge
 
 /// Circular mastery gauge: green arc for Gemeistert, amber for Am Lernen, on a grey track.
 /// `.small` for sidebar rows (no text), `.medium` for set cards (percentage), `.large` for the
-/// set header (percentage + "gemeistert", optional legend).
+/// set header (percentage + "gemeistert").
 struct MasteryGauge: View {
     enum Size: Sendable {
         case small, medium, large
@@ -239,8 +193,6 @@ struct MasteryGauge: View {
 
     var counts: StatusCounts
     var size: Size = .small
-    /// Large only: Gemeistert / Am Lernen / Neu with counts next to the ring.
-    var showsLegend = false
 
     private var total: Double { Double(counts.total) }
     private var masteredEnd: Double { total > 0 ? Double(counts.mastered) / total : 0 }
@@ -248,15 +200,10 @@ struct MasteryGauge: View {
     private var isComplete: Bool { counts.total > 0 && counts.mastered == counts.total }
 
     var body: some View {
-        HStack(spacing: Spacing.xl) {
-            ring
-            if showsLegend && size != .small {
-                legend
-            }
-        }
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Lernstand")
-        .accessibilityValue("\(counts.percent) Prozent gemeistert. \(counts.accessibilityDescription)")
+        ring
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("Lernstand")
+            .accessibilityValue("\(counts.percent) Prozent gemeistert. \(counts.accessibilityDescription)")
     }
 
     private var ring: some View {
@@ -315,24 +262,5 @@ struct MasteryGauge: View {
                     .foregroundStyle(.secondary)
             }
         }
-    }
-
-    private var legend: some View {
-        Grid(alignment: .leading, horizontalSpacing: Spacing.s, verticalSpacing: Spacing.xs) {
-            ForEach([CardStatus.mastered, .learning, .new], id: \.self) { status in
-                GridRow {
-                    Circle()
-                        .fill(status.palette.fill)
-                        .frame(width: 9, height: 9)
-                    Text(status.label)
-                        .foregroundStyle(.secondary)
-                    Text(counts.count(status), format: .number)
-                        .font(Typography.count)
-                        .gridColumnAlignment(.trailing)
-                }
-            }
-        }
-        .font(.callout)
-        .fixedSize()
     }
 }

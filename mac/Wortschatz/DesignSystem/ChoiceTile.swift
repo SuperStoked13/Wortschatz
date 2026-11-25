@@ -70,9 +70,9 @@ struct ChoiceTile: View {
 
     private var accessibilityState: String {
         switch state {
-        case .idle, .highlighted, .filtered: "Antwort \(number)"
-        case .correct: "Richtige Antwort"
-        case .wrong: "Deine Antwort, falsch"
+        case .idle, .highlighted, .filtered: String(localized: "Antwort \(number)")
+        case .correct: String(localized: "Richtige Antwort")
+        case .wrong: String(localized: "Deine Antwort, falsch")
         case .dimmed: ""
         }
     }
@@ -89,6 +89,7 @@ private struct ChoiceTileStyle: ButtonStyle {
 }
 
 private struct ChoiceTileBody: View {
+    @Environment(\.studyScale) private var studyScale
     let configuration: ButtonStyleConfiguration
     let number: Int
     let state: ChoiceTileState
@@ -110,7 +111,7 @@ private struct ChoiceTileBody: View {
         HStack(spacing: Spacing.m) {
             badge
             configuration.label
-                .font(Typography.answer)
+                .font(Typography.answer(studyScale))
                 .foregroundStyle(.primary)
                 .multilineTextAlignment(.leading)
                 .lineLimit(3)
@@ -121,7 +122,7 @@ private struct ChoiceTileBody: View {
         .opacity(state == .dimmed ? 0.4 : state == .filtered ? 0.5 : 1)
         .padding(.horizontal, Spacing.l)
         .padding(.vertical, Spacing.m)
-        .frame(maxWidth: .infinity, minHeight: LayoutMetrics.choiceTileMinHeight, maxHeight: .infinity, alignment: .leading)
+        .frame(maxWidth: .infinity, minHeight: LayoutMetrics.choiceTileMinHeight * studyScale, maxHeight: .infinity, alignment: .leading)
         .overlay {
             if let ring {
                 shape.strokeBorder(ring, lineWidth: 2)

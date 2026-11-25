@@ -1,6 +1,7 @@
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Media;
+using Avalonia.Media.Immutable;
 
 namespace Wortschatz.App.DesignSystem;
 
@@ -130,21 +131,40 @@ static class Confetti
         return list;
     }
 
+    /// <summary>
+    /// One burst's particles with their brushes and sparkle shapes, made once instead of on every frame (120 particles,
+    /// a brush each and the sparkles' geometry 60 times a second for almost three seconds).
+    /// </summary>
+    sealed record Burst(ulong Seed, int Count, Color[] Colors, List<Particle> Particles, IBrush[] Brushes, Geometry?[] Sparkles);
+
+    static Burst? s_last;
+
+    static Burst BurstFor(ulong seed, int count)
+    {
+        var colors = Colors();
+        if (s_last is { } last && last.Seed == seed && last.Count == count && last.Colors.AsSpan().SequenceEqual(colors)) return last;
+        var particles = Particles(seed, count, colors.Length);
+        var brushes = colors.Select(c => (IBrush)new ImmutableSolidColorBrush(c)).ToArray();
+        var sparkles = particles.Select(p => p.Shape == Shape.Sparkle ? Sparkle(p.Width * 0.8) : null).ToArray();
+        return s_last = new Burst(seed, count, colors, particles, brushes, sparkles);
+    }
+
     public static void Draw(DrawingContext context, Size size, Point origin, double t, ulong seed, int count)
     {
         if (t < 0 || t > Duration) return;
-        var colors = Colors();
+        var burst = BurstFor(seed, count);
         double ox = origin.X * size.Width, oy = origin.Y * size.Height;
         // Integrated velocity with linear drag: v·(1 − e^(−k·t))/k, plus gravity.
         double travel = (1 - Math.Exp(-Drag * t)) / Drag;
         double fade = t > Duration - 0.7 ? Math.Max(0, (Duration - t) / 0.7) : 1;
         using var opacity = context.PushOpacity(fade);
-        foreach (var particle in Particles(seed, count, colors.Length))
+        for (int i = 0; i < burst.Particles.Count; i++)
         {
+            var particle = burst.Particles[i];
             double x = ox + Math.Cos(particle.Angle) * particle.Speed * travel;
             double y = oy + Math.Sin(particle.Angle) * particle.Speed * travel + 0.5 * Gravity * t * t * 0.55;
             if (y >= size.Height + 40) continue;
-            var brush = new SolidColorBrush(colors[particle.ColorIndex]);
+            var brush = burst.Brushes[particle.ColorIndex];
             double rotation = particle.Phase + particle.Spin * t;
             var m = Matrix.CreateRotation(rotation) * Matrix.CreateTranslation(x, y);
             switch (particle.Shape)
@@ -161,14 +181,14 @@ static class Confetti
                     break;
                 default:
                     using (context.PushTransform(m))
-                        context.DrawGeometry(brush, null, Sparkle(particle.Width * 0.8));
+                        context.DrawGeometry(brush, null, burst.Sparkles[i]!);
                     break;
             }
         }
     }
 
     /// <summary>Four-pointed star.</summary>
-    static StreamGeometry Sparkle(double r)
+    static Geometry Sparkle(double r)
     {
         var geometry = new StreamGeometry();
         using var ctx = geometry.Open();

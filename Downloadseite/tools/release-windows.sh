@@ -1,11 +1,18 @@
 #!/bin/bash
 # Legt die Windows-App (windows-native/dist/Wortschatz.exe, native C#-App seit 1.2) als Download in
-# Downloadseite/releases/ ab, zusammen mit windows.json. Der laufende Server übernimmt die neue Version innert 15 Sekunden.
+# Downloadseite/releases/ ab, zusammen mit windows.json und windows-update.json (das Update für die installierten Apps).
+# Der laufende Server übernimmt die neue Version innert 15 Sekunden.
+#
+# Updates: windows-update.json signiert das Skript mit dem privaten Update-Schlüssel (tools/windows_update.py; Standard
+# ~/.config/wortschatz-update/windows-update-key.pem, anders mit WORTSCHATZ_UPDATE_KEY=…). Fehlt er oder passt er nicht
+# zur App, bricht es vor dem Bauen ab; --ohne-update baut trotzdem, nur bekommen die installierten Apps diese Version
+# dann nicht von selbst (VEROEFFENTLICHEN.md › «Updates (Windows)»). Braucht python3 und openssl.
 #
 # Aufruf (im Terminal, braucht das .NET SDK 10, läuft unter Linux, macOS und Windows):
 #   Downloadseite/tools/release-windows.sh                testet und baut zuerst mit windows-native/build.sh
 #   Downloadseite/tools/release-windows.sh --skip-build   die vorhandene windows-native/dist/Wortschatz.exe verwenden
 #   Downloadseite/tools/release-windows.sh --version 1.2  Versionsnummer selbst setzen
+#   Downloadseite/tools/release-windows.sh --ohne-update  ohne windows-update.json (ohne Schlüssel)
 #
 # Die frühere Windows-App (windows/ + Website/, WebView2, bis 1.1) wird nicht mehr ausgeliefert.
 set -euo pipefail
@@ -18,10 +25,12 @@ OUT="$SITE/releases"
 
 BUILD=1
 VERSION=""
+UPDATE=1
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --skip-build) BUILD=0 ;;
     --version) VERSION="${2:-}"; shift ;;
+    --ohne-update) UPDATE=0 ;;
     *) echo "Unbekannte Option: $1"; exit 1 ;;
   esac
   shift
@@ -30,6 +39,13 @@ done
 sha256() {
   if command -v shasum >/dev/null 2>&1; then shasum -a 256 "$1" | cut -d' ' -f1; else sha256sum "$1" | cut -d' ' -f1; fi
 }
+
+# Der Update-Schlüssel muss zur App passen, sonst nimmt keine installierte App das Update an: vor dem Bauen prüfen.
+if [[ "$UPDATE" == 1 ]] && ! python3 -I "$SITE/tools/windows_update.py" pruefen; then
+  echo "Ohne passenden Schlüssel kein Update für die installierten Apps. Den Schlüssel hat, wer bisher Windows veröffentlicht hat"
+  echo "(VEROEFFENTLICHEN.md › «Updates (Windows)»). Nur für die Downloadseite, ohne Update: --ohne-update"
+  exit 1
+fi
 
 if [[ "$BUILD" == 1 ]]; then
   "$PROJECT/windows-native/build.sh" test
@@ -80,7 +96,24 @@ find "$OUT" -maxdepth 1 \( -name 'Wortschatz-*-Windows.exe' -o -name 'Wortschatz
 # Neuigkeiten: was unter «Nächste Version» steht, gehört jetzt zu dieser Version.
 python3 -I "$SITE/tools/neuigkeiten.py" "$VERSION" windows || echo "Neuigkeiten nicht eingetragen: Downloadseite/public/_neuigkeiten.md von Hand nachführen."
 
+# Das Update für die installierten Apps: windows-update.json mit den Neuigkeiten dieser Version, signiert.
+if [[ "$UPDATE" == 1 && ! "$VERSION" =~ ^[0-9]{1,4}\.[0-9]{1,4}(\.[0-9]{1,4})?$ ]]; then
+  echo "Version $VERSION: die App versteht für Updates nur Zahlen wie 1.8 oder 1.8.1 – kein windows-update.json."
+  UPDATE=0
+fi
+if [[ "$UPDATE" == 1 ]]; then
+  python3 -I "$SITE/tools/windows_update.py" schreiben --version "$VERSION" --exe "$OUT/$NAME" --out "$OUT/windows-update.json"
+  chmod 644 "$OUT/windows-update.json"
+else
+  rm -f "$OUT/windows-update.json"
+fi
+
 SIZE=$(du -h "$OUT/$NAME" | cut -f1)
 echo
 echo "Fertig: releases/$NAME ($SIZE)"
 echo "SHA-256: $(sha256 "$OUT/$NAME")"
+if [[ "$UPDATE" == 1 ]]; then
+  echo "Update: releases/windows-update.json – mit der exe und windows.json ans Release hängen (VEROEFFENTLICHEN.md)."
+else
+  echo "Ohne Update: die installierten Apps bekommen diese Version nicht von selbst."
+fi

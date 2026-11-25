@@ -5,6 +5,7 @@ using Avalonia.Layout;
 using Avalonia.Media;
 using Wortschatz.App.DesignSystem;
 using Wortschatz.Core;
+using static Wortschatz.Core.CoreText;
 
 namespace Wortschatz.App.Features.Study;
 
@@ -23,36 +24,16 @@ public static class StudyChrome
         // Phone: only the chevron (the title would take the room of the progress capsule).
         if (AppDevice.IsPhone)
         {
-            var back = Ui.IconButton(IconName.ChevronLeft, "Zurück zum Lernset", onBack, 40, ButtonKind.Glass, P.Text);
+            var back = Ui.IconButton(IconName.ChevronLeft, L("Zurück zum Lernset"), onBack, 40, ButtonKind.Glass, P.Text);
             return back;
         }
         var b = new WsButton(Ui.H(4, Icons.Icon(IconName.ChevronLeft, 18, P.Text, 2), Ui.Text(title, 14, FontWeight.SemiBold)), ButtonKind.Glass, 38,
             padding: new Thickness(10, 0, 16, 0));
         b.Click += (_, _) => onBack();
         b.MaxWidth = 340;
-        ToolTip.SetTip(b, "Zurück zum Lernset (Esc)");
-        Avalonia.Automation.AutomationProperties.SetName(b, "Zurück zum Lernset");
+        ToolTip.SetTip(b, L("Zurück zum Lernset (Esc)"));
+        Avalonia.Automation.AutomationProperties.SetName(b, L("Zurück zum Lernset"));
         return b;
-    }
-
-    /// <summary>The progress capsule: bar (mastered/learning) and "18 Neu · 12 Am Lernen · 22 Gemeistert".</summary>
-    public static Control ProgressCapsule(int fresh, int learning, int mastered, int total)
-    {
-        var text = new TextBlock { FontFamily = WsTheme.UI, FontSize = 13, Foreground = WsTheme.B(P.TextSecondary), VerticalAlignment = VerticalAlignment.Center };
-        void Part(string n, string label, bool last = false)
-        {
-            text.Inlines!.Add(new Avalonia.Controls.Documents.Run(n) { FontWeight = FontWeight.Bold, Foreground = WsTheme.B(P.Text) });
-            text.Inlines.Add(new Avalonia.Controls.Documents.Run($" {label}{(last ? "" : " · ")}"));
-        }
-        text.Inlines = new Avalonia.Controls.Documents.InlineCollection();
-        Part($"{fresh}", "Neu");
-        Part($"{learning}", "Am Lernen");
-        Part($"{mastered}", "Gemeistert", true);
-        var row = Ui.H(14, Ui.StatusBar(mastered, learning, total, 7, 200), text);
-        var capsule = Ui.Glass(row, 999, new Thickness(18, 0), strong: true, shadow: false);
-        capsule.Height = 40;
-        Avalonia.Automation.AutomationProperties.SetName(capsule, $"Fortschritt: {mastered} von {total} gemeistert, {learning} am Lernen, {fresh} neu");
-        return capsule;
     }
 
     /// <summary>The top row of a study screen: left, centre and right parts.</summary>
@@ -79,18 +60,6 @@ public static class StudyChrome
             g.Children.Add(right);
         }
         return g;
-    }
-
-    /// <summary>The floating glass bar at the bottom centre with the step's actions.</summary>
-    public static Control ActionBar(params Control?[] items)
-    {
-        var row = Ui.H(10, items);
-        row.VerticalAlignment = VerticalAlignment.Center;
-        var bar = Ui.Glass(row, 999, new Thickness(8), strong: true);
-        bar.HorizontalAlignment = HorizontalAlignment.Center;
-        bar.VerticalAlignment = VerticalAlignment.Bottom;
-        bar.Margin = new Thickness(0, 0, 0, 26);
-        return bar;
     }
 
     /// <summary>
@@ -121,15 +90,15 @@ public static class StudyChrome
         if (set.TermLang.IsRTL()) term.FlowDirection = FlowDirection.RightToLeft;
         if (set.DefLang.IsRTL()) def.FlowDirection = FlowDirection.RightToLeft;
         // A side may not be empty: a hint under the field and "Sichern" is disabled until both are filled.
-        var termError = Ui.Text("Bitte gib den Begriff ein.", 13, FontWeight.Medium, P.Failure.Text);
-        var defError = Ui.Text("Bitte gib die Definition ein.", 13, FontWeight.Medium, P.Failure.Text);
+        var termError = Ui.Text(L("Bitte gib den Begriff ein."), 13, FontWeight.Medium, P.Failure.Text);
+        var defError = Ui.Text(L("Bitte gib die Definition ein."), 13, FontWeight.Medium, P.Failure.Text);
         bool Valid() => JSCompat.Trim(term.Text ?? "").Length > 0 && JSCompat.Trim(def.Text ?? "").Length > 0;
         Action doSave = () =>
         {
             if (Valid()) onSave(term.Text ?? "", def.Text ?? "");
         };
         save = doSave;
-        var saveButton = Ui.Primary("Sichern", doSave, "↵", height: 40);
+        var saveButton = Ui.Primary(L("Sichern"), doSave, "↵", height: 40);
         void Update()
         {
             termError.IsVisible = JSCompat.Trim(term.Text ?? "").Length == 0;
@@ -140,9 +109,9 @@ public static class StudyChrome
         term.TextChanged += (_, _) => Update();
         def.TextChanged += (_, _) => Update();
         Update();
-        var buttons = Ui.H(10, Ui.Secondary("Abbrechen", onCancel, keyHint: "Esc"), saveButton);
+        var buttons = Ui.H(10, Ui.Secondary(L("Abbrechen"), onCancel, keyHint: "Esc"), saveButton);
         buttons.HorizontalAlignment = HorizontalAlignment.Right;
-        var c = Ui.Hero(Ui.V(14, Ui.Text("Karte bearbeiten", 20, FontWeight.Bold), Ui.Eyebrow(termLabel), term, termError, Ui.Eyebrow(defLabel), def, defError, buttons), new Thickness(26, 22), 24);
+        var c = Ui.Hero(Ui.V(14, Ui.Text(L("Karte bearbeiten"), 20, FontWeight.Bold), Ui.Eyebrow(termLabel), term, termError, Ui.Eyebrow(defLabel), def, defError, buttons), new Thickness(26, 22), 24);
         c.Width = 480;
         var first = focus == AskSide.Definition ? def : term;
         Avalonia.Threading.Dispatcher.UIThread.Post(() =>
@@ -151,33 +120,6 @@ public static class StudyChrome
             first.CaretIndex = first.Text?.Length ?? 0;
         }, Avalonia.Threading.DispatcherPriority.Input);
         return c;
-    }
-
-    /// <summary>"🔥 6 richtig in Folge".</summary>
-    public static Control StreakChip(int count)
-    {
-        var chip = new Border
-        {
-            Height = 38,
-            Padding = new Thickness(14, 0),
-            CornerRadius = new CornerRadius(999),
-            Background = WsTheme.B(Palette.Hex(Ui.Rgb(P.Flame), 0.12)),
-            Child = Ui.H(7, Icons.Icon(IconName.Flame, 16, P.Flame), Ui.Text($"{count} richtig in Folge", 13.5, FontWeight.SemiBold, P.FlameText)),
-        };
-        return chip;
-    }
-
-    /// <summary>A status chip in the action bar ("✓ Super!", "✗ Nicht ganz …").</summary>
-    public static Control StatusChip(string text, StatusPalette palette, IconName icon)
-    {
-        return new Border
-        {
-            Height = 38,
-            Padding = new Thickness(14, 0),
-            CornerRadius = new CornerRadius(999),
-            Background = WsTheme.B(palette.Soft),
-            Child = Ui.H(8, Icons.Icon(icon, 17, palette.Text, 2.2), Ui.Text(text, 14, FontWeight.SemiBold, palette.Text)),
-        };
     }
 
     /// <summary>A dimmed layer with a centred glass card (prompts, panels). Click outside = cancel.</summary>
@@ -211,22 +153,6 @@ public static class StudyChrome
         return card;
     }
 
-    /// <summary>A labelled row for the options panel.</summary>
-    static Control OptionRow(string label, Control control, string? note = null)
-    {
-        var left = Ui.V(2, Ui.Text(label, 14, FontWeight.Medium), note is null ? null : Ui.Text(note, 12.5, color: P.TextTertiary, wrap: TextWrapping.Wrap));
-        var row = Ui.Row(left, control, 16);
-        return row;
-    }
-
-    /// <summary>An on/off switch in the Glas look (Mac: Toggle in the options popover).</summary>
-    public static Control Toggle(bool value, Action<bool> changed)
-    {
-        var t = new WsSwitch(value, "");
-        t.Toggled += changed;
-        return t;
-    }
-
     /// <summary>A choice among a few values as a segmented control (Mac: <c>.pickerStyle(.segmented)</c>).</summary>
     public static Control Choice<T>(IReadOnlyList<(T Value, string Label)> items, T selected, Action<T> changed)
     {
@@ -241,21 +167,25 @@ public static class StudyChrome
     /// The study options (Mac: LearnOptionsPanel.swift / WriteOptions): direction, the mode's own options, tolerance and
     /// read-aloud. Each change is stored for the set right away and reported (the flows decide what needs a restart).
     /// </summary>
+    /// <param name="runningNote">The session on screen runs with other settings than the options show (LearnFlow/WriteFlow.RunningSettingsNote).</param>
     public static Control OptionsPanel(AppModel model, string setId, StudyMode mode, Action<StudyOptions> changed, Action onClose, Action? onRestart = null,
-        string doneKey = "Esc")
+        string doneKey = "Esc", string? runningNote = null)
     {
         var (rows, _) = OptionsBody(model, setId, () => mode, changed);
         WsButton? restart = null;
         if (onRestart is not null)
         {
-            restart = Ui.Secondary("Neu starten", onRestart, IconName.Undo);
-            ToolTip.SetTip(restart, "Die Runde mit diesen Optionen neu beginnen");
+            restart = Ui.Secondary(L("Neu starten"), onRestart, IconName.Undo);
+            ToolTip.SetTip(restart, L("Die Runde mit diesen Optionen neu beginnen"));
         }
-        var footer = Ui.H(10, restart, Ui.Primary("Fertig", onClose, doneKey, height: 40));
+        var footer = Ui.H(10, restart, Ui.Primary(L("Fertig"), onClose, doneKey, height: 40));
         footer.HorizontalAlignment = HorizontalAlignment.Right;
         var scroll = Ui.Scroll(rows);
         var body = new Grid { RowDefinitions = new RowDefinitions("Auto,*,Auto"), RowSpacing = 14 };
-        body.Children.Add(Ui.Text("Optionen", 20, FontWeight.Bold));
+        Control title = Ui.Text(L("Optionen"), 20, FontWeight.Bold);
+        if (runningNote is not null)
+            title = Ui.V(6, title, Tagged(Ui.Text(runningNote, 13, color: WsTheme.P.TextSecondary, wrap: TextWrapping.Wrap), RunningNoteClass));
+        body.Children.Add(title);
         Grid.SetRow(scroll, 1);
         body.Children.Add(scroll);
         Grid.SetRow(footer, 2);
@@ -284,12 +214,13 @@ public static class StudyChrome
             {
                 try
                 {
-                    model.Store.UpdateStudyOptions(setId, patch);
+                    // An option set back to the standard is no longer the set's own (#8).
+                    model.Store.UpdateOwnStudyOptions(setId, patch);
                 }
                 catch (LibraryStoreError)
                 {
                     // Mac: model.report(error, fallback: …).
-                    model.ShowToast(new ToastMessage("Die Option konnte nicht gespeichert werden.", ToastTone.Danger, DurationMs: 6000));
+                    model.ShowToast(new ToastMessage(L("Die Option konnte nicht gespeichert werden."), ToastTone.Danger, DurationMs: 6000));
                     return;
                 }
                 model.SaveSoon();
@@ -305,11 +236,11 @@ public static class StudyChrome
                 }
                 catch (LibraryStoreError)
                 {
-                    model.ShowToast(new ToastMessage("Die Optionen konnten nicht zurückgesetzt werden.", ToastTone.Danger, DurationMs: 6000));
+                    model.ShowToast(new ToastMessage(L("Die Optionen konnten nicht zurückgesetzt werden."), ToastTone.Danger, DurationMs: 6000));
                     return;
                 }
                 model.SaveSoon();
-                model.ShowToast(new ToastMessage("Dieses Lernset folgt wieder dem Standard", ToastTone.Success));
+                model.ShowToast(new ToastMessage(L("Dieses Lernset folgt wieder dem Standard"), ToastTone.Success));
                 changed(model.Store.GetStudyOptions(setId));
                 Render();
             }
@@ -317,7 +248,8 @@ public static class StudyChrome
             var m = mode();
             rows.Children.Add(StandardNote(LearnOptionsCopy.Deviations(options, model.Store.GetSettings().Study, names, termLang), Reset));
             foreach (var section in StudyOptionSections(options, names, termLang, m, Patch,
-                m == StudyMode.Learn ? LearnSwitches(model, () => changed(model.Store.GetStudyOptions(setId))) : null, defLang: set?.DefLang ?? Lang.Other))
+                m == StudyMode.Learn ? LearnSwitches(model, () => changed(model.Store.GetStudyOptions(setId))) : null, defLang: set?.DefLang ?? Lang.Other,
+                sound: SoundSwitch(model, setId), synonyms: SynonymSwitch(model, setId)))
                 rows.Children.Add(section);
         }
         Render();
@@ -338,15 +270,15 @@ public static class StudyChrome
         Control content;
         if (deviations.Count == 0)
         {
-            content = Ui.Text("Was du hier umstellst, gilt nur für dieses Lernset. Den Standard für alle Lernsets legst du in den Einstellungen fest.",
+            content = Ui.Text(L("Was du hier umstellst, gilt nur für dieses Lernset. Den Standard für alle Lernsets legst du in den Einstellungen fest."),
                 13, color: P.TextSecondary, wrap: TextWrapping.Wrap);
         }
         else
         {
-            var text = Ui.Text($"Dieses Lernset hat eigene Optionen: {string.Join(" · ", deviations)}.", 13, FontWeight.Medium, P.Text, wrap: TextWrapping.Wrap);
-            var button = Ui.Secondary("Auf Standard zurücksetzen", reset, IconName.RotateCcw, height: 32);
+            var text = Ui.Text(L($"Dieses Lernset hat eigene Optionen: {string.Join(" · ", deviations)}."), 13, FontWeight.Medium, P.Text, wrap: TextWrapping.Wrap);
+            var button = Ui.Secondary(L("Auf Standard zurücksetzen"), reset, IconName.RotateCcw, height: 32);
             button.HorizontalAlignment = HorizontalAlignment.Left;
-            ToolTip.SetTip(button, "Alle Optionen dieses Lernsets wieder wie in den Einstellungen");
+            ToolTip.SetTip(button, L("Alle Optionen dieses Lernsets wieder wie in den Einstellungen"));
             content = Ui.V(10, text, button);
         }
         Grid.SetColumn(content, 1);
@@ -371,6 +303,47 @@ public static class StudyChrome
         });
 
     /// <summary>
+    /// "Soundeffekte" of a set (Mac: SetSoundEffectsToggle): a preference of this device, not a study option, so it is
+    /// not among the set's own options and "Auf Standard zurücksetzen" leaves it. Off in Einstellungen: off and locked.
+    /// </summary>
+    public sealed record SetSoundSwitch(bool On, bool Enabled, Action<bool> Set);
+
+    /// <summary>
+    /// "Synonyme ausserhalb des Sets erlauben" of a set (Mac: SetExtendedSynonymsToggle, under Toleranz): words with the
+    /// same meaning that are not in the set. A preference of this device like SetSoundSwitch; off in Einstellungen
+    /// ("Weitere Synonyme erkennen"): off and locked. Synonym cards of the set count either way.
+    /// </summary>
+    public sealed record SetSynonymSwitch(bool On, bool Enabled, Action<bool> Set);
+
+    /// <summary>Style classes of option rows a screen scrolls to (the recheck hint's "Optionen", the snapshots).</summary>
+    public const string RecheckOptionClass = "option-recheck";
+    public const string SoundOptionClass = "option-sound";
+    public const string SynonymOptionClass = "option-synonyms";
+    /// <summary>Style class of the note that the session runs with other settings (snapshot checks).</summary>
+    public const string RunningNoteClass = "options-running-note";
+
+    static Control Tagged(Control row, string cls)
+    {
+        row.Classes.Add(cls);
+        return row;
+    }
+
+    public static SetSynonymSwitch SynonymSwitch(AppModel model, string setId) => new(
+        model.Preferences.ExtendedSynonymsFor(setId), model.Preferences.ExtendedSynonyms, on =>
+        {
+            model.Preferences.SaveSetExtendedSynonyms(setId, on);
+            if (on) model.PreloadSynonyms(model.Set(setId));
+        });
+
+    public static SetSoundSwitch SoundSwitch(AppModel model, string setId) => new(
+        model.Preferences.SoundEffectsFor(setId), model.Preferences.SoundEffects, on =>
+        {
+            model.Preferences.SaveSetSoundEffects(setId, on);
+            // A taste of what comes back, like the switch in Einstellungen.
+            if (on) model.Sounds.Play(Services.SoundEffects.Sound.Correct);
+        });
+
+    /// <summary>
     /// The options of a set outside a study session (the set page's "Optionen"): Lernen or Schreiben, as in the study
     /// screens. Changes apply when that mode starts next.
     /// </summary>
@@ -378,16 +351,16 @@ public static class StudyChrome
     {
         var mode = StudyMode.Learn;
         var (rows, render) = OptionsBody(model, setId, () => mode, _ => { });
-        var tabs = new WsSegmented(["Lernen", "Schreiben"], 0, 120) { HorizontalAlignment = HorizontalAlignment.Left };
+        var tabs = new WsSegmented([L("Lernen"), L("Schreiben")], 0, 120) { HorizontalAlignment = HorizontalAlignment.Left };
         tabs.SelectionChanged += i =>
         {
             mode = i == 0 ? StudyMode.Learn : StudyMode.Write;
             render();
         };
-        AutomationProperties.SetName(tabs, "Optionen für");
+        AutomationProperties.SetName(tabs, L("Optionen für"));
         var scroll = Ui.Scroll(rows);
         scroll.MaxHeight = 540;
-        model.Ask(new PromptRequest("Optionen", "", [new PromptButton("Fertig", IsDefault: true, IsCancel: true)])
+        model.Ask(new PromptRequest(L("Optionen"), "", [new PromptButton(L("Fertig"), IsDefault: true, IsCancel: true)])
         {
             Width = 580,
             Content = Ui.V(16, tabs, scroll),
@@ -399,7 +372,8 @@ public static class StudyChrome
     /// Einstellungen › Lernen/Schreiben/Toleranz): Abfrage, Fragetypen, Runde, Wiederholung, Toleranz with examples.
     /// </summary>
     public static IEnumerable<Control> StudyOptionSections(StudyOptions options, (LearnOptionsCopy.Side Term, LearnOptionsCopy.Side Definition) names, Lang termLang,
-        StudyMode? mode, Action<StudyOptionsPatch> patch, GlobalLearnSwitches? globals = null, bool includeTolerance = true, Lang? defLang = null)
+        StudyMode? mode, Action<StudyOptionsPatch> patch, GlobalLearnSwitches? globals = null, bool includeTolerance = true, Lang? defLang = null,
+        SetSoundSwitch? sound = null, SetSynonymSwitch? synonyms = null)
     {
         Control Switch(bool value, Action<bool> set, bool enabled = true, string? disabledTip = null)
         {
@@ -414,59 +388,64 @@ public static class StudyChrome
             }
             return s;
         }
-        var direction = Choice<AnswerWith>([(AnswerWith.Term, names.Term.Label), (AnswerWith.Definition, names.Definition.Label), (AnswerWith.Both, "Beides")],
+        // "Soundeffekte" of the set, after "Vorlesen" (only in a set's options).
+        IEnumerable<Control> SoundRow() => sound is { } snd
+            ? [Tagged(Form.Row(LearnOptionsCopy.SoundLabel, Switch(snd.On, snd.Set, snd.Enabled, LearnOptionsCopy.SoundOffEverywhere),
+                snd.Enabled ? LearnOptionsCopy.SoundNote : LearnOptionsCopy.SoundOffEverywhere), SoundOptionClass)]
+            : [];
+        var direction = Choice<AnswerWith>([(AnswerWith.Term, names.Term.Label), (AnswerWith.Definition, names.Definition.Label), (AnswerWith.Both, L("Beides"))],
             options.AnswerWith, v => patch(new StudyOptionsPatch(AnswerWith: v)));
         if (mode == StudyMode.Learn)
         {
             var learn = options.Learn;
-            yield return Form.Section("Abfrage", [Form.Row("Antworten auf", direction)], LearnOptionsCopy.DirectionText(options.AnswerWith, names));
-            yield return Form.Section("Fragetypen",
+            yield return Form.Section(L("Abfrage"), [Form.Row(L("Antworten auf"), direction)], LearnOptionsCopy.DirectionText(options.AnswerWith, names));
+            yield return Form.Section(L("Fragetypen"),
             [
-                Form.Row("Multiple Choice", Switch(learn.Mc, v => patch(new StudyOptionsPatch(Learn: new LearnOptionsPatch(Mc: v))), !(learn.Mc && !learn.Written),
-                    LearnOptionsCopy.LockHint), "Vier Antworten zur Auswahl"),
-                Form.Row("Schriftlich", Switch(learn.Written, v => patch(new StudyOptionsPatch(Learn: new LearnOptionsPatch(Written: v))), !(learn.Written && !learn.Mc),
-                    LearnOptionsCopy.LockHint), "Antwort selbst eintippen"),
+                Form.Row(L("Multiple Choice"), Switch(learn.Mc, v => patch(new StudyOptionsPatch(Learn: new LearnOptionsPatch(Mc: v))), !(learn.Mc && !learn.Written),
+                    LearnOptionsCopy.LockHint), L("Vier Antworten zur Auswahl")),
+                Form.Row(L("Schriftlich"), Switch(learn.Written, v => patch(new StudyOptionsPatch(Learn: new LearnOptionsPatch(Written: v))), !(learn.Written && !learn.Mc),
+                    LearnOptionsCopy.LockHint), L("Antwort selbst eintippen")),
             ], LearnOptionsCopy.QuestionTypesHint(learn));
             yield return Form.Section(null,
             [
                 Form.Row(LearnOptionsCopy.RoundSizeLabel, Choice<int>(LearnOptionsCopy.RoundSizes(learn.RoundSize).Select(s => (s, $"{s}")).ToList(), learn.RoundSize,
                     v => patch(new StudyOptionsPatch(Learn: new LearnOptionsPatch(RoundSize: v)))), LearnOptionsCopy.RoundSizeNote),
-                Form.Row("Richtige Antwort abtippen", Switch(learn.Retype, v => patch(new StudyOptionsPatch(Learn: new LearnOptionsPatch(Retype: v)))),
-                    "Nach einem Fehler bei einer schriftlichen Frage tippst du die Lösung einmal ab."),
-                Form.Row("Vorlesen", Switch(options.Audio, v => patch(new StudyOptionsPatch(Audio: v))), "Begriffe in der Lernsprache automatisch vorlesen."),
+                Form.Row(L("Richtige Antwort abtippen"), Switch(learn.Retype, v => patch(new StudyOptionsPatch(Learn: new LearnOptionsPatch(Retype: v)))),
+                    L("Nach einem Fehler bei einer schriftlichen Frage tippst du die Lösung einmal ab.")),
+                Form.Row(L("Vorlesen"), Switch(options.Audio, v => patch(new StudyOptionsPatch(Audio: v))), L("Begriffe in der Lernsprache automatisch vorlesen.")),
+                .. SoundRow(),
             ]);
             if (globals is { } g)
-                yield return Form.Section("Wiederholung",
+                yield return Form.Section(L("Wiederholung"),
                 [
                     Form.Row(LearnOptionsCopy.ReviewLabel, Switch(g.Review, g.SetReview), LearnOptionsCopy.ReviewNote),
-                    Form.Row(LearnOptionsCopy.RecheckLabel, Switch(g.Recheck, g.SetRecheck), LearnOptionsCopy.RecheckNote),
+                    Tagged(Form.Row(LearnOptionsCopy.RecheckLabel, Switch(g.Recheck, g.SetRecheck), LearnOptionsCopy.RecheckNote), RecheckOptionClass),
                 ], LearnOptionsCopy.GlobalSwitchesFooter);
         }
         else if (mode == StudyMode.Write)
         {
-            yield return Form.Section("Abfrage",
+            yield return Form.Section(L("Abfrage"),
             [
                 // "Du siehst Deutsch und schreibst Französisch." under the choice (Mac: WriteOptionsPanel).
-                Form.Row("Antworten auf", direction, defLang is { } d ? WriteOptionsCopy.DirectionText(options.AnswerWith, termLang, d) : null),
-                Form.Row("Mischen", Switch(options.Shuffle, v => patch(new StudyOptionsPatch(Shuffle: v))), "Karten in zufälliger Reihenfolge abfragen."),
-                Form.Row("Richtige Antwort abtippen", Switch(options.CopyAnswer, v => patch(new StudyOptionsPatch(CopyAnswer: v))), "Nach einem Fehler tippst du die Lösung einmal ab."),
-                Form.Row("Automatisch weiter", Switch(options.AutoAdvance, v => patch(new StudyOptionsPatch(AutoAdvance: v))), "Nach einer richtigen Antwort geht es von selbst weiter."),
-                Form.Row("Vorlesen", Switch(options.Audio, v => patch(new StudyOptionsPatch(Audio: v))), "Begriffe in der Lernsprache automatisch vorlesen."),
+                Form.Row(L("Antworten auf"), direction, defLang is { } d ? WriteOptionsCopy.DirectionText(options.AnswerWith, termLang, d) : null),
+                Form.Row(L("Mischen"), Switch(options.Shuffle, v => patch(new StudyOptionsPatch(Shuffle: v))), L("Karten in zufälliger Reihenfolge abfragen.")),
+                Form.Row(L("Richtige Antwort abtippen"), Switch(options.CopyAnswer, v => patch(new StudyOptionsPatch(CopyAnswer: v))), L("Nach einem Fehler tippst du die Lösung einmal ab.")),
+                Form.Row(L("Automatisch weiter"), Switch(options.AutoAdvance, v => patch(new StudyOptionsPatch(AutoAdvance: v))), L("Nach einer richtigen Antwort geht es von selbst weiter.")),
+                Form.Row(L("Vorlesen"), Switch(options.Audio, v => patch(new StudyOptionsPatch(Audio: v))), L("Begriffe in der Lernsprache automatisch vorlesen.")),
+                .. SoundRow(),
             ]);
         }
         if (includeTolerance)
-            yield return Form.Section("Toleranz",
-                LearnOptionsCopy.ToleranceItems(termLang).Select(item =>
-                    Form.Row(item.Label, Switch(item.Get(options.Tolerance), v => patch(new StudyOptionsPatch(Tolerance: item.Patch(v)))), item.Example)).ToList(),
-                "Was trotzdem als richtig zählt");
+        {
+            var tolerance = LearnOptionsCopy.ToleranceItems(termLang).Select(item =>
+                Form.Row(item.Label, Switch(item.Get(options.Tolerance), v => patch(new StudyOptionsPatch(Tolerance: item.Patch(v)))), item.Example)).ToList();
+            // "Synonyme ausserhalb des Sets erlauben" of the set, last (only in a set's options; Mac: SetExtendedSynonymsToggle).
+            if (synonyms is { } syn)
+                tolerance.Add(Tagged(Form.Row(LearnOptionsCopy.SynonymsLabel, Switch(syn.On, syn.Set, syn.Enabled, LearnOptionsCopy.SynonymsOffEverywhere),
+                    syn.Enabled ? LearnOptionsCopy.SynonymsNote : LearnOptionsCopy.SynonymsOffEverywhere), SynonymOptionClass));
+            yield return Form.Section(L("Toleranz"), tolerance, L("Was trotzdem als richtig zählt"));
+        }
     }
-
-    /// <summary>
-    /// A list of terms with a status (Mac: LearnTermList; checkpoint "In dieser Runde", finish "Am häufigsten falsch"):
-    /// the title with its count, the rows on a quiet rounded panel separated by hairlines, term over definition.
-    /// </summary>
-    public static Control TermList(string title, IEnumerable<(string Term, string Definition, Control? Trailing)> rows) =>
-        TermList(title, rows.Select(r => new TermRow(r.Term, r.Definition, Trailing: r.Trailing)));
 
     /// <summary>
     /// A row of a term list: term over definition, each in its card's language (right to left for Arabic; Mac:
@@ -474,6 +453,10 @@ public static class StudyChrome
     /// </summary>
     public sealed record TermRow(string Term, string Definition, Lang TermLang = Lang.Other, Lang DefLang = Lang.Other, Control? Leading = null, Control? Trailing = null);
 
+    /// <summary>
+    /// A list of terms with a status (Mac: LearnTermList; checkpoint "In dieser Runde", finish "Am häufigsten falsch"):
+    /// the title with its count, the rows on a quiet rounded panel separated by hairlines, term over definition.
+    /// </summary>
     public static Control TermList(string title, IEnumerable<TermRow> rows)
     {
         var list = new StackPanel();
@@ -509,7 +492,7 @@ public static class StudyChrome
             Padding = new Thickness(8, 2),
             VerticalAlignment = VerticalAlignment.Center,
         };
-        AutomationProperties.SetName(count, n == 1 ? "1 Begriff" : $"{n} Begriffe");
+        AutomationProperties.SetName(count, Labels.Plural(n, "Begriff", "Begriffe"));
         var panel = new Border
         {
             Child = list,
@@ -521,11 +504,79 @@ public static class StudyChrome
         return Ui.V(12, Ui.H(8, Ui.Text(title, 20, FontWeight.Bold, font: WsTheme.Prompt), count), panel);
     }
 
+    /// <summary>
+    /// A written answer was wrong for the card but is the answer of another card with the same word («etw. entführen»
+    /// → «to hijack sth», written «to kidnap sb», the answer of «jmdn. entführen»; Joan 10.11.2026): shows both cards
+    /// and asks what the answer counts as – right (like "Ich hatte recht"), for the other card (this one stays wrong
+    /// and comes again, the other gets a right answer in its progress) or wrong (Enter and Esc: a slip never counts
+    /// by accident).
+    /// </summary>
+    public static void AskSameTerm(AppModel model, string setId, Card asked, Card other, AskSide ask, Lang promptLang, Lang answerLang,
+        string given, Action countRight)
+    {
+        var otherPrompt = Synonyms.PromptSide(other, ask);
+        Control Row(string label, Card card, bool highlight)
+        {
+            var texts = Ui.V(2,
+                Ui.Text(label, 12, FontWeight.SemiBold, P.TextTertiary),
+                StudyText.InLang(Synonyms.PromptSide(card, ask), promptLang, 15, FontWeight.SemiBold),
+                StudyText.InLang(Synonyms.AnswerSide(card, ask), answerLang, 14.5, color: highlight ? P.Success.Text : P.TextSecondary));
+            return new Border
+            {
+                Child = texts,
+                Padding = new Thickness(16, 12),
+                CornerRadius = new CornerRadius(14),
+                Background = WsTheme.B(highlight ? P.Success.Soft : (P.Dark ? Palette.Hex(0x1C1E28, 0.6) : Palette.Hex(0xFFFFFF, 0.6))),
+                BorderBrush = WsTheme.B(P.Hairline),
+                BorderThickness = new Thickness(1),
+            };
+        }
+        var askedPrompt = Synonyms.PromptSide(asked, ask);
+        var choices = SameTermCards.Choices(askedPrompt, otherPrompt);
+        // What each button does, in a sentence each (Joan: «Für … zählen» alone left open what happens).
+        var legend = Ui.V(6, choices.Select(c => (Control)Ui.Text($"{c.Button}: {c.Explanation}", 13, color: P.TextSecondary, wrap: TextWrapping.Wrap)).ToArray());
+        legend.Margin = new Thickness(2, 4, 2, 0);
+        var content = Ui.V(10, Row(L("Gefragt war"), asked, false), Row(L("Deine Antwort gehört zu"), other, true), legend);
+        model.Ask(new PromptRequest(SameTermCards.Title, SameTermCards.Message(given, askedPrompt, otherPrompt),
+            [
+                new PromptButton(choices[0].Button, countRight),
+                new PromptButton(choices[1].Button, () =>
+                {
+                    try { model.Store.RecordAnswer(setId, other.Id, correct: true); }
+                    catch (Exception) { return; }
+                    model.SaveNow();
+                    model.ShowToast(new ToastMessage(SameTermCards.CountedForOther(askedPrompt, otherPrompt), ToastTone.Success, DurationMs: 5000));
+                }),
+                new PromptButton(choices[2].Button, IsDefault: true, IsCancel: true),
+            ]) { Content = content, Width = 660 });
+    }
+
+    /// <summary>
+    /// The ★ toggle of a card in "Am häufigsten falsch" (Mac: StarToggle): marks it right there for "Nur markierte",
+    /// the same mark as everywhere else. The symbol changes in place, the list stays as it is.
+    /// </summary>
+    public static Control StarToggle(AppModel model, string setId, string cardId)
+    {
+        bool Starred() => model.Set(setId)?.Cards.FirstOrDefault(c => c.Id == cardId)?.Starred ?? false;
+        static string Tip(bool on) => on ? L("Markierung entfernen") : L("Markieren");
+        bool starred = Starred();
+        WsButton? star = null;
+        star = Ui.IconButton(starred ? IconName.StarFilled : IconName.Star, Tip(starred), () =>
+        {
+            model.ToggleStar(setId, cardId);
+            bool on = Starred();
+            if (star?.Chrome.Child is Border holder) holder.Child = Icons.Icon(on ? IconName.StarFilled : IconName.Star, 18, on ? P.Star : P.TextTertiary);
+            ToolTip.SetTip(star!, Tip(on));
+            AutomationProperties.SetName(star!, Tip(on));
+        }, 32, ButtonKind.Plain, starred ? P.Star : P.TextTertiary);
+        return star;
+    }
+
     /// <summary>A tolerance note under a correct answer ("Akzent fehlt"; Mac: NoteChip, the info colours with ⓘ).</summary>
     public static Control NoteChip(string text)
     {
         var chip = Ui.Chip(text, P.Info, IconName.Info);
-        AutomationProperties.SetName(chip, $"Hinweis: {text}");
+        AutomationProperties.SetName(chip, L($"Hinweis: {text}"));
         return chip;
     }
 
@@ -533,10 +584,8 @@ public static class StudyChrome
     public static Control SynonymChip(string text)
     {
         var chip = Ui.Chip(text, null, IconName.EqualCircle);
-        AutomationProperties.SetName(chip, $"Hinweis: {text}");
+        AutomationProperties.SetName(chip, L($"Hinweis: {text}"));
         return chip;
     }
 
-    /// <summary>"✓ Gemeistert" etc. as a small tinted chip (Mac: StatusChip / TintedChip, size .small).</summary>
-    public static Control SmallChip(string text, StatusPalette palette, IconName? icon = null) => Ui.Chip(text, palette, icon);
 }

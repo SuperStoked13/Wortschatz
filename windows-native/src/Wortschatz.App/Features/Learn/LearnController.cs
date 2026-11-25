@@ -2,6 +2,7 @@ using Avalonia.Threading;
 using Wortschatz.App.DesignSystem;
 using Wortschatz.App.Features.Study;
 using Wortschatz.Core;
+using static Wortschatz.Core.CoreText;
 
 namespace Wortschatz.App.Features.Learn;
 
@@ -21,8 +22,11 @@ public sealed class LearnController
     List<LearnFlow.Effect> _pendingStart;
     /// <summary>Toasts held back while the screen is still invisible ("Willkommen zurück" must not pop up over an empty backdrop); null when toasts show at once.</summary>
     List<ToastMessage>? _heldToasts;
-    bool _windowActive = true;
+    /// <summary>Study clock, as in Schreiben: idle after WriteFlow.ClockIdleMs without input, and the window's activity.</summary>
+    readonly WriteClock _studyClock;
     bool _active;
+    /// <summary>The Learn switches as last seen here (SwitchesMayHaveChanged).</summary>
+    AppModel.LearnSwitches _switches;
 
     public string SetId => _request.SetId;
     public LearnFlow.State State { get; private set; }
@@ -41,25 +45,37 @@ public sealed class LearnController
     /// <summary>Something is read aloud now (the speaker on the card moves).</summary>
     public event Action? Spoke;
 
+    /// <summary>"Optionen" in the hint at the first recheck: opens the options (the screen sets it).</summary>
+    public Action? OptionsRequested { get; set; }
+
+    /// <summary>The session (its StartedAt) whose first recheck showed the hint: once per session.</summary>
+    double? _recheckHintSession;
+
     public LearnController(AppModel model, StudyRequest request, RNG? rng = null, Func<double>? clock = null)
     {
         _model = model;
         _request = request;
         _rng = rng ?? Rand.SystemRNG();
         _clock = clock ?? TimeUtil.NowMs;
+        _studyClock = new WriteClock(_clock());
         var store = model.Store;
         // Built again for the same route (a theme change): resume what is stored (Mac: StudyRequest.resuming).
         var start = StudySessions.Effective(request);
         var set = store.GetSet(request.SetId) ?? new VocabSet { Id = request.SetId, Title = "" };
         var saved = LearnFlow.SavedLearn.FromJson(store.GetLearnJSON(request.SetId));
+        _switches = model.CurrentLearnSwitches;
         var (state, effects) = LearnFlow.Start(set, store.GetProgress(request.SetId), store.GetStudyOptions(request.SetId), saved, start.Subset,
-            start.ForceNew, start.ReviewMastered || model.Preferences.LearnReview, _rng, _clock(), recheck: model.Preferences.LearnRecheck);
+            start.ForceNew, start.ReviewMastered || _switches.Review, _rng, _clock(), recheck: _switches.Recheck,
+            kept: model.Preferences.KeptOptionsOf("learn", request.SetId));
         State = state;
         _pendingStart = effects;
+        model.PreloadSynonyms(set);
     }
 
     /// <summary>
-    /// The screen appeared: performs the start effects and starts the study clock (a tick every 15 s).
+    /// The screen appeared: performs the start effects and starts the study clock (a tick every 15 s; after
+    /// WriteFlow.ClockIdleMs without input it pauses until the next input, as in Schreiben – before 24.11.2026 it ticked
+    /// on forever: a Lernen left open counted the time away as study time and saved the library 4 times a minute).
     /// <paramref name="holdingToasts"/>: its toasts wait for ReleaseToasts (the screen is not visible yet).
     /// </summary>
     public void Activate(bool holdingToasts = false)
@@ -69,11 +85,14 @@ public sealed class LearnController
         var effects = _pendingStart;
         _pendingStart = [];
         Perform(effects);
+        HintRecheck();
         StudySessions.MarkStarted(_request);
-        _clockTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(15) };
+        _clockTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(WriteFlow.ClockTickMs) };
         _clockTimer.Tick += (_, _) =>
         {
-            if (_windowActive && State.IsStudying) Send(new LearnFlow.Event.Tick());
+            // Saves the clock while studying in the active window; after ClockIdleMs without input it waits (Mac: runClock).
+            if (_studyClock.IsWindowActive && !_studyClock.IsIdle && State.IsStudying) Send(new LearnFlow.Event.Tick());
+            _studyClock.Tick(_clock());
         };
         _clockTimer.Start();
     }
@@ -91,7 +110,8 @@ public sealed class LearnController
     {
         if (!_active) return;
         _heldToasts = null;
-        if (State.IsStudying) Reduce(new LearnFlow.Event.Tick());
+        // The last tick (idle: the clock was saved when it stopped, the time since is not study time).
+        if (State.IsStudying && !_studyClock.IsIdle) Reduce(new LearnFlow.Event.Tick());
         _active = false;
         foreach (var t in _timers.Values) t.Stop();
         _timers.Clear();
@@ -99,15 +119,21 @@ public sealed class LearnController
         _model.Speech.Stop();
     }
 
+    /// <summary>The window became active or inactive: time away is not study time.</summary>
     public void WindowActivityChanged(bool active)
     {
-        _windowActive = active;
+        _studyClock.WindowActivityChanged(active, _clock());
+        // Already paused: it was saved when it stopped.
+        if (!active && _studyClock.IsIdle) return;
         if (State.IsStudying) Send(active ? new LearnFlow.Event.Resume() : new LearnFlow.Event.Tick());
     }
 
     public void Send(LearnFlow.Event e)
     {
         if (!_active) return;
+        // The learner's input keeps the clock running; a paused clock resumes first, without counting the pause
+        // (Mac: markActive).
+        if (WriteClock.IsUserActivity(e) && _studyClock.Activity(_clock())) Reduce(new LearnFlow.Event.Resume());
         Reduce(e);
     }
 
@@ -131,15 +157,41 @@ public sealed class LearnController
 
     void Reduce(LearnFlow.Event e)
     {
-        var env = new LearnFlow.Env(_rng, _clock(), _model.Store.GetProgress(SetId));
+        var env = new LearnFlow.Env(_rng, _clock(), _model.Store.GetProgress(SetId), _model.ExtraAnswers(SetId));
         var previous = State.Phase.Kind;
         var (next, effects) = LearnFlow.Reduce(State, e, env);
         State = next;
         Perform(effects);
+        StopStaleTimers();
+        HintRecheck();
+        AskIfSameTerm();
         PlaySound(effects, previous);
         // Typing shows in the field already; the study clock (every 15 s, and its resuming) changes nothing on screen –
-        // a redraw would take the field away for a moment (on a phone the keyboard closes and opens again).
-        if (e is not (LearnFlow.Event.DraftChanged or LearnFlow.Event.Tick or LearnFlow.Event.Resume)) Changed?.Invoke();
+        // a redraw would take the field away for a moment (on a phone the keyboard closes and opens again). Unless it
+        // moved on – redrawn after the field's own TextChanged. (A typed-out copy no longer moves on here: it starts a
+        // short beat, CopyStep, whose timer moves on.)
+        bool quiet = e is LearnFlow.Event.DraftChanged or LearnFlow.Event.Tick or LearnFlow.Event.Resume;
+        if (!quiet) Changed?.Invoke();
+        else if (State.Phase.Kind != previous) Dispatcher.UIThread.Post(() => Changed?.Invoke());
+    }
+
+    LearnFlow.Feedback? _sameTermAsked;
+
+    /// <summary>
+    /// A wrong written answer that is the answer of another card with the same word: asks what it counts as
+    /// (StudyChrome.AskSameTerm), once per answer.
+    /// </summary>
+    void AskIfSameTerm()
+    {
+        if (State.Feedback is not { Kind: LearnFlow.FeedbackKind.Wrong, CanOverride: true } feedback || ReferenceEquals(feedback, _sameTermAsked)) return;
+        if (State.Question is not { Type: QuestionType.Written } q || State.Cards.FirstOrDefault(c => c.Id == q.CardId) is not { } card) return;
+        _sameTermAsked = feedback;
+        if (SameTermCards.AnswerOfOtherCard(feedback.Given, card, State.Cards, q.Ask, State.Options.Tolerance, q.PromptLang, q.AnswerLang) is not { } other) return;
+        Avalonia.Threading.Dispatcher.UIThread.Post(() =>
+        {
+            if (_active && ReferenceEquals(State.Feedback, feedback))
+                StudyChrome.AskSameTerm(_model, SetId, card, other, q.Ask, q.PromptLang, q.AnswerLang, feedback.Given, () => Send(new LearnFlow.Event.Override()));
+        });
     }
 
     /// <summary>
@@ -157,6 +209,21 @@ public sealed class LearnController
         if (options != State.Options) Send(new LearnFlow.Event.OptionsChanged(options));
         if (State.Session is { } session && !LearnEngine.MatchesProgress(session, store.GetProgress(SetId)))
             Send(new LearnFlow.Event.ProgressChanged());
+        SwitchesMayHaveChanged();
+    }
+
+    /// <summary>
+    /// «Wiederholungsfragen» or «Nachkontrolle nach Fehlern» was switched (in the options, or imported): it applies to this
+    /// session at once (Mac: setReview/setRecheck/switchesChanged). Only a real change is sent: a session started for its
+    /// repetition questions («Alle wiederholen») keeps them while the switch stays off.
+    /// </summary>
+    public void SwitchesMayHaveChanged()
+    {
+        var now = _model.CurrentLearnSwitches;
+        var old = _switches;
+        _switches = now;
+        if (now.Review != old.Review) Send(new LearnFlow.Event.ReviewChanged(now.Review));
+        if (now.Recheck != old.Recheck) Send(new LearnFlow.Event.RecheckChanged(now.Recheck));
     }
 
     /// <summary>The sound of a step (Mac: LearnController.playSound → SoundEffects.playStudyStep).</summary>
@@ -184,31 +251,26 @@ public sealed class LearnController
 
     void Perform(List<LearnFlow.Effect> effects)
     {
-        var store = _model.Store;
+        // The step's store writes first, as one change (LibraryStore.Batch): the app reacts once per answer, not once
+        // for the answer and once more for the session (Mac: LearnController.perform, 24.11.2026).
+        var writes = effects.Where(WritesStore).ToList();
+        if (writes.Count > 0)
+        {
+            var store = _model.Store;
+            Write(() => store.Batch(() =>
+            {
+                foreach (var effect in writes) Apply(effect, store);
+            }));
+        }
         foreach (var effect in effects)
         {
             switch (effect)
             {
                 case LearnFlow.Effect.RecordAnswer r:
                     Streak.Record(r.Correct);
-                    Write(() => store.RecordAnswer(SetId, r.CardId, r.Correct, r.At));
                     break;
-                case LearnFlow.Effect.OverrideLastAnswer o:
+                case LearnFlow.Effect.OverrideLastAnswer:
                     Streak.OverrideMiss();
-                    Write(() => store.OverrideLastAnswer(SetId, o.CardId));
-                    break;
-                case LearnFlow.Effect.ResetProgress reset:
-                    Write(() =>
-                    {
-                        if (reset.CardIds is { } ids) store.ResetCardProgress(SetId, ids);
-                        else store.ResetProgress(SetId);
-                    });
-                    break;
-                case LearnFlow.Effect.SaveLearn save:
-                    Write(() => store.SaveLearnJSON(SetId, new LearnFlow.SavedLearn(save.State, save.Feedback).ToJson()));
-                    break;
-                case LearnFlow.Effect.ClearLearn:
-                    Write(() => store.ClearLearn(SetId));
                     break;
                 case LearnFlow.Effect.Haptic h:
                     Services.Haptics.Play(h.Kind);
@@ -223,25 +285,54 @@ public sealed class LearnController
                 case LearnFlow.Effect.Toast t:
                     ShowToast(t.Text, t.Tone);
                     break;
-                case LearnFlow.Effect.UpdateCard u:
-                    Write(() => store.UpdateCard(SetId, u.Card.Id, new CardChanges(u.Card.Term, u.Card.Definition)));
-                    break;
-                case LearnFlow.Effect.ToggleStar t:
-                    Write(() =>
-                    {
-                        store.ToggleStar(SetId, t.CardId);
-                        _model.AnnounceStar(SetId, t.CardId);
-                    });
-                    break;
                 case LearnFlow.Effect.Announce a:
                     Announcer.Announce(a.Text);
                     break;
                 case LearnFlow.Effect.Navigate n:
                     Navigate(n.Destination);
                     break;
+                case LearnFlow.Effect.KeepOptions k:
+                    _model.Preferences.SaveKeptOptions("learn", SetId, k.Kept);
+                    break;
             }
         }
         _model.SaveSoon();
+    }
+
+    /// <summary>Effects that write to the library store (Apply).</summary>
+    static bool WritesStore(LearnFlow.Effect effect) => effect is LearnFlow.Effect.RecordAnswer or LearnFlow.Effect.OverrideLastAnswer
+        or LearnFlow.Effect.ResetProgress or LearnFlow.Effect.SaveLearn or LearnFlow.Effect.ClearLearn or LearnFlow.Effect.UpdateCard
+        or LearnFlow.Effect.ToggleStar;
+
+    /// <summary>Applies one store effect (WritesStore).</summary>
+    void Apply(LearnFlow.Effect effect, LibraryStore store)
+    {
+        switch (effect)
+        {
+            case LearnFlow.Effect.RecordAnswer r:
+                store.RecordAnswer(SetId, r.CardId, r.Correct, r.At);
+                break;
+            case LearnFlow.Effect.OverrideLastAnswer o:
+                store.OverrideLastAnswer(SetId, o.CardId);
+                break;
+            case LearnFlow.Effect.ResetProgress reset:
+                if (reset.CardIds is { } ids) store.ResetCardProgress(SetId, ids);
+                else store.ResetProgress(SetId);
+                break;
+            case LearnFlow.Effect.SaveLearn save:
+                store.SaveLearnJSON(SetId, new LearnFlow.SavedLearn(save.State, save.Feedback).ToJson());
+                break;
+            case LearnFlow.Effect.ClearLearn:
+                store.ClearLearn(SetId);
+                break;
+            case LearnFlow.Effect.UpdateCard u:
+                store.UpdateCard(SetId, u.Card.Id, new CardChanges(u.Card.Term, u.Card.Definition));
+                break;
+            case LearnFlow.Effect.ToggleStar t:
+                store.ToggleStar(SetId, t.CardId);
+                _model.AnnounceStar(SetId, t.CardId);
+                break;
+        }
     }
 
     /// <summary>A store write; a failure shows as a message instead of ending the app (Mac: write → model.report).</summary>
@@ -260,11 +351,41 @@ public sealed class LearnController
     /// <summary>A toast of the flow (Mac: showToast): "Willkommen zurück" with the waving hand for 3.5 s, the others for 2 s.</summary>
     void ShowToast(string text, LearnFlow.Tone tone)
     {
-        bool welcome = text == LearnFlow.WELCOME_BACK;
+        // The flow's text in the app's language (whether the flow translates it or the constant does).
+        bool welcome = text == LearnFlow.WELCOME_BACK || text == L(LearnFlow.WELCOME_BACK);
         var toast = new ToastMessage(text, tone switch { LearnFlow.Tone.Success => ToastTone.Success, LearnFlow.Tone.Warning => ToastTone.Warning, _ => ToastTone.Neutral },
             DurationMs: welcome ? 3500 : 2000) { Icon = welcome ? IconName.Hand : null };
         if (_heldToasts is not null) _heldToasts.Add(toast);
         else _model.ShowToast(toast);
+    }
+
+    /// <summary>
+    /// The first recheck of a session on screen: a quiet hint that the Nachkontrolle can be switched off, with
+    /// "Optionen" (Mac: LearnController.hintRecheck). Once per session.
+    /// </summary>
+    void HintRecheck()
+    {
+        if (State.Phase.Kind != LearnFlow.PhaseKind.Question || State.Question is not { IsRecheck: true } || State.Session is not { } session) return;
+        if (_recheckHintSession == session.StartedAt) return;
+        _recheckHintSession = session.StartedAt;
+        var toast = new ToastMessage(LearnFlow.RECHECK_HINT, ActionLabel: L("Optionen"), Action: () => OptionsRequested?.Invoke(),
+            DurationMs: LearnFlow.RECHECK_HINT_MS) { Icon = IconName.Info };
+        if (_heldToasts is not null) _heldToasts.Add(toast);
+        else _model.ShowToast(toast);
+    }
+
+    /// <summary>
+    /// Auto-advances whose token is no longer the state's (answered by key, paused, a new question) can never move on:
+    /// stopped right away instead of firing for nothing (each firing redrew the screen; on a phone the keyboard
+    /// closed and opened again).
+    /// </summary>
+    void StopStaleTimers()
+    {
+        foreach (var token in _timers.Keys.Where(t => t != State.AutoAdvanceToken).ToList())
+        {
+            _timers[token].Stop();
+            _timers.Remove(token);
+        }
     }
 
     void Schedule(int ms, int token)

@@ -6,5 +6,4 @@
   session, else the most recent set with "Öffnen").
 - `OverviewSetGrid.swift`: "Deine Lernsets" with sort (Zuletzt gelernt / Name / Neueste), the dashed
   "Neues Lernset" card and the set cards on a content surface (`contentSurface`, not glass: gauge, status line, quick "Lernen"/"Weiterlernen").
-- `OverviewEmptyState.swift`: "Erstes Lernset erstellen ↩", "Aus der Web-Version übernehmen…", 3 steps.
-- `WebMigrationSheet.swift`: the 3-step how-to and the backup file chooser.
+- `OverviewEmptyState.swift`: "Erstes Lernset erstellen ↩", "Backup laden…" (file chooser → import sheet), 3 steps.

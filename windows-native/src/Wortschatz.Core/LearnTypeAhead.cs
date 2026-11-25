@@ -4,7 +4,8 @@ namespace Wortschatz.Core;
 
 // Port of LearnTypeAhead.swift: typing on a multiple-choice question. Instead of a digit or a click,
 // the learner starts typing the answer ("la vo…") and the one option those letters start is
-// highlighted, so Return chooses it. The letters must leave no doubt: an article alone never picks
+// highlighted, so Return chooses it; typed out ("la voiture"), it is chosen at once (TypeAhead.IsTypedOut,
+// since 23.11.2026 like the Mac; not in typeahead.js). The letters must leave no doubt: an article alone never picks
 // anything ("la" starts many words), at least TYPE_AHEAD_MIN_LETTERS letters after it are needed, and
 // exactly one option may match. Case, accents and the kind of apostrophe do not matter; an option can
 // also be started without its article ("voi" → la voiture) or at one of its alternatives ("laide" in
@@ -42,12 +43,18 @@ public static partial class LearnFlow
         public bool IsActive { get; init; }
         /// <summary>Enough letters for a pick, should a single option match.</summary>
         public bool HasEnoughLetters { get; init; }
+        /// <summary>
+        /// The picked option is typed out: to its end or to the end of one of its alternatives ("le cerveau" of
+        /// "le cerveau, les cerveaux"), and no other option matches. It is chosen without Return. Not before a note
+        /// in brackets: "Aussenminister" may go on with "(in)".
+        /// </summary>
+        public bool IsTypedOut { get; init; }
 
         public static readonly TypeAhead None = new();
 
         public bool Equals(TypeAhead? other) =>
             other is not null && Selected == other.Selected && Matching.SequenceEqual(other.Matching) && IsActive == other.IsActive
-            && HasEnoughLetters == other.HasEnoughLetters && Ranges.Count == other.Ranges.Count
+            && HasEnoughLetters == other.HasEnoughLetters && IsTypedOut == other.IsTypedOut && Ranges.Count == other.Ranges.Count
             && Ranges.All(p => other.Ranges.TryGetValue(p.Key, out var r) && r == p.Value);
 
         public override int GetHashCode() => HashCode.Combine(Selected, Matching.Count, IsActive, HasEnoughLetters);
@@ -72,8 +79,8 @@ public static partial class LearnFlow
         var content = articleOnly ? [] : input.Chars.Skip(contentStart ?? 0).ToList();
         int letters = content.Count(TypeAheadText.IsAlnum);
 
-        var strong = new List<(int Index, TextRange Range, bool Complete)>();
-        var weak = new List<(int Index, TextRange Range, bool Complete)>();
+        var strong = new List<(int Index, TextRange Range, bool Complete, bool TypedOut)>();
+        var weak = new List<(int Index, TextRange Range, bool Complete, bool TypedOut)>();
         for (int index = 0; index < choices.Count; index++)
         {
             var option = new TypeAheadText(choices[index], noSpaces);
@@ -82,13 +89,17 @@ public static partial class LearnFlow
             int? start = FirstOrNull(starts, s => TypeAheadText.StartsWithAt(option.Chars, s, input.Chars));
             if (start is { } st)
             {
-                strong.Add((index, option.Range(st, input.Chars.Count), option.IsComplete(st + input.Chars.Count)));
+                int end = st + input.Chars.Count;
+                strong.Add((index, option.Range(st, input.Chars.Count), option.IsComplete(end), option.EndsWord(end)));
                 continue;
             }
             // Another article than the option's ("le voi" for "la voiture"): the content alone.
             if (contentStart is not null && content.Count > 0
                 && FirstOrNull(starts, s => TypeAheadText.StartsWithAt(option.Chars, s, content)) is { } s2)
-                weak.Add((index, option.Range(s2, content.Count), option.IsComplete(s2 + content.Count)));
+            {
+                int end = s2 + content.Count;
+                weak.Add((index, option.Range(s2, content.Count), option.IsComplete(end), option.EndsWord(end)));
+            }
         }
         // Options that match with the typed article win over those matching only after it.
         var matches = strong.Count > 0 ? strong : weak;
@@ -109,6 +120,7 @@ public static partial class LearnFlow
             Ranges = matches.ToDictionary(m => m.Index, m => m.Range),
             IsActive = true,
             HasEnoughLetters = enough,
+            IsTypedOut = selected is not null && matches.Count == 1 && matches[0].TypedOut,
         };
     }
 
@@ -273,6 +285,14 @@ internal sealed class TypeAheadText
         int i = end;
         while (i < Chars.Count && Chars[i] == " ") i++;
         return i >= Chars.Count || Chars[i] is "," or ";" or "/" or "(";
+    }
+
+    /// <summary>Whether the option or one of its alternatives ends at folded position end (a note in brackets does not end it: "Aussenminister(in)").</summary>
+    public bool EndsWord(int end)
+    {
+        int i = end;
+        while (i < Chars.Count && Chars[i] == " ") i++;
+        return i >= Chars.Count || Chars[i] is "," or ";" or "/";
     }
 
     /// <summary>

@@ -29,6 +29,7 @@ struct LearnScreen: View {
         ZStack {
             if let controller {
                 LearnScreenContent(controller: controller, isRevealed: isRevealed)
+                    .modifier(SameTermPresenter(question: controller.sameTerm, answer: controller.answerSameTerm))
             } else {
                 AppBackdrop(intensity: AppBackdrop.studyIntensity)
             }
@@ -83,7 +84,9 @@ struct LearnScreenContent: View {
 
     private var state: LearnFlow.State { controller.state }
 
-    var body: some View {
+    /// The stage with its toolbar, prompts and editor; `body` adds the observers. Split in two so
+    /// the type checker keeps up with the chain.
+    private var stage: some View {
         LearnStage(controller: controller, focus: $focus, selection: $selection, onEditCard: editCurrentCard)
             .entranceReveal(isRevealed)
             .background {
@@ -124,6 +127,10 @@ struct LearnScreenContent: View {
             }
             .focusedSceneValue(\.studyCommands, commandContext)
             .defaultFocus($focus, LearnKeyRouter.focus(for: state) ?? .screen)
+    }
+
+    var body: some View {
+        stage
             .onAppear {
                 focusForState()
                 // The split view settles its own focus (the sidebar list) in the same pass.
@@ -145,6 +152,8 @@ struct LearnScreenContent: View {
                 }
             }
             .onChange(of: model.revision) { controller.storeDidChange() }
+            .onChange(of: model.learnSwitches) { _, switches in controller.switchesChanged(switches) }
+            .onChange(of: controller.optionsRequest) { isShowingOptions = true }
             .onChange(of: isShowingOptions) { _, shown in
                 controller.send(shown ? .overlayPresented(.options) : .overlayDismissed)
             }

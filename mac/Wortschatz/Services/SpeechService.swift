@@ -34,15 +34,15 @@ final class SpeechService {
             var label: String? {
                 switch self {
                 case .standard: nil
-                case .enhanced: "Erweitert"
-                case .premium: "Premium"
+                case .enhanced: String(localized: "Erweitert", comment: "Voice quality in the voice picker")
+                case .premium: String(localized: "Premium", comment: "Voice quality in the voice picker")
                 }
             }
         }
 
         /// "Anna (Deutsch, Schweiz) – Premium"
         var displayName: String {
-            let region = Locale(identifier: "de-CH").localizedString(forIdentifier: language) ?? language
+            let region = AppLanguage.formattingLocale.localizedString(forIdentifier: language) ?? language
             let base = "\(name) (\(region))"
             return quality.label.map { "\(base) – \($0)" } ?? base
         }
@@ -123,10 +123,12 @@ final class SpeechService {
         return best
     }
 
-    /// The installed voices that fit `lang`, best first.
-    func voices(for lang: Lang) -> [Voice] {
+    /// The installed voices that fit `lang`, best first. `installed`: the system's list, when the
+    /// caller read it already (the settings ask for several languages at once).
+    func voices(for lang: Lang, among installed: [AVSpeechSynthesisVoice]? = nil) -> [Voice] {
         guard let tag = Self.languageTag(for: lang) else { return [] }
-        let scored: [(voice: AVSpeechSynthesisVoice, score: Int)] = AVSpeechSynthesisVoice.speechVoices().compactMap { voice in
+        let all = installed ?? AVSpeechSynthesisVoice.speechVoices()
+        let scored: [(voice: AVSpeechSynthesisVoice, score: Int)] = all.compactMap { voice in
             let score = Self.score(voice, wanted: tag)
             return score >= 0 ? (voice, score) : nil
         }

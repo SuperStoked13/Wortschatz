@@ -10,6 +10,7 @@ using Avalonia.Media;
 using Avalonia.Platform.Storage;
 using Wortschatz.App.DesignSystem;
 using Wortschatz.Core;
+using static Wortschatz.Core.CoreText;
 
 namespace Wortschatz.App.Features.SetDetail;
 
@@ -20,8 +21,9 @@ namespace Wortschatz.App.Features.SetDetail;
 /// </summary>
 public sealed class TextExportSheet
 {
-    static readonly (string Label, string Separator)[] TermSeparators = [("Tab", "\t"), ("Komma", ", "), ("Bindestrich", " - ")];
-    static readonly (string Label, string Separator)[] CardSeparators = [("Neue Zeile", "\n"), ("Strichpunkt", ";")];
+    // Computed: the labels follow the app's language.
+    static (string Label, string Separator)[] TermSeparators => [(L("Tab"), "\t"), (L("Komma"), ", "), (L("Bindestrich"), " - ")];
+    static (string Label, string Separator)[] CardSeparators => [(L("Neue Zeile"), "\n"), (L("Strichpunkt"), ";")];
 
     readonly AppModel _model;
     readonly MainView _window;
@@ -39,10 +41,10 @@ public sealed class TextExportSheet
             FontFamily = new FontFamily("Cascadia Mono, Consolas, Courier New, monospace"),
             FontSize = 13,
             Foreground = WsTheme.B(WsTheme.P.Text),
-            TextWrapping = TextWrapping.NoWrap,
+            TextWrapping = AppDevice.IsPhone ? TextWrapping.Wrap : TextWrapping.NoWrap, // phone: the preview was cut on the right
             Margin = new Thickness(10, 8),
         };
-        AutomationProperties.SetName(_preview, "Exportierter Text");
+        AutomationProperties.SetName(_preview, L("Exportierter Text"));
         UpdatePreview();
     }
 
@@ -95,16 +97,20 @@ public sealed class TextExportSheet
             _term = i;
             UpdatePreview();
         };
-        AutomationProperties.SetName(termPicker, "Zwischen Begriff und Definition");
+        AutomationProperties.SetName(termPicker, L("Zwischen Begriff und Definition"));
         var cardPicker = new WsSegmented(CardSeparators.Select(s => s.Label).ToList(), _card, 112);
         cardPicker.SelectionChanged += i =>
         {
             _card = i;
             UpdatePreview();
         };
-        AutomationProperties.SetName(cardPicker, "Zwischen den Karten");
-        // Phone: the choices take the width the labels leave (and shrink to it).
-        var grid = new Grid { ColumnDefinitions = new ColumnDefinitions(AppDevice.IsPhone ? "Auto,*" : "Auto,Auto"), RowDefinitions = new RowDefinitions("Auto,Auto"), ColumnSpacing = 14, RowSpacing = 10 };
+        AutomationProperties.SetName(cardPicker, L("Zwischen den Karten"));
+        // Phone: each label over its choices, which get the whole width – beside the label they were cut to «Kom…»,
+        // «Bind…», «Neue Ze…», «Strichp…» (06.11.2026).
+        bool phone = AppDevice.IsPhone;
+        var grid = phone
+            ? new Grid { RowDefinitions = new RowDefinitions("Auto,Auto,Auto,Auto"), RowSpacing = 6 }
+            : new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,Auto"), RowDefinitions = new RowDefinitions("Auto,Auto"), ColumnSpacing = 14, RowSpacing = 10 };
         void Add(Control c, int row, int column)
         {
             Grid.SetRow(c, row);
@@ -112,14 +118,26 @@ public sealed class TextExportSheet
             c.VerticalAlignment = VerticalAlignment.Center;
             grid.Children.Add(c);
         }
-        var termLabel = Ui.Text("Zwischen Begriff und Definition", 14, color: p.TextSecondary);
+        var termLabel = Ui.Text(L("Zwischen Begriff und Definition"), 14, color: p.TextSecondary);
         termLabel.HorizontalAlignment = HorizontalAlignment.Right;
-        var cardLabel = Ui.Text("Zwischen den Karten", 14, color: p.TextSecondary);
+        var cardLabel = Ui.Text(L("Zwischen den Karten"), 14, color: p.TextSecondary);
         cardLabel.HorizontalAlignment = HorizontalAlignment.Right;
-        Add(termLabel, 0, 0);
-        Add(termPicker, 0, 1);
-        Add(cardLabel, 1, 0);
-        Add(cardPicker, 1, 1);
+        if (phone)
+        {
+            termLabel.HorizontalAlignment = cardLabel.HorizontalAlignment = HorizontalAlignment.Left;
+            Add(termLabel, 0, 0);
+            Add(termPicker, 1, 0);
+            Add(cardLabel, 2, 0);
+            Add(cardPicker, 3, 0);
+            cardLabel.Margin = new Thickness(0, 8, 0, 0);
+        }
+        else
+        {
+            Add(termLabel, 0, 0);
+            Add(termPicker, 0, 1);
+            Add(cardLabel, 1, 0);
+            Add(cardPicker, 1, 1);
+        }
         termPicker.HorizontalAlignment = cardPicker.HorizontalAlignment = HorizontalAlignment.Left;
 
         var scroller = new ScrollViewer
@@ -139,12 +157,12 @@ public sealed class TextExportSheet
             ClipToBounds = true,
         };
 
-        _model.Ask(new PromptRequest("Als Text exportieren",
-            "Kopiere die Liste oder sichere sie als Textdatei. Mit «Neue Zeile» zwischen den Karten lässt sie sich in Wortschatz und Quizlet wieder importieren.",
+        _model.Ask(new PromptRequest(L("Als Text exportieren"),
+            L("Kopiere die Liste oder sichere sie als Textdatei. Mit «Neue Zeile» zwischen den Karten lässt sie sich in Wortschatz und Quizlet wieder importieren."),
             [
-                new PromptButton("Kopieren", () => _ = Copy(), StaysOpen: true),
-                new PromptButton("Abbrechen", IsCancel: true),
-                new PromptButton("Sichern …", () => _ = Save(), IsDefault: true, StaysOpen: true),
+                new PromptButton(L("Kopieren"), () => _ = Copy(), StaysOpen: true),
+                new PromptButton(L("Abbrechen"), IsCancel: true),
+                new PromptButton(L("Sichern …"), () => _ = Save(), IsDefault: true, StaysOpen: true),
             ])
         {
             Content = Ui.V(14, grid, previewBox),
@@ -183,8 +201,8 @@ public sealed class TextExportSheet
         }
         catch (Exception) { }
         _model.ShowToast(copied
-            ? new ToastMessage("Text kopiert", ToastTone.Success)
-            : new ToastMessage("Kopieren hat nicht geklappt. Markiere den Text und kopiere ihn von Hand.", ToastTone.Danger));
+            ? new ToastMessage(L("Text kopiert"), ToastTone.Success)
+            : new ToastMessage(L("Kopieren hat nicht geklappt. Markiere den Text und kopiere ihn von Hand."), ToastTone.Danger));
     }
 
     async Task Save()
@@ -194,10 +212,10 @@ public sealed class TextExportSheet
         {
             var file = await _window.StorageProvider.SaveFilePickerAsync(new FilePickerSaveOptions
             {
-                Title = "Als Text exportieren",
+                Title = L("Als Text exportieren"),
                 SuggestedFileName = Backup.TextFileName(_set.Title),
                 DefaultExtension = "txt",
-                FileTypeChoices = [new FilePickerFileType("Text") { Patterns = ["*.txt"] }],
+                FileTypeChoices = [new FilePickerFileType(L("Text")) { Patterns = ["*.txt"] }],
             });
             if (file is null) return;
             await using (var stream = await file.OpenWriteAsync())
@@ -208,11 +226,11 @@ public sealed class TextExportSheet
                 await stream.WriteAsync(data);
             }
             _model.ClosePrompt();
-            _model.ShowToast(new ToastMessage($"«{AppModel.ShortTitle(_set.Title)}» als Textdatei exportiert", ToastTone.Success));
+            _model.ShowToast(new ToastMessage(L($"«{AppModel.ShortTitle(_set.Title)}» als Textdatei exportiert"), ToastTone.Success));
         }
         catch (Exception)
         {
-            _model.ShowToast(new ToastMessage("Der Export ist fehlgeschlagen.", ToastTone.Danger, DurationMs: 6000));
+            _model.ShowToast(new ToastMessage(L("Der Export ist fehlgeschlagen."), ToastTone.Danger, DurationMs: 6000));
         }
     }
 }

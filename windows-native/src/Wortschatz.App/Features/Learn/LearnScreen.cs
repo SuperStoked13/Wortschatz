@@ -5,9 +5,11 @@ using Avalonia.Input;
 using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Threading;
+using Avalonia.VisualTree;
 using Wortschatz.App.DesignSystem;
 using Wortschatz.App.Features.Study;
 using Wortschatz.Core;
+using static Wortschatz.Core.CoreText;
 using Phase = Wortschatz.Core.LearnFlow.Phase;
 using PhaseKind = Wortschatz.Core.LearnFlow.PhaseKind;
 
@@ -54,12 +56,12 @@ public sealed class LearnScreen : Screen
         _c.Changed += Render;
         _speaking = new SpeakingIndicator(model.Speech);
         _c.Spoke += _speaking.Started;
-        _answer = StudyAnswerBox.Field("Antwort eingeben");
+        _answer = StudyAnswerBox.Field(L("Antwort eingeben"));
         _answer.TextChanged += (_, _) =>
         {
             if (_c.State.Phase == Phase.Written) _c.Send(new LearnFlow.Event.DraftChanged(_answer.Text ?? ""));
         };
-        _copy = StudyAnswerBox.Field(AppDevice.IsPhone ? "Antwort abtippen" : "Richtige Antwort abtippen");
+        _copy = StudyAnswerBox.Field(AppDevice.IsPhone ? L("Antwort abtippen") : L("Richtige Antwort abtippen"));
         _copy.TextChanged += (_, _) =>
         {
             if (_c.State.Phase == Phase.Copy) _c.Send(new LearnFlow.Event.DraftChanged(_copy.Text ?? ""));
@@ -79,8 +81,9 @@ public sealed class LearnScreen : Screen
 
     public override void Activate()
     {
-        _compact = Window.Bounds.Width is > 0 and < CompactWidth;
+        _compact = Window.StudyArea.Width is > 0 and < CompactWidth;
         Window.SizeChanged += OnWindowSize;
+        _c.OptionsRequested = OpenOptionsAtRecheck;
         _c.Activate(holdingToasts: true);
         Render();
         StudyEntrance.RevealScreen(View);
@@ -102,7 +105,7 @@ public sealed class LearnScreen : Screen
 
     void OnWindowSize(object? sender, SizeChangedEventArgs e)
     {
-        bool compact = e.NewSize.Width < CompactWidth;
+        bool compact = e.NewSize.Width / Window.StudyScale < CompactWidth;
         if (compact == _compact) return;
         _compact = compact;
         Render();
@@ -116,8 +119,29 @@ public sealed class LearnScreen : Screen
 
     protected override Control Build() => new Border();
 
+    bool _holdRender;
+
+    /// <summary>
+    /// Runs many steps without drawing each of them, then draws once (the snapshot tool's fast-forward: drawing every
+    /// step queued work for thousands of screens, 15–25 s per fast-forward instead of 1–2 s).
+    /// </summary>
+    public void WithoutRendering(Action steps)
+    {
+        _holdRender = true;
+        try
+        {
+            steps();
+        }
+        finally
+        {
+            _holdRender = false;
+            Render();
+        }
+    }
+
     void Render()
     {
+        if (_holdRender) return;
         // The fields and the capsule are reused across renders (focus, caret, the bar's glide): out of the old tree first.
         foreach (var c in new Control[] { _answer, _copy, _focusSink, _capsule, _roundText }) Detach(c);
         var motion = new Moves(this);
@@ -156,7 +180,7 @@ public sealed class LearnScreen : Screen
         ((ContentControl)View).Content = root;
         // The window's name in the taskbar (Mac: navigationTitle "Lernen", subtitle the set).
         var setTitle = Model.Set(_c.SetId)?.Title ?? S.SetTitle;
-        Window.Title = setTitle.Length > 0 ? $"Lernen – {setTitle}" : "Lernen";
+        Window.Title = setTitle.Length > 0 ? L($"Lernen – {setTitle}") : L("Lernen");
         motion.Remember();
         FocusAfterRender(motion.NewStep);
     }
@@ -241,15 +265,18 @@ public sealed class LearnScreen : Screen
             var counts = S.Counts;
             _capsule.Update(counts.Fresh, counts.Learning, counts.Mastered);
             _capsule.Compact = _compact;
-            _roundText.Text = $"Runde {S.Round}";
+            _roundText.Text = L($"Runde {S.Round}");
             var capsule = Ui.Glass(Ui.H(_compact ? 10 : 16, _roundText, _capsule), 999, new Thickness(_compact ? 14 : 18, 0), strong: true, shadow: false);
             capsule.Height = 40;
+            // Phone: three coloured numbers without words – a tap says what they count (06.11.2026).
+            if (AppDevice.IsPhone)
+                capsule.Tapped += (_, _) => Model.ShowToast(new ToastMessage(L($"Runde {S.Round}: {counts.Fresh} neu · {counts.Learning} am Lernen · {counts.Mastered} gemeistert")));
             center = capsule;
         }
         bool finished = S.Phase == Phase.Finished;
-        var options = Ui.IconButton(IconName.Sliders, "Optionen (Ctrl+K)", OpenOptions);
+        var options = Ui.IconButton(IconName.Sliders, L("Optionen (Ctrl+K)"), OpenOptions);
         options.IsEnabled = CanShowOptions;
-        var restart = Ui.IconButton(IconName.RotateCcw, finished ? "Nochmal lernen (Ctrl+Shift+R)" : "Neu starten (Ctrl+Shift+R)",
+        var restart = Ui.IconButton(IconName.RotateCcw, finished ? L("Nochmal lernen (Ctrl+Shift+R)") : L("Neu starten (Ctrl+Shift+R)"),
             () => _c.Send(finished ? new LearnFlow.Event.Relearn() : new LearnFlow.Event.Restart()));
         restart.IsEnabled = CanRestart;
         foreach (var b in new[] { options, restart }) b.Focusable = false;
@@ -265,13 +292,20 @@ public sealed class LearnScreen : Screen
     // MARK: Question
 
     /// <summary>The question sits a little below the top row in tall windows and close to it in short ones.</summary>
-    double TopInset => AppDevice.IsPhone ? 14 : Math.Max(20, Math.Min(112, (Window.Bounds.Height - 40 - 52 - 560) / 2));
+    double TopInset => AppDevice.IsPhone ? 14 : Math.Max(20, Math.Min(112, (Window.StudyArea.Height - 40 - 52 - 560) / 2));
+
+    bool _introShown;
 
     Control QuestionColumn(Moves motion)
     {
         var q = S.Question!;
         var column = new StackPanel { Spacing = 20, Width = 760, HorizontalAlignment = HorizontalAlignment.Center, Margin = new Thickness(0, TopInset, 0, 24) };
-        if (S.ShowsIntroHint && !Model.Preferences.LearnIntroHintDismissed) column.Children.Add(IntroHint());
+        // The hint stays through the answer's feedback: gone with each feedback and back with the next question, it made
+        // the card and the answers jump up and down at every question (Joan's phone, 06.11.2026).
+        bool intro = !Model.Preferences.LearnIntroHintDismissed
+            && (S.ShowsIntroHint || (_introShown && S.IsStudyStep && S.Session is { Rounds.Count: 0 }));
+        _introShown = intro;
+        if (intro) column.Children.Add(IntroHint());
         column.Children.Add(PromptCard(q, motion));
         if (q.Type == QuestionType.Mc)
         {
@@ -292,7 +326,7 @@ public sealed class LearnScreen : Screen
     /// <summary>"Neue Begriffe kommen zuerst als Multiple Choice …" until the first checkpoint, closable.</summary>
     Control IntroHint()
     {
-        var close = Ui.IconButton(IconName.X, "Hinweis schliessen", () =>
+        var close = Ui.IconButton(IconName.X, L("Hinweis schliessen"), () =>
         {
             Model.Preferences.LearnIntroHintDismissed = true;
             Render();
@@ -313,9 +347,10 @@ public sealed class LearnScreen : Screen
     Control PromptCard(LearnFlow.QuestionInfo q, Moves motion)
     {
         var header = Ui.Row(
-            Ui.H(10, Ui.Eyebrow(q.PromptLabel, P.TextSecondary), q.IsReview ? ReviewChip() : null),
+            Ui.H(10, Ui.Eyebrow(q.PromptLabel, P.TextSecondary), q.IsReview ? ReviewChip() : q.IsRecheck ? RecheckChip() : null),
             Tools(q, motion), 12);
-        var prompt = StudyText.InLang(q.Prompt, q.PromptLang, PromptSize(q.Prompt), FontWeight.Bold, font: WsTheme.Prompt);
+        var (promptSize, promptText) = StudyText.FitPrompt(q.Prompt, q.PromptLang, PromptSize(q.Prompt), FontWeight.Bold);
+        var prompt = StudyText.InLang(promptText, q.PromptLang, promptSize, FontWeight.Bold, font: WsTheme.Prompt, hyphenate: false);
         prompt.LetterSpacing = -0.3;
         AutomationProperties.SetName(prompt, $"{q.PromptLabel}: {q.Prompt}");
         AutomationProperties.SetHeadingLevel(prompt, 1);
@@ -335,8 +370,17 @@ public sealed class LearnScreen : Screen
     Control ReviewChip()
     {
         var chip = Ui.Chip(LearnFlow.REVIEW_LABEL, P.Mastered, IconName.RotateCcw);
-        ToolTip.SetTip(chip, "Diesen Begriff hast du schon gemeistert. Ist deine Antwort falsch, ist er wieder am Lernen.");
-        AutomationProperties.SetName(chip, "Wiederholungsfrage");
+        ToolTip.SetTip(chip, L("Diesen Begriff hast du schon gemeistert. Ist deine Antwort falsch, ist er wieder am Lernen."));
+        AutomationProperties.SetName(chip, L("Wiederholungsfrage"));
+        return chip;
+    }
+
+    /// <summary>"Nachkontrolle": a card missed earlier in the session comes back once more (Mac: LearnRecheckChip).</summary>
+    Control RecheckChip()
+    {
+        var chip = Ui.Chip(LearnFlow.RECHECK_LABEL, P.Learning, IconName.Repeat);
+        ToolTip.SetTip(chip, LearnFlow.RECHECK_HELP);
+        AutomationProperties.SetName(chip, LearnFlow.RECHECK_LABEL);
         return chip;
     }
 
@@ -346,10 +390,10 @@ public sealed class LearnScreen : Screen
     /// </summary>
     Control Tools(LearnFlow.QuestionInfo q, Moves motion)
     {
-        var speak = Ui.IconButton(IconName.Speaker, "Vorlesen (Ctrl+R)", () => _c.Send(new LearnFlow.Event.SpeakPrompt()), 32, ButtonKind.Plain);
-        var star = Ui.IconButton(q.Starred ? IconName.StarFilled : IconName.Star, q.Starred ? "Markierung entfernen (Ctrl+D)" : "Markieren (Ctrl+D)",
+        var speak = Ui.IconButton(IconName.Speaker, L("Vorlesen (Ctrl+R)"), () => _c.Send(new LearnFlow.Event.SpeakPrompt()), 32, ButtonKind.Plain);
+        var star = Ui.IconButton(q.Starred ? IconName.StarFilled : IconName.Star, q.Starred ? L("Markierung entfernen (Ctrl+D)") : L("Markieren (Ctrl+D)"),
             () => _c.Send(new LearnFlow.Event.ToggleStar()), 32, ButtonKind.Plain, q.Starred ? P.Star : null);
-        var edit = Ui.IconButton(IconName.Pencil, "Karte bearbeiten (Ctrl+E)", EditCurrentCard, 32, ButtonKind.Plain);
+        var edit = Ui.IconButton(IconName.Pencil, L("Karte bearbeiten (Ctrl+E)"), EditCurrentCard, 32, ButtonKind.Plain);
         foreach (var b in new[] { speak, star, edit }) b.Focusable = false;
         if (speak.Chrome.Child is { } speakerIcon) _speaking.Attach(speakerIcon);
         if (motion.StarToggled && star.Chrome.Child is { } starIcon) Effects.Pop(starIcon, 1.3);
@@ -375,7 +419,7 @@ public sealed class LearnScreen : Screen
         }
         motion.Tiles = states;
         var grid = ChoiceTile.Grid(tiles);
-        AutomationProperties.SetName(grid, "Antworten");
+        AutomationProperties.SetName(grid, StudyText.AnswersNoun);
         return grid;
     }
 
@@ -396,14 +440,14 @@ public sealed class LearnScreen : Screen
         if (match.Selected is { } selected && selected < q.Choices.Count)
         {
             row.Children.Add(Ui.KeyCap("↵"));
-            var picks = Ui.Text($"wählt «{q.Choices[selected].Text}»", 14, color: P.TextSecondary);
+            var picks = Ui.Text(L($"wählt «{q.Choices[selected].Text}»"), 14, color: P.TextSecondary);
             picks.TextWrapping = TextWrapping.NoWrap;
             picks.TextTrimming = TextTrimming.CharacterEllipsis;
             picks.MaxWidth = 300;
             row.Children.Add(picks);
         }
-        else row.Children.Add(Ui.Text(match.Matching.Count == 0 ? "Keine Antwort passt" : "Weiter tippen …", 14, color: P.TextSecondary));
-        row.Children.Add(Ui.Text("Rücktaste korrigiert · Esc löscht", 12, color: P.TextTertiary));
+        else row.Children.Add(Ui.Text(match.Matching.Count == 0 ? L("Keine Antwort passt") : L("Weiter tippen …"), 14, color: P.TextSecondary));
+        row.Children.Add(Ui.Text(L("Rücktaste korrigiert · Esc löscht"), 12, color: P.TextTertiary));
         var hint = new Border
         {
             Child = row,
@@ -444,11 +488,11 @@ public sealed class LearnScreen : Screen
         if (f is null) return null;
         var parts = new StackPanel { Spacing = 16, Margin = new Thickness(0, 4, 0, 0) };
         if (f.Kind == LearnFlow.FeedbackKind.Wrong && LearnFlow.HasText(f.Given))
-            parts.Children.Add(FeedbackRow("Deine Antwort", f.Hint is { } hint && !f.EditedCorrect ? Ui.Chip(hint, P.Warning, IconName.Lightbulb) : null,
+            parts.Children.Add(FeedbackRow(L("Deine Antwort"), f.Hint is { } hint && !f.EditedCorrect ? Ui.Chip(hint, P.Warning, IconName.Lightbulb) : null,
                 StudyText.Diff(f.Given, q.Expected, q.AnswerLang, 22)));
-        var speak = Ui.IconButton(IconName.Speaker, "Antwort vorlesen", () => _c.Speak(q.Expected, q.AnswerLang), 32, ButtonKind.Plain);
+        var speak = Ui.IconButton(IconName.Speaker, L("Antwort vorlesen"), () => _c.Speak(q.Expected, q.AnswerLang), 32, ButtonKind.Plain);
         speak.Focusable = false;
-        parts.Children.Add(FeedbackRow("Richtige Antwort", null,
+        parts.Children.Add(FeedbackRow(L("Richtige Antwort"), null,
             Ui.H(8, StudyText.InLang(q.Expected, q.AnswerLang, 22, FontWeight.Medium, P.Success.Text), speak)));
         if (f.EditedCorrect) parts.Children.Add(Ui.H(8, StudyStatusPill.FeedbackSymbol(StudyStatus.Kinds.Correct, P.Success.Fill, 16), Ui.Text(LearnFlow.EDITED_CORRECT_TEXT, 14, FontWeight.Medium, P.Success.Text)));
         if (S.Phase == Phase.Copy)
@@ -456,7 +500,7 @@ public sealed class LearnScreen : Screen
             parts.Children.Add(StudyAnswerBox.Create(_copy, null, q.AnswerLang, isActive: true, isInvalid: S.Rejections > 0, shake: motion.Rejected, accepted: false));
             if (SpecialCharacterBar.Create(q.AnswerLang, _copy) is { } accents) parts.Children.Add(accents);
         }
-        var edit = Ui.Secondary("Bearbeiten", EditCurrentCard, IconName.Pencil, "Ctrl E", 34);
+        var edit = Ui.Secondary(L("Bearbeiten"), EditCurrentCard, IconName.Pencil, "Ctrl E", 34);
         edit.Focusable = false;
         parts.Children.Add(edit);
         if (motion.PhaseChanged && S.Phase != Phase.Copy) Effects.AnswerSwapIn(parts);
@@ -494,7 +538,7 @@ public sealed class LearnScreen : Screen
         var cp = S.Checkpoint!;
         double ratio = cp.Answered == 0 ? 0 : (double)cp.Correct / cp.Answered;
         var c = cp.Counts;
-        var eyebrow = Ui.Eyebrow($"Runde {cp.Round} geschafft", P.TextSecondary);
+        var eyebrow = Ui.Eyebrow(L($"Runde {cp.Round} geschafft"), P.TextSecondary);
         var title = Ui.Text(LearnFlow.CheckpointTitle(ratio), 34, FontWeight.Bold, wrap: TextWrapping.Wrap, font: WsTheme.Prompt, align: TextAlignment.Center);
         var text = Ui.Text(LearnFlow.CheckpointText(cp), 18, color: P.TextSecondary, wrap: TextWrapping.Wrap, align: TextAlignment.Center);
         foreach (var t in new Control[] { eyebrow, title, text }) t.HorizontalAlignment = HorizontalAlignment.Center;
@@ -507,9 +551,9 @@ public sealed class LearnScreen : Screen
             : new SegmentedBar(c.Mastered, c.Learning, c.Total, S.Segments);
         if (grows) bar.Grow(c.Mastered, c.Learning);
         var percent = Ui.Text(WriteFlow.PercentText(c.Total > 0 ? (double)c.Mastered / c.Total : 0), 22, FontWeight.Bold, c.Mastered > 0 ? P.Mastered.Text : P.TextSecondary, font: WsTheme.Prompt);
-        var legend = Ui.H(20, Legend(P.New.Fill, "Neu", c.Fresh), Legend(P.Learning.Fill, "Am Lernen", c.Learning), Legend(P.Mastered.Fill, "Gemeistert", c.Mastered));
+        var legend = Ui.H(20, Legend(P.New.Fill, L("Neu"), c.Fresh), Legend(P.Learning.Fill, L("Am Lernen"), c.Learning), Legend(P.Mastered.Fill, L("Gemeistert"), c.Mastered));
         var progress = Ui.V(16, Ui.Row(Ui.Text(LearnFlow.MasteredLine(c.Mastered, c.Total), 17, FontWeight.Bold, font: WsTheme.Prompt), percent), bar, legend);
-        AutomationProperties.SetName(progress, $"Gesamtfortschritt: {LearnFlow.ProgressText(c.Fresh, c.Learning, c.Mastered, c.Total)}");
+        AutomationProperties.SetName(progress, L($"Gesamtfortschritt: {LearnFlow.ProgressText(c.Fresh, c.Learning, c.Mastered, c.Total)}"));
         var card = Ui.Hero(progress, new Thickness(24), 22);
 
         var cards = LearnFlow.CardsById(S.Cards);
@@ -519,10 +563,10 @@ public sealed class LearnScreen : Screen
             var status = LearnFlow.CheckpointStatus(i.Stage);
             var dots = Ui.H(3, i.Results.Select(ok => (Control?)new Border { Width = 7, Height = 7, CornerRadius = new CornerRadius(3.5), Background = WsTheme.B(ok ? P.Success.Fill : P.Failure.Fill) }).ToArray());
             dots.VerticalAlignment = VerticalAlignment.Center;
-            AutomationProperties.SetName(dots, "Antworten: " + string.Join(", ", i.Results.Select(ok => ok ? "richtig" : "falsch")));
+            AutomationProperties.SetName(dots, L($"Antworten: {string.Join(", ", i.Results.Select(ok => ok ? L("richtig") : L("falsch")))}"));
             return new StudyChrome.TermRow(item.Term, item.Definition, S.TermLang, S.DefLang, Trailing: Ui.H(12, dots, Ui.Chip(status.Label, P.Status(status.Status))));
         }).ToList();
-        var stack = Ui.V(24, head, card, rows.Count > 0 ? StudyChrome.TermList("In dieser Runde", rows) : null);
+        var stack = Ui.V(24, head, card, rows.Count > 0 ? StudyChrome.TermList(L("In dieser Runde"), rows) : null);
         stack.Width = 760;
         stack.Margin = new Thickness(0, 24, 0, 24);
         stack.HorizontalAlignment = HorizontalAlignment.Center;
@@ -551,26 +595,27 @@ public sealed class LearnScreen : Screen
         title.HorizontalAlignment = subtitle.HorizontalAlignment = HorizontalAlignment.Center;
         var time = WriteFlow.CompactDurationOf(stats.ElapsedMs);
         var tiles = StatTile.Row(12,
-            StatTile.Create(stats.Total == 1 ? "Begriff" : "Begriffe", $"{stats.Total}", IconName.Stack, P.Accent),
-            StatTile.Create(stats.Rounds == 1 ? "Runde" : "Runden", $"{stats.Rounds}", IconName.Repeat, P.Info.Fill),
-            StatTile.Create(stats.Answered == 1 ? "Antwort" : "Antworten", $"{stats.Answered}", IconName.Book, P.Learning.Fill),
-            StatTile.Create("Treffer", WriteFlow.PercentText(stats.Accuracy), IconName.Target, P.Success.Fill),
+            StatTile.Create(stats.Total == 1 ? L("Begriff") : L("Begriffe"), $"{stats.Total}", IconName.Stack, P.Accent),
+            StatTile.Create(stats.Rounds == 1 ? L("Runde") : L("Runden"), $"{stats.Rounds}", IconName.Repeat, P.Info.Fill),
+            StatTile.Create(stats.Answered == 1 ? L("Antwort") : StudyText.AnswersNoun, $"{stats.Answered}", IconName.Book, P.Learning.Fill),
+            StatTile.Create(L("Treffer"), WriteFlow.PercentText(stats.Accuracy), IconName.Target, P.Success.Fill),
             TimeTile(time.Label, time.Value, stats.ElapsedMs));
         var stack = Ui.V(24, Ui.V(12, circle, title, subtitle), tiles);
         if (_c.BestStreak >= AnswerStreak.VisibleFrom)
-            stack.Children.Add(Capsule(IconName.Flame, $"Beste Serie: {_c.BestStreak} richtig in Folge", P.Flame, Palette.Hex(Ui.Rgb(P.Flame), 0.12)));
+            stack.Children.Add(Capsule(IconName.Flame, L($"Beste Serie: {_c.BestStreak} richtig in Folge"), P.Flame, Palette.Hex(Ui.Rgb(P.Flame), 0.12)));
         if (S.Session is { } session && LearnEngine.ReviewStatsOf(session) is { } rs && LearnFlow.ReviewLine(rs) is { } line)
             stack.Children.Add(Capsule(IconName.RotateCcw, line, P.Mastered.Text, P.Mastered.Soft));
         var cards = LearnFlow.CardsById(S.Cards);
         var hardest = stats.Hardest.Where(h => cards.ContainsKey(h.CardId)).ToList();
         if (hardest.Count == 0)
         {
-            var none = Ui.H(8, Icons.Icon(IconName.Sparkles, 18, P.AccentText, 2), Ui.Text("Kein einziger Fehler – beeindruckend!", 17, FontWeight.Medium, P.AccentText));
+            var none = Ui.H(8, Icons.Icon(IconName.Sparkles, 18, P.AccentText, 2), Ui.Text(L("Kein einziger Fehler – beeindruckend!"), 17, FontWeight.Medium, P.AccentText));
             none.HorizontalAlignment = HorizontalAlignment.Center;
             stack.Children.Add(none);
         }
-        else stack.Children.Add(StudyChrome.TermList("Am häufigsten falsch", hardest.Select(h =>
-            new StudyChrome.TermRow(cards[h.CardId].Term, cards[h.CardId].Definition, S.TermLang, S.DefLang, Trailing: Ui.Chip($"{h.Misses}× falsch", P.Failure)))));
+        else stack.Children.Add(StudyChrome.TermList(L("Am häufigsten falsch"), hardest.Select(h =>
+            new StudyChrome.TermRow(cards[h.CardId].Term, cards[h.CardId].Definition, S.TermLang, S.DefLang,
+                Trailing: Ui.H(10, Ui.Chip(L($"{h.Misses}× falsch"), P.Failure), StudyChrome.StarToggle(Model, _c.SetId, h.CardId))))));
         stack.Width = 760;
         stack.Margin = new Thickness(0, 24, 0, 24);
         var layer = new Grid { HorizontalAlignment = HorizontalAlignment.Center };
@@ -584,7 +629,7 @@ public sealed class LearnScreen : Screen
     internal static Control TimeTile(string label, string value, double elapsedMs, string? caption = null)
     {
         var tile = StatTile.Create(label, value, IconName.Clock, P.Flame, caption: caption);
-        AutomationProperties.SetName(tile, $"Zeit: {TimeUtil.FormatDuration(elapsedMs)}");
+        AutomationProperties.SetName(tile, L($"Zeit: {TimeUtil.FormatDuration(elapsedMs)}"));
         return tile;
     }
 
@@ -603,18 +648,18 @@ public sealed class LearnScreen : Screen
         if (LearnFlow.MessageOf(S) is not { } m) return new Border();
         var actions = new List<Control>
         {
-            Ui.Secondary("Zurück zum Lernset", () => _c.Send(new LearnFlow.Event.Exit()), keyHint: "Esc", height: 44),
+            Ui.Secondary(L("Zurück zum Lernset"), () => _c.Send(new LearnFlow.Event.Exit()), keyHint: "Esc", height: 44),
         };
-        if (m.OffersWrite) actions.Add(Ui.Secondary("Schreiben üben", () => Model.Study(_c.SetId, StudyMode.Write, forceNew: true), IconName.Keyboard, height: 44));
+        if (m.OffersWrite) actions.Add(Ui.Secondary(L("Schreiben üben"), () => Model.Study(_c.SetId, StudyMode.Write, forceNew: true), IconName.Keyboard, height: 44));
         if (m.OffersReview)
         {
-            var review = Ui.Secondary("Alle wiederholen", () => _c.Send(new LearnFlow.Event.StartReview()), IconName.RotateCcw, height: 44);
-            ToolTip.SetTip(review, "Jeden gemeisterten Begriff einmal abfragen. Was falsch ist, lernst du neu.");
+            var review = Ui.Secondary(L("Alle wiederholen"), () => _c.Send(new LearnFlow.Event.StartReview()), IconName.RotateCcw, height: 44);
+            ToolTip.SetTip(review, L("Jeden gemeisterten Begriff einmal abfragen. Was falsch ist, lernst du neu."));
             actions.Add(review);
         }
         actions.Add(Ui.Primary(m.PrimaryLabel, () => _c.Send(new LearnFlow.Event.Proceed())));
         var view = EmptyStateView.Create(Icons.ForSymbol(m.SystemImage), m.Title, m.Text, actions.ToArray());
-        view.Margin = new Thickness(32, 80, 32, 32);
+        view.Margin = AppDevice.IsPhone ? new Thickness(20, 40, 20, 24) : new Thickness(32, 80, 32, 32);
         return view;
     }
 
@@ -640,9 +685,9 @@ public sealed class LearnScreen : Screen
                     _ => new StudyStatus(StudyStatus.Kinds.DontKnow, f.Title, Demoted(f), Streak: streak),
                 };
             case PhaseKind.Copy when f is not null:
-                const string copy = "Tippe die richtige Antwort ab.";
+                // One whole text with the demotion and without it (Mac: LearnStatus).
                 return new StudyStatus(f.Kind == LearnFlow.FeedbackKind.DontKnow ? StudyStatus.Kinds.DontKnow : StudyStatus.Kinds.Wrong, f.Title,
-                    Demoted(f) is { } d ? $"{d}. {copy}" : copy, Streak: streak);
+                    Demoted(f) is { } d ? L($"{d}. Tippe die richtige Antwort ab.") : L("Tippe die richtige Antwort ab."), Streak: streak);
             default:
                 return null;
         }
@@ -656,7 +701,7 @@ public sealed class LearnScreen : Screen
         switch (S.Phase.Kind)
         {
             case PhaseKind.Question:
-                trailing.Add(Ui.Secondary("Weiss ich nicht?", () => _c.Send(new LearnFlow.Event.DontKnow()), keyHint: "Alt ↵", height: 44));
+                trailing.Add(Ui.Secondary(L("Weiss ich nicht?"), () => _c.Send(new LearnFlow.Event.DontKnow()), keyHint: "Alt ↵", height: 44));
                 break;
             case PhaseKind.Feedback or PhaseKind.Copy when f is not null && (S.Phase.FeedbackKind == LearnFlow.FeedbackKind.Wrong || S.Phase == Phase.Copy):
                 if (LearnFlow.OverrideLabel(S) is { } over)
@@ -666,18 +711,19 @@ public sealed class LearnScreen : Screen
                 }
                 break;
             case PhaseKind.Checkpoint:
-                trailing.Add(Ui.Secondary("Zurück zum Lernset", () => _c.Send(new LearnFlow.Event.Exit()), keyHint: "Esc", height: 44));
+                trailing.Add(Ui.Secondary(L("Zurück zum Lernset"), () => _c.Send(new LearnFlow.Event.Exit()), keyHint: "Esc", height: 44));
                 break;
             case PhaseKind.Finished:
-                trailing.Add(Ui.Secondary("Schreiben üben", () => Model.Study(_c.SetId, StudyMode.Write, forceNew: true), IconName.Keyboard, height: 44));
-                trailing.Add(Ui.Secondary("Nochmal lernen", () => _c.Send(new LearnFlow.Event.Relearn()), IconName.RotateCcw, "Ctrl Shift R", 44));
+                trailing.Add(Ui.Secondary(L("Schreiben üben"), () => Model.Study(_c.SetId, StudyMode.Write, forceNew: true), IconName.Keyboard, height: 44));
+                trailing.Add(Ui.Secondary(L("Nochmal lernen"), () => _c.Send(new LearnFlow.Event.Relearn()), IconName.RotateCcw, "Ctrl Shift R", 44));
                 break;
         }
         if (LearnFlow.ReturnAction(S) is { } label) trailing.Add(Ui.Primary(label, () => _c.Send(new LearnFlow.Event.Proceed()), "↵", height: 44));
         Control? pill = null;
         if (Status() is { } status)
         {
-            var countdown = _c.Countdown is { } cd && cd.Token == S.AutoAdvanceToken ? cd : null;
+            // Not for the short beat after a copy is typed out (CopyStep): there it would only flicker.
+            var countdown = _c.Countdown is { } cd && cd.Token == S.AutoAdvanceToken && S.Phase != Phase.Copy ? cd : null;
             pill = StudyStatusPill.Create(status, countdown, motion.NewStep, motion.StreakGrew);
         }
         return StudyActionBarView.Create(pill, trailing);
@@ -693,15 +739,15 @@ public sealed class LearnScreen : Screen
                 options =>
                 {
                     _c.Send(new LearnFlow.Event.OptionsChanged(options));
-                    _c.Send(new LearnFlow.Event.ReviewChanged(Model.Preferences.LearnReview));
-                    _c.Send(new LearnFlow.Event.RecheckChanged(Model.Preferences.LearnRecheck));
+                    // Wiederholungsfragen and Nachkontrolle apply at once (also while the options are open).
+                    _c.SwitchesMayHaveChanged();
                 },
                 () => _c.Send(new LearnFlow.Event.OverlayDismissed()),
                 () =>
                 {
                     _c.Send(new LearnFlow.Event.OverlayDismissed());
                     _c.Send(new LearnFlow.Event.Restart());
-                }), () => _c.Send(new LearnFlow.Event.OverlayDismissed()));
+                }, runningNote: LearnFlow.RunningSettingsNote(S)), () => _c.Send(new LearnFlow.Event.OverlayDismissed()));
         if (_editing is { } card && Model.Set(_c.SetId) is { } set)
         {
             var editor = StudyChrome.CardEditor(set, card, (term, definition) =>
@@ -719,6 +765,20 @@ public sealed class LearnScreen : Screen
     {
         if (S.Overlay is null && _editing is null && CanShowOptions) _c.Send(new LearnFlow.Event.OverlayPresented(LearnFlow.Overlay.Options));
     }
+
+    /// <summary>"Optionen" in the hint at the first recheck: the options, scrolled to "Nachkontrolle nach Fehlern".</summary>
+    void OpenOptionsAtRecheck()
+    {
+        OpenOptions();
+        if (S.Overlay == LearnFlow.Overlay.Options) RevealOption(StudyChrome.RecheckOptionClass);
+    }
+
+    /// <summary>Scrolls the open options to the row with style class <paramref name="cls"/> (StudyChrome.*OptionClass).</summary>
+    public void RevealOption(string cls) => Dispatcher.UIThread.Post(() =>
+    {
+        if (View.GetVisualDescendants().OfType<Control>().FirstOrDefault(c => c.Classes.Contains(cls)) is { } row)
+            row.BringIntoView(new Rect(0, -24, row.Bounds.Width, row.Bounds.Height + 72));
+    }, DispatcherPriority.Loaded);
 
     /// <summary>✎ (Ctrl+E): the card editor for the current question's card (Mac: LearnCardEditor).</summary>
     void EditCurrentCard()

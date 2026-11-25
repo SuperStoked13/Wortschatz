@@ -1,3 +1,5 @@
+using static Wortschatz.Core.CoreText;
+
 namespace Wortschatz.Core;
 
 // Port of LibraryStoreTypes.swift: value types of the library store (src/store/db.js).
@@ -17,22 +19,23 @@ public sealed class LibraryStoreError(LibraryStoreErrorCode code, string message
     public override string ToString() => $"{Code.Raw()}: {Message}";
 }
 
+/// <summary>Messages of db.js (<c>MSG</c>), plus the file errors: German (Swiss spelling, no sharp s), in the app's language through L.</summary>
 public static class StoreMessages
 {
-    public const string Quota = "Der Speicher dieses Browsers ist voll. Exportiere ein Backup und lösche Lernsets, die du nicht mehr brauchst.";
-    public const string SetNotFound = "Dieses Lernset wurde nicht gefunden.";
-    public const string CardNotFound = "Diese Karte wurde nicht gefunden.";
-    public const string EmptyCard = "Begriff und Definition dürfen nicht beide leer sein.";
-    public const string NotBackup = "Diese Datei ist kein Wortschatz-Backup.";
-    public const string NewerBackup = "Dieses Backup stammt aus einer neueren Version von Wortschatz und kann nicht importiert werden.";
-    public const string NoSets = "Das Backup ist unvollständig: Die Lernsets fehlen.";
-    public static string BadSet(int n) => $"Das Backup ist beschädigt: Lernset Nr. {n} ist ungültig.";
-    public static string BadPart(string name) => $"Das Backup ist beschädigt: Der Bereich «{name}» ist ungültig.";
-    public const string BadSnapshot = "Dieses Lernset kann nicht wiederhergestellt werden.";
-    public const string Io = "Die Daten konnten nicht gespeichert werden.";
+    public static string Quota => L("Der Speicher dieses Browsers ist voll. Exportiere ein Backup und lösche Lernsets, die du nicht mehr brauchst.");
+    public static string SetNotFound => L("Dieses Lernset wurde nicht gefunden.");
+    public static string CardNotFound => L("Diese Karte wurde nicht gefunden.");
+    public static string EmptyCard => L("Begriff und Definition dürfen nicht beide leer sein.");
+    public static string NotBackup => L("Diese Datei ist kein Wortschatz-Backup.");
+    public static string NewerBackup => L("Dieses Backup stammt aus einer neueren Version von Wortschatz und kann nicht importiert werden.");
+    public static string NoSets => L("Das Backup ist unvollständig: Die Lernsets fehlen.");
+    public static string BadSet(int n) => L($"Das Backup ist beschädigt: Lernset Nr. {n} ist ungültig.");
+    public static string BadPart(string name) => L($"Das Backup ist beschädigt: Der Bereich «{name}» ist ungültig.");
+    public static string BadSnapshot => L("Dieses Lernset kann nicht wiederhergestellt werden.");
+    public static string Io => L("Die Daten konnten nicht gespeichert werden.");
     /// <summary>Windows wording of the Mac's "kein Speicherplatz mehr frei".</summary>
-    public const string DiskFull = "Die Daten konnten nicht gespeichert werden, weil auf diesem Computer kein Speicherplatz mehr frei ist.";
-    public const string BadState = "Der Lernstand konnte nicht gespeichert werden.";
+    public static string DiskFull => L("Die Daten konnten nicht gespeichert werden, weil auf diesem Computer kein Speicherplatz mehr frei ist.");
+    public static string BadState => L("Der Lernstand konnte nicht gespeichert werden.");
 }
 
 /// <summary>A card as input (id may be missing; starred null = keep).</summary>

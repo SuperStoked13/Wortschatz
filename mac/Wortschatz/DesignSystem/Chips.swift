@@ -121,8 +121,10 @@ struct NoteChip: View {
         }
     }
 
-    static let extendedSynonymHelp =
-        "Apple Intelligence hat dein Wort als gleichbedeutend erkannt. Es steht nicht in deinem Lernset – gesucht war das Wort darüber."
+    static let extendedSynonymHelp = String(
+        localized:
+            "Apple Intelligence hat dein Wort als gleichbedeutend erkannt. Es steht nicht in deinem Lernset – gesucht war das Wort darüber."
+    )
 }
 
 /// A hint for a wrong answer ("Falscher Artikel", "Fast – ein kleiner Tippfehler"), `Labels.HINT_LABELS`.

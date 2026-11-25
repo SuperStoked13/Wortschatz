@@ -27,33 +27,41 @@ nonisolated enum SetEditorCopy {
 
     // MARK: Texts
 
-    static let titlePlaceholder = "z. B. Unité 3 – Les personnes"
-    static let descriptionPlaceholder = "Optional – z. B. Kapitel, Lehrmittel oder Prüfungsdatum"
-    static let titleMissing = "Gib deinem Lernset einen Titel."
-    static let titleFromFile = "Aus dem Dateinamen übernommen – du kannst ihn jederzeit ändern."
-    static let detected = "Automatisch erkannt"
-    static let listDiverted = "Liste erkannt – prüfe die Vorschau und übernimm die Karten."
-    static let emptyLead = "Tippe deine Vokabeln ein – oder importiere oben eine ganze Liste auf einmal."
-    static let termPlaceholder = "Begriff eingeben"
-    static let definitionPlaceholder = "Definition eingeben"
+    static let titlePlaceholder = String(localized: "z. B. Unité 3 – Les personnes")
+    static let descriptionPlaceholder = String(localized: "Optional – z. B. Kapitel, Lehrmittel oder Prüfungsdatum")
+    static let titleMissing = String(localized: "Gib deinem Lernset einen Titel.")
+    static let titleFromFile = String(localized: "Aus dem Dateinamen übernommen – du kannst ihn jederzeit ändern.")
+    static let detected = String(localized: "Automatisch erkannt")
+    static let listDiverted = String(localized: "Liste erkannt – die Paare stehen jetzt in den Karten. Trennung und Seiten passt du oben an.")
+    /// "1 möglicher Tippfehler" / "3 mögliche Tippfehler" (the card list's chip).
+    static func typoCount(_ count: Int) -> String {
+        count == 1 ? String(localized: "1 möglicher Tippfehler") : String(localized: "\(count) mögliche Tippfehler")
+    }
+    /// "Automatisch" in the language pickers (a new set's default).
+    static let automatic = String(localized: "Automatisch", comment: "Language picker: recognise the language")
+    static let emptyLead = String(localized: "Tippe deine Vokabeln ein – oder importiere oben eine ganze Liste auf einmal.")
+    static let termPlaceholder = String(localized: "Begriff eingeben")
+    static let definitionPlaceholder = String(localized: "Definition eingeben")
 
-    /// The save button: "Erstellen" for a new set, "Sichern" for an existing one.
+    /// The save button: "Lernset erstellen" for a new set, "Sichern" for an existing one.
     static func saveLabel(isEditing: Bool) -> String {
-        isEditing ? "Sichern" : "Erstellen"
+        isEditing
+            ? String(localized: "Sichern", comment: "Button: save the edited set")
+            : String(localized: "Lernset erstellen", comment: "Button: create the new set")
     }
 
     /// Why saving cannot work yet (`readiness` in editor.js), nil when it can.
     static func readiness(titleIsEmpty: Bool, completeCards: Int) -> String? {
-        if titleIsEmpty { return "Titel fehlt" }
-        if completeCards == 0 { return "Noch keine vollständige Karte" }
+        if titleIsEmpty { return String(localized: "Titel fehlt") }
+        if completeCards == 0 { return String(localized: "Noch keine vollständige Karte") }
         return nil
     }
 
     /// The cards section's error after a save attempt (`cardsMessage` in editor.js).
     static func cardsMessage(completeCards: Int, invalidCards: Int) -> String? {
-        if completeCards == 0 { return "Füge mindestens eine Karte mit Begriff und Definition hinzu." }
+        if completeCards == 0 { return String(localized: "Füge mindestens eine Karte mit Begriff und Definition hinzu.") }
         if invalidCards > 0 {
-            return "\(Labels.plural(invalidCards, "Karte ist", "Karten sind")) unvollständig – ergänze Begriff und Definition oder lösche sie."
+            return String(localized: "\(Labels.plural(invalidCards, "Karte ist", "Karten sind")) unvollständig – ergänze Begriff und Definition oder lösche sie.")
         }
         return nil
     }
@@ -87,11 +95,11 @@ nonisolated enum SetEditorCopy {
     /// Flags that earn an amber "bitte prüfen" marker, in display order (`FLAG_TEXT`;
     /// `duplicate` is shown separately).
     private static let flagTexts: [ParseFlag: String] = [
-        .merged: "Aus mehreren Zeilen zusammengefügt",
-        .lowConfidence: "Unsicher erkannt",
-        .langMismatch: "Sprache passt nicht zur Spalte",
-        .missingTerm: "Begriff fehlt",
-        .missingDefinition: "Definition fehlt",
+        .merged: String(localized: "Aus mehreren Zeilen zusammengefügt"),
+        .lowConfidence: String(localized: "Unsicher erkannt"),
+        .langMismatch: String(localized: "Sprache passt nicht zur Spalte"),
+        .missingTerm: String(localized: "Begriff fehlt"),
+        .missingDefinition: String(localized: "Definition fehlt"),
     ]
 
     /// Whether the flags earn a marker (`hasMarker`).
@@ -102,7 +110,7 @@ nonisolated enum SetEditorCopy {
     /// The marker's tooltip, e.g. "Unsicher erkannt – bitte prüfen" (`flagTooltip`).
     static func flagTooltip(_ flags: [ParseFlag]) -> String? {
         let parts = flags.compactMap { flagTexts[$0] }
-        return parts.isEmpty ? nil : "\(parts.joined(separator: " · ")) – bitte prüfen"
+        return parts.isEmpty ? nil : String(localized: "\(parts.joined(separator: " · ")) – bitte prüfen")
     }
 
     /// The flags after swapping term and definition.
@@ -118,32 +126,33 @@ nonisolated enum SetEditorCopy {
 
     // MARK: Detection
 
-    private static let delimiterNames: [String: String] = [
-        "\t": "Tabulator",
-        ",": "Komma",
-        ";": "Strichpunkt",
-        "-": "Bindestrich",
-        "=": "Gleichheitszeichen",
-        ":": "Doppelpunkt",
-        "|": "Senkrechten Strich",
-        "→": "Pfeil",
-        "/": "Schrägstrich",
+    /// "Getrennt durch …" per delimiter, each a whole label (translatable as one phrase).
+    private static let delimiterLabels: [String: String] = [
+        "\t": String(localized: "Getrennt durch Tabulator"),
+        ",": String(localized: "Getrennt durch Komma"),
+        ";": String(localized: "Getrennt durch Strichpunkt"),
+        "-": String(localized: "Getrennt durch Bindestrich"),
+        "=": String(localized: "Getrennt durch Gleichheitszeichen"),
+        ":": String(localized: "Getrennt durch Doppelpunkt"),
+        "|": String(localized: "Getrennt durch Senkrechten Strich"),
+        "→": String(localized: "Getrennt durch Pfeil"),
+        "/": String(localized: "Getrennt durch Schrägstrich"),
     ]
 
     /// Short German description of the detected layout (`formatLabel`).
     static func formatLabel(_ result: ParseResult) -> String? {
         switch result.format {
         case .blocks, .alternating:
-            return "Abwechselnde Zeilen"
+            return String(localized: "Abwechselnde Zeilen")
         case .columns:
-            return "Zwei Spalten nacheinander"
+            return String(localized: "Zwei Spalten nacheinander")
         case .delimited:
             let delimiter = result.delimiter ?? ""
-            if delimiter == "  " { return "Spalten mit Abstand" }
-            if delimiter == " " { return "Beide Sprachen in einer Zeile" }
+            if delimiter == "  " { return String(localized: "Spalten mit Abstand") }
+            if delimiter == " " { return String(localized: "Beide Sprachen in einer Zeile") }
             let key = delimiter == "\t" ? "\t" : JSCompat.trim(delimiter)
-            if let name = delimiterNames[key] { return "Getrennt durch \(name)" }
-            return key.isEmpty ? nil : "Getrennt durch «\(key)»"
+            if let label = delimiterLabels[key] { return label }
+            return key.isEmpty ? nil : String(localized: "Getrennt durch «\(key)»")
         case .empty:
             return nil
         }
@@ -152,16 +161,18 @@ nonisolated enum SetEditorCopy {
     /// Why a line was skipped (`SKIP_REASONS`).
     static func skipReason(_ reason: SkipReason) -> String {
         switch reason {
-        case .heading: "Überschrift"
-        case .pageNumber: "Seitenzahl"
-        case .noise: "Kein Vokabeltext"
-        case .unpaired: "Ohne Gegenstück"
+        case .heading: String(localized: "Überschrift")
+        case .pageNumber: String(localized: "Seitenzahl")
+        case .noise: String(localized: "Kein Vokabeltext")
+        case .unpaired: String(localized: "Ohne Gegenstück")
         }
     }
 
     /// "52 Paare erkannt" / "Noch keine Paare erkannt".
     static func pairsDetected(_ count: Int) -> String {
-        count > 0 ? "\(Labels.plural(count, "Paar", "Paare")) erkannt" : "Noch keine Paare erkannt"
+        count > 0
+            ? String(localized: "\(Labels.plural(count, "Paar", "Paare")) erkannt")
+            : String(localized: "Noch keine Paare erkannt")
     }
 
     // MARK: Pasting into fields

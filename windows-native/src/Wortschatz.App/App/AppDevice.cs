@@ -1,3 +1,5 @@
+using static Wortschatz.Core.CoreText;
+
 namespace Wortschatz.App;
 
 /// <summary>
@@ -22,13 +24,16 @@ public static class AppDevice
     /// <summary>The system's name in texts («Folgt Windows», «Android-Einstellungen»).</summary>
     public static string SystemName => IsPhone ? "Android" : "Windows";
 
+    /// <summary>This device's name as its host gives it (a phone: "Android (Pixel 8)"; null: Windows + PC name).</summary>
+    public static string? DeviceName { get; set; }
+
     /// <summary>Which app this is (Einstellungen › Info).</summary>
-    public static string AppLabel => IsPhone ? "Android-App" : "Windows-App";
+    public static string AppLabel => IsPhone ? L("Android-App") : L("Windows-App");
 
     /// <summary>Photos can be read (text recognition): Windows has it built in; the phone app when its host brings it.</summary>
     public static bool ReadsPhotos => !IsPhone || PhoneReadsPhotos;
 
-    /// <summary>The phone's host has text recognition (a phone: ML Kit).</summary>
+    /// <summary>The phone's host has text recognition (on Android: ML Kit).</summary>
     public static bool PhoneReadsPhotos { get; set; }
 
     /// <summary>Takes a photo with the phone's camera (JPEG bytes; null: cancelled). Null where there is no camera button.</summary>

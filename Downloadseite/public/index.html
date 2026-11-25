@@ -35,6 +35,13 @@
 
       <div class="hero-actions" data-hero-actions>
         {{#mac.available}}
+        {{#mac.url}}
+        <a class="btn btn-primary btn-large dl-link" href="{{mac.url}}" data-platform="mac" data-file="{{mac.file}}" data-size="{{mac.size}}">
+          <span class="btn-label">Für macOS laden</span>
+          <kbd class="keycap" data-return-hint title="Auch mit der Enter-Taste">↩</kbd>
+        </a>
+        {{/mac.url}}
+        {{^mac.url}}
         <form class="dl-form" method="post" action="/download/mac" data-platform="mac">
           <input class="hp" type="text" name="website" value="" tabindex="-1" autocomplete="off" aria-hidden="true">
           <button class="btn btn-primary btn-large" type="submit">
@@ -42,11 +49,19 @@
             <kbd class="keycap" data-return-hint title="Auch mit der Enter-Taste">↩</kbd>
           </button>
         </form>
+        {{/mac.url}}
         {{/mac.available}}
         {{^mac.available}}
         <span class="btn btn-glass btn-large is-unavailable" data-platform="mac">macOS-Version folgt</span>
         {{/mac.available}}
         {{#windows.available}}
+        {{#windows.url}}
+        <a class="btn btn-glass btn-large dl-link" href="{{windows.url}}" data-platform="windows" data-file="{{windows.file}}" data-size="{{windows.size}}">
+          <span class="btn-label">Für Windows laden</span>
+          <kbd class="keycap" data-return-hint title="Auch mit der Enter-Taste" hidden>↩</kbd>
+        </a>
+        {{/windows.url}}
+        {{^windows.url}}
         <form class="dl-form" method="post" action="/download/windows" data-platform="windows">
           <input class="hp" type="text" name="website" value="" tabindex="-1" autocomplete="off" aria-hidden="true">
           <button class="btn btn-glass btn-large" type="submit">
@@ -54,13 +69,15 @@
             <kbd class="keycap" data-return-hint title="Auch mit der Enter-Taste" hidden>↩</kbd>
           </button>
         </form>
+        {{/windows.url}}
         {{/windows.available}}
         {{^windows.available}}
         <span class="btn btn-glass btn-large is-unavailable" data-platform="windows">Windows-Version folgt</span>
         {{/windows.available}}
       </div>
-      <p class="hero-note" data-hero-note>{{#version}}Version {{version}}, kostenlos und ohne Konto.{{/version}}{{^version}}Kostenlos und ohne Konto.{{/version}}{{#updates.latest}} <a href="/neuigkeiten">Was ist neu?</a>{{/updates.latest}}</p>
+      <p class="hero-note" data-hero-note>{{#version}}Version {{version}}, kostenlos und ohne Konto.{{/version}}{{^version}}Kostenlos und ohne Konto.{{/version}}{{#appLanguages.english}} {{appLanguages.note}}{{/appLanguages.english}}{{#updates.latest}} <a href="/neuigkeiten">Was ist neu?</a>{{/updates.latest}}</p>
       <p class="hero-note hero-note-mobile" data-mobile-note hidden>Wortschatz gibt es für Mac und Windows. Öffne diese Seite am Computer, um die App zu laden.</p>
+{{> coffee}}
     </section>
 
     <section class="showcase" id="funktionen" aria-labelledby="funktionen-titel">
@@ -348,6 +365,7 @@
       <div class="section-head">
         <h2 id="download-titel">Wortschatz laden</h2>
         <p>Kostenlos, ohne Konto und ohne Werbung. Deine Lernsets kannst du jederzeit als Backup exportieren und auf dem anderen Computer wieder einlesen.</p>
+        {{#appLanguages.english}}<p>{{appLanguages.text}}</p>{{/appLanguages.english}}
       </div>
 
       <div class="platforms">
@@ -360,6 +378,7 @@
             <div><dt>Grösse</dt><dd>{{mac.sizeLabel}}</dd></div>
             {{#mac.requirement}}<div><dt>System</dt><dd>{{mac.requirement}}</dd></div>{{/mac.requirement}}
             {{#mac.architecture}}<div><dt>Prozessor</dt><dd>{{mac.architecture}}</dd></div>{{/mac.architecture}}
+            <div><dt>Sprache</dt><dd>{{mac.languages}}</dd></div>
             {{#mac.releasedLabel}}<div><dt>Erschienen</dt><dd>{{mac.releasedLabel}}</dd></div>{{/mac.releasedLabel}}
           </dl>
           <div class="checksum">
@@ -367,10 +386,15 @@
             <code class="checksum-value" data-checksum>{{mac.sha256}}</code>
             <button type="button" class="copy-btn" data-copy="{{mac.sha256}}" aria-label="Prüfsumme der Mac-Version kopieren"><svg class="i" aria-hidden="true"><use href="#i-copy"/></svg><span data-copy-label>Kopieren</span></button>
           </div>
+          {{#mac.url}}
+          <a class="btn btn-primary dl-link" href="{{mac.url}}" data-platform="mac" data-file="{{mac.file}}" data-size="{{mac.size}}"><span class="btn-label">Für macOS laden</span></a>
+          {{/mac.url}}
+          {{^mac.url}}
           <form class="dl-form" method="post" action="/download/mac" data-platform="mac">
             <input class="hp" type="text" name="website" value="" tabindex="-1" autocomplete="off" aria-hidden="true">
             <button class="btn btn-primary" type="submit"><span class="btn-label">Für macOS laden</span></button>
           </form>
+          {{/mac.url}}
           {{/mac.available}}
           {{^mac.available}}
           <p class="platform-soon">Die Mac-Version wird gerade vorbereitet und erscheint hier in Kürze.</p>
@@ -386,6 +410,7 @@
             <div><dt>Grösse</dt><dd>{{windows.sizeLabel}}</dd></div>
             {{#windows.requirement}}<div><dt>System</dt><dd>{{windows.requirement}}</dd></div>{{/windows.requirement}}
             {{#windows.architecture}}<div><dt>Prozessor</dt><dd>{{windows.architecture}}</dd></div>{{/windows.architecture}}
+            <div><dt>Sprache</dt><dd>{{windows.languages}}</dd></div>
             {{#windows.releasedLabel}}<div><dt>Erschienen</dt><dd>{{windows.releasedLabel}}</dd></div>{{/windows.releasedLabel}}
           </dl>
           <div class="checksum">
@@ -393,10 +418,15 @@
             <code class="checksum-value" data-checksum>{{windows.sha256}}</code>
             <button type="button" class="copy-btn" data-copy="{{windows.sha256}}" aria-label="Prüfsumme der Windows-Version kopieren"><svg class="i" aria-hidden="true"><use href="#i-copy"/></svg><span data-copy-label>Kopieren</span></button>
           </div>
+          {{#windows.url}}
+          <a class="btn btn-glass dl-link" href="{{windows.url}}" data-platform="windows" data-file="{{windows.file}}" data-size="{{windows.size}}"><span class="btn-label">Für Windows laden</span></a>
+          {{/windows.url}}
+          {{^windows.url}}
           <form class="dl-form" method="post" action="/download/windows" data-platform="windows">
             <input class="hp" type="text" name="website" value="" tabindex="-1" autocomplete="off" aria-hidden="true">
             <button class="btn btn-glass" type="submit"><span class="btn-label">Für Windows laden</span></button>
           </form>
+          {{/windows.url}}
           {{/windows.available}}
           {{^windows.available}}
           <p class="platform-soon">Die Windows-Version wird gerade vorbereitet und erscheint hier in Kürze.</p>
@@ -405,7 +435,7 @@
       </div>
 
       <div class="help" id="hilfe">
-        <details class="help-item" id="hilfe-mac">
+        <details class="help-item" id="hilfe-mac" data-help="mac">
           <summary>Erster Start auf dem Mac<svg class="i" aria-hidden="true"><use href="#i-chevron-down"/></svg></summary>
           <div class="help-body">
             <ol>
@@ -413,7 +443,7 @@
               <li>Starte Wortschatz. macOS meldet, Apple könne nicht überprüfen, ob Wortschatz frei von Schadsoftware ist. Klicke auf «Fertig», nicht auf «In den Papierkorb legen».</li>
               <li>Öffne <a href="x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension">Datenschutz &amp; Sicherheit</a> in den Systemeinstellungen und scrolle nach unten zu «Sicherheit». Bei «„Wortschatz“ wurde blockiert, um deinen Mac zu schützen» klickst du auf «Dennoch öffnen», im nächsten Fenster noch einmal, und bestätigst mit deinem Passwort oder Touch ID.</li>
             </ol>
-            <p>Das ist nur beim ersten Start nötig. Der Knopf «Dennoch öffnen» erscheint erst nach dem Startversuch und bleibt etwa eine Stunde lang da. Wortschatz ist nicht bei Apple notarisiert, weil das ein kostenpflichtiges Entwicklerkonto voraussetzt. Die App läuft in der Sandbox von macOS und braucht keinen Internetzugang.</p>
+            <p>Das ist nur beim ersten Start nötig. Der Knopf «Dennoch öffnen» erscheint erst nach dem Startversuch und bleibt etwa eine Stunde lang da. Wortschatz ist nicht bei Apple notarisiert, weil das ein kostenpflichtiges Entwicklerkonto voraussetzt. Die App läuft in der Sandbox von macOS{{^macUpdates}} und braucht keinen Internetzugang{{/macUpdates}}{{#macUpdates}}; ins Internet geht sie nur, um bei GitHub nach neuen Versionen zu fragen. Die installiert sie dann selbst, ohne diese Schritte{{/macUpdates}}.</p>
             <p>Schneller geht es im Terminal: Statt Schritt 2 und 3 diesen Befehl einfügen und mit Enter bestätigen. Er gibt Wortschatz frei und startet die App.</p>
             <div class="checksum">
               <span class="checksum-label">Mac, im Terminal</span>
@@ -422,7 +452,7 @@
             </div>
           </div>
         </details>
-        <details class="help-item" id="hilfe-windows">
+        <details class="help-item" id="hilfe-windows" data-help="windows">
           <summary>Erster Start unter Windows<svg class="i" aria-hidden="true"><use href="#i-chevron-down"/></svg></summary>
           <div class="help-body">
             <ol>
@@ -431,10 +461,10 @@
               <li>Erscheint «Der Computer wurde durch Windows geschützt», klicke auf «Weitere Informationen» und dann auf «Trotzdem ausführen».</li>
             </ol>
             <p>Blockiert die intelligente App-Steuerung (Smart App Control) von Windows 11 die App, gibt es dafür keine Ausnahme: Wortschatz startet erst, wenn sie unter «Windows-Sicherheit», «App- und Browsersteuerung» ausgeschaltet ist. Sie schützt vor unbekannten Programmen; ob du sie ausschaltest, entscheidest du.</p>
-            <p>Die Warnungen erscheinen, weil Wortschatz nicht mit einem kostenpflichtigen Zertifikat signiert ist. Wortschatz braucht nichts dazu: Die Datei enthält alles. Deine Lernsets liegen im Ordner %LOCALAPPDATA%\Wortschatz und bleiben erhalten, wenn du die Datei durch eine neuere ersetzt. Beim ersten Start übernimmt Wortschatz alles aus der bisherigen Windows-App (bis Version 1.1) und entfernt sie danach; ein Backup ihrer Lernsets bleibt im selben Ordner.</p>
+            <p>Die Warnungen erscheinen, weil Wortschatz nicht mit einem kostenpflichtigen Zertifikat signiert ist. Wortschatz braucht nichts dazu: Die Datei enthält alles. Deine Lernsets liegen im Ordner %LOCALAPPDATA%\Wortschatz und bleiben erhalten, wenn du die Datei durch eine neuere ersetzt.{{#windowsUpdates}} Neue Versionen holt Wortschatz selbst: Etwa einmal am Tag fragt es bei GitHub nach und ersetzt die Datei, wenn du die App beendest – ohne diese Schritte.{{/windowsUpdates}} Beim ersten Start übernimmt Wortschatz alles aus der bisherigen Windows-App (bis Version 1.1) und entfernt sie danach; ein Backup ihrer Lernsets bleibt im selben Ordner.</p>
           </div>
         </details>
-        <details class="help-item" id="hilfe-pruefen">
+        <details class="help-item" id="hilfe-pruefen" data-help="verify">
           <summary>Download überprüfen<svg class="i" aria-hidden="true"><use href="#i-chevron-down"/></svg></summary>
           <div class="help-body">
             <p>Die Prüfsumme zeigt, ob die geladene Datei vollständig und unverändert ist. Berechne sie auf deinem Computer und vergleiche sie mit der Prüfsumme oben.</p>
@@ -443,6 +473,17 @@
           </div>
         </details>
       </div>
+    </section>
+
+    <section class="support" id="unterstuetzen" aria-labelledby="unterstuetzen-titel">
+      <div class="support-cup" aria-hidden="true">{{> cup}}</div>
+      <h2 id="unterstuetzen-titel">Wortschatz unterstützen</h2>
+      <p class="support-text">Wortschatz ist kostenlos, ohne Werbung und ohne Konto, und so soll es bleiben. Wenn dir die App beim Lernen hilft, kannst du mir einen Kaffee spendieren. Jede Spende gibt mir mehr Zeit für neue Funktionen und Verbesserungen und zeigt mir, dass sich die Arbeit lohnt.</p>
+      <div class="support-actions">
+        <a class="btn btn-primary btn-large" href="https://ko-fi.com/anthonybuilds13" target="_blank" rel="noopener"><svg class="i" aria-hidden="true"><use href="#i-heart"/></svg>Auf Ko-fi unterstützen</a>
+        <button type="button" class="btn btn-glass btn-large" data-copy="{{site.origin}}/" data-copy-page><svg class="i" aria-hidden="true"><use href="#i-copy"/></svg><span data-copy-label>Link zur Seite kopieren</span></button>
+      </div>
+      <p class="support-note">Wortschatz bleibt kostenlos, mit oder ohne Spende. Weitersagen hilft auch.</p>
     </section>
   </main>
 

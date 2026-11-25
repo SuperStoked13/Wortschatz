@@ -1,4 +1,3 @@
-using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.Shapes;
 using Avalonia.Media;
@@ -19,6 +18,18 @@ public enum IconName
 
 public static class Icons
 {
+    /// <summary>
+    /// Each path parsed once: a parsed geometry never changes, so every icon of a kind shares it (lists with an icon per
+    /// row parsed it again for every row and every rebuild).
+    /// </summary>
+    static readonly Dictionary<string, Geometry> ParsedPaths = [];
+
+    static Geometry Parsed(string data)
+    {
+        if (!ParsedPaths.TryGetValue(data, out var geometry)) ParsedPaths[data] = geometry = Geometry.Parse(data);
+        return geometry;
+    }
+
     /// <summary>Stroke paths (fill = false) or filled shapes (fill = true).</summary>
     static readonly Dictionary<IconName, (string Data, bool Fill)> Paths = new()
     {
@@ -87,14 +98,14 @@ public static class Icons
             canvas.Children.Add(new Rectangle { Width = 20, Height = 20, RadiusX = 6, RadiusY = 6, Fill = WsTheme.B(WsTheme.P.Accent), [Canvas.LeftProperty] = 2.0, [Canvas.TopProperty] = 2.0 });
             canvas.Children.Add(new Path
             {
-                Data = Geometry.Parse("M7.5 12.5l3 3 6-7"), Stroke = Brushes.White, StrokeThickness = 2.4,
+                Data = Parsed("M7.5 12.5l3 3 6-7"), Stroke = Brushes.White, StrokeThickness = 2.4,
                 StrokeLineCap = PenLineCap.Round, StrokeJoin = PenLineJoin.Round,
             });
         }
         else
         {
             var (data, fill) = Paths[name];
-            var path = new Path { Data = Geometry.Parse(data) };
+            var path = new Path { Data = Parsed(data) };
             if (fill) path.Fill = brush;
             else
             {
@@ -123,30 +134,4 @@ public static class Icons
         _ => IconName.Stack,
     };
 
-    /// <summary>A small ring gauge (sidebar): share 0…1 of the circumference in <paramref name="color"/>.</summary>
-    public static Control Ring(double share, Color color, double size = 20)
-    {
-        var canvas = new Canvas { Width = 20, Height = 20 };
-        canvas.Children.Add(new Ellipse { Width = 14, Height = 14, Stroke = WsTheme.B(WsTheme.P.Track), StrokeThickness = 3, [Canvas.LeftProperty] = 3.0, [Canvas.TopProperty] = 3.0 });
-        double s = Math.Clamp(share, 0, 1);
-        if (s > 0.001)
-        {
-            if (s >= 0.999)
-                canvas.Children.Add(new Ellipse { Width = 14, Height = 14, Stroke = WsTheme.B(color), StrokeThickness = 3, [Canvas.LeftProperty] = 3.0, [Canvas.TopProperty] = 3.0 });
-            else
-            {
-                double angle = s * 2 * Math.PI;
-                var end = new Point(10 + 7 * Math.Sin(angle), 10 - 7 * Math.Cos(angle));
-                var geo = new StreamGeometry();
-                using (var ctx = geo.Open())
-                {
-                    ctx.BeginFigure(new Point(10, 3), false);
-                    ctx.ArcTo(end, new Size(7, 7), 0, s > 0.5, SweepDirection.Clockwise);
-                    ctx.EndFigure(false);
-                }
-                canvas.Children.Add(new Path { Data = geo, Stroke = WsTheme.B(color), StrokeThickness = 3, StrokeLineCap = PenLineCap.Round });
-            }
-        }
-        return new Viewbox { Width = size, Height = size, Child = canvas, IsHitTestVisible = false };
-    }
 }

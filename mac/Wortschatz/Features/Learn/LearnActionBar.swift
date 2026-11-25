@@ -5,10 +5,17 @@ import WortschatzCore
 /// with the screen's Return action (shown with the ↩ keycap), so Return is never a guess; the
 /// screen's other actions sit before it. On the left sits a status pill: the key hints while a
 /// question waits, the feedback after an answer, and the answer streak (🔥) from three in a row.
-/// Pill and buttons share one `GlassEffectContainer`, so the hint pill morphs into the green,
-/// red or amber feedback pill (`glassEffectID`). The pill stays on screen through a question and
-/// its feedback: glass that appears anew flashes white while it materializes.
+/// The pill and the Return button each sit in a `GlassEffectContainer` that lasts as long as the
+/// bar, so the hint pill morphs into the green, red or amber feedback pill and the button
+/// materializes in place (`glassEffectID`). The pill stays on screen through a question and its
+/// feedback: glass that appears anew flashes white while it materializes.
+///
+/// The other buttons ("Weiss ich nicht?", "Ich hatte recht" …) stay outside any container: they
+/// are different buttons in every phase, and a lasting container keeps the glass state of every
+/// button it ever held, until the app quits: one more every few answers, 360 after five days of
+/// Lernen (measured 23.11.2026). The bar looks the same as with one container, frame by frame.
 struct StudyActionBar<Secondary: View>: View {
+    @Environment(\.studyScale) private var studyScale
     let status: LearnStatus?
     let countdown: StudyCountdown?
     /// Changes with every step (replays the pill's bounce and shake).
@@ -21,23 +28,30 @@ struct StudyActionBar<Secondary: View>: View {
     @Namespace private var glass
 
     var body: some View {
-        GlassEffectContainer(spacing: Spacing.s) {
-            HStack(spacing: Spacing.s) {
+        // Gaps as padding, not HStack spacing: an empty container would still get its gap.
+        HStack(spacing: 0) {
+            GlassEffectContainer(spacing: Spacing.s) {
                 if let status {
                     LearnStatusPill(status: status, countdown: countdown, trigger: trigger)
                         .glassEffectID("status", in: glass)
-                        .layoutPriority(1)
                 }
-                Spacer(minLength: 0)
-                secondary
+            }
+            .padding(.trailing, status == nil ? 0 : Spacing.s)
+            .layoutPriority(1)
+            Spacer(minLength: 0)
+            // A group's modifiers apply to each button in it.
+            Group { secondary }
+                .padding(.leading, Spacing.s)
+            GlassEffectContainer(spacing: Spacing.s) {
                 if let returnAction {
                     PrimaryActionButton(verbatim: returnAction, bindsShortcut: false, action: onProceed)
                         .glassEffectID("primary", in: glass)
                         .accessibilityIdentifier(primaryIdentifier)
+                        .padding(.leading, Spacing.s)
                 }
             }
         }
-        .frame(maxWidth: LayoutMetrics.studyColumnWidth)
+        .frame(maxWidth: LayoutMetrics.studyColumnWidth * StudyScale.widthFactor(studyScale))
         .padding(.horizontal, Spacing.xxl)
         .padding(.top, Spacing.s)
         .padding(.bottom, Spacing.l)
@@ -66,9 +80,10 @@ struct LearnActionBar: View {
         }
     }
 
-    /// The countdown of the auto-advance that is still pending.
+    /// The countdown of the auto-advance that is still pending. Not for the short beat after a
+    /// copy is typed out (`CopyStep`): there it would only flicker.
     private var runningCountdown: StudyCountdown? {
-        guard let countdown, countdown.token == state.autoAdvanceToken else { return nil }
+        guard let countdown, countdown.token == state.autoAdvanceToken, state.phase != .copy else { return nil }
         return countdown
     }
 
@@ -148,10 +163,10 @@ struct LearnStatus: Equatable {
             }
         case .copy:
             guard let feedback = state.feedback else { return nil }
-            let copy = "Tippe die richtige Antwort ab."
+            let copy = String(localized: "Tippe die richtige Antwort ab.")
             self.init(
                 kind: feedback.kind == .dontKnow ? .dontKnow : .wrong, title: feedback.title,
-                message: Self.demotedMessage(feedback).map { "\($0). \(copy)" } ?? copy)
+                message: Self.demotedMessage(feedback).map { String(localized: "\($0). Tippe die richtige Antwort ab.") } ?? copy)
         case .checkpoint, .finished, .allMastered, .empty:
             return nil
         }
@@ -264,7 +279,7 @@ struct LearnStatusPill: View {
 
     /// The feedback title; a streak milestone replaces the praise.
     private var title: String {
-        status.isStreakMilestone ? "\(status.streak) richtig in Folge!" : status.title
+        status.isStreakMilestone ? String(localized: "\(status.streak) richtig in Folge!") : status.title
     }
 
     private var palette: Theme.StatusPalette? {
@@ -287,9 +302,9 @@ struct LearnStatusPill: View {
     private var accessibilityPrefix: String? {
         switch status.kind {
         case .keys, .typing: nil
-        case .correct: "Richtig"
-        case .wrong: "Falsch"
-        case .dontKnow: "Nicht gewusst"
+        case .correct: String(localized: "Richtig")
+        case .wrong: String(localized: "Falsch")
+        case .dontKnow: String(localized: "Nicht gewusst")
         }
     }
 

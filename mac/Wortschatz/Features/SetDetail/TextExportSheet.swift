@@ -20,9 +20,9 @@ struct TextExportSheet: View {
         var id: String { rawValue }
         var label: String {
             switch self {
-            case .tab: "Tab"
-            case .comma: "Komma"
-            case .dash: "Bindestrich"
+            case .tab: String(localized: "Tab", comment: "Separator: the tab character")
+            case .comma: String(localized: "Komma")
+            case .dash: String(localized: "Bindestrich")
             }
         }
 
@@ -40,8 +40,8 @@ struct TextExportSheet: View {
         var id: String { rawValue }
         var label: String {
             switch self {
-            case .newline: "Neue Zeile"
-            case .semicolon: "Strichpunkt"
+            case .newline: String(localized: "Neue Zeile")
+            case .semicolon: String(localized: "Strichpunkt")
             }
         }
 
@@ -156,11 +156,12 @@ struct TextExportSheet: View {
         ) { result in
             switch result {
             case .success:
-                model.toasts.show("«\(AppModel.shortTitle(set?.title ?? ""))» als Textdatei exportiert", tone: .success)
+                let title = AppModel.shortTitle(set?.title ?? "")
+                model.toasts.show(String(localized: "«\(title)» als Textdatei exportiert"), tone: .success)
                 dismiss()
             case let .failure(error):
                 if (error as? CocoaError)?.code != .userCancelled {
-                    model.report(error, fallback: "Der Export ist fehlgeschlagen.")
+                    model.report(error, fallback: String(localized: "Der Export ist fehlgeschlagen."))
                 }
             }
         }
@@ -170,9 +171,9 @@ struct TextExportSheet: View {
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
         if pasteboard.setString(text, forType: .string) {
-            model.toasts.show("Text kopiert", tone: .success)
+            model.toasts.show(String(localized: "Text kopiert"), tone: .success)
         } else {
-            model.toasts.show("Kopieren hat nicht geklappt. Markiere den Text und kopiere ihn von Hand.", tone: .danger)
+            model.toasts.show(String(localized: "Kopieren hat nicht geklappt. Markiere den Text und kopiere ihn von Hand."), tone: .danger)
         }
     }
 }

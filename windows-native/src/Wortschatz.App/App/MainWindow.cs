@@ -8,6 +8,7 @@ using Avalonia.Media;
 using Wortschatz.App.DesignSystem;
 using Wortschatz.App.Features;
 using Wortschatz.App.Services;
+using static Wortschatz.Core.CoreText;
 
 namespace Wortschatz.App;
 
@@ -39,6 +40,8 @@ public sealed class MainWindow : Window
         WindowStartupLocation = WindowStartupLocation.CenterScreen;
         RestoreFrame();
         WatchFrame();
+        // Screens or scaling changing while the app runs (monitor unplugged, issue #5).
+        _placement = new WindowPlacement(this);
         // No Windows title bar: a resizable border only, our own title bar on top (roles below let Windows treat it as
         // the caption: drag, double-click, Snap layouts on the maximise button).
         WindowDecorations = WindowDecorations.BorderOnly;
@@ -51,6 +54,8 @@ public sealed class MainWindow : Window
         }
         catch (Exception) { }
 
+        // Updates (Release builds of the Windows app only): the notice after an update must be there for the first sidebar.
+        AppUpdater.Shared.Start(model);
         _view = new MainView(model, TitleBar);
         _view.ChromeRebuilt += () => Background = WsTheme.B(WsTheme.P.Backdrop);
         Background = WsTheme.B(WsTheme.P.Backdrop);
@@ -59,14 +64,20 @@ public sealed class MainWindow : Window
         Deactivated += (_, _) => _view.HostActivityChanged(false);
         Closing += (_, e) =>
         {
-            if (!_view.CanQuit(Close))
+            // «Jetzt neu starten» (Einstellungen › Daten › Updates) closed the window: it holds only for this close; a
+            // question in between (unsaved changes) asks it again when it closes the window itself.
+            bool restart = AppUpdater.Shared.TakeRestartRequest();
+            if (!_view.CanQuit(restart ? () => AppUpdater.Shared.RestartToUpdate(this) : Close))
             {
                 e.Cancel = true;
                 return;
             }
-            Shutdown();
+            Shutdown(restart);
         };
     }
+
+    WindowPlacement? _placement;
+
 
     /// <summary>Rebuilds everything (after a theme change).</summary>
     public void Rebuild() => _view.Rebuild();
@@ -74,10 +85,14 @@ public sealed class MainWindow : Window
     /// <summary>Ctrl+Alt+S: hides or shows the sidebar.</summary>
     public void ToggleSidebar() => _view.ToggleSidebar();
 
-    void Shutdown()
+    void Shutdown(bool restart = false)
     {
         SaveFrame();
         _view.Shutdown();
+        // Everything is saved (CanQuit): a downloaded update takes this exe's place now (Mac: Sparkle installs on quit).
+        AppUpdater.Shared.InstallOnQuit(restart);
+        // The frame and what the closing screen stored (a flashcard deck) wait for a short delay: written now.
+        _model.Preferences.Flush();
     }
 
     // MARK: Window frame
@@ -86,9 +101,11 @@ public sealed class MainWindow : Window
     void RestoreFrame()
     {
         if (_model.Preferences.MainWindowFrame is not { } frame) return;
-        Width = Math.Max(MinWidth, frame.Width);
-        Height = Math.Max(MinHeight, frame.Height);
         var place = new PixelPoint(frame.X, frame.Y);
+        // Never larger than the screen it comes back on (it may have been closed on a larger or less scaled monitor).
+        var (width, height) = WindowPlacement.FitStartSize(this, place, frame.Width, frame.Height);
+        Width = Math.Max(MinWidth, width);
+        Height = Math.Max(MinHeight, height);
         // Only where a screen still is (a monitor may have been unplugged since).
         bool visible = Screens.All.Count == 0 || Screens.All.Any(sc => sc.WorkingArea.Contains(place + new PixelPoint(40, 20)));
         if (visible)
@@ -123,6 +140,8 @@ public sealed class MainWindow : Window
         base.OnPropertyChanged(change);
         // The last normal frame, to restore under a maximised window next time.
         if (change.Property == ClientSizeProperty || change.Property == WindowStateProperty) NoteNormalFrame();
+        // Back from the taskbar: the screens may have changed meanwhile.
+        if (change.Property == WindowStateProperty && change.OldValue is WindowState.Minimized) _placement?.CheckSoon();
     }
 
     void NoteNormalFrame()
@@ -146,10 +165,10 @@ public sealed class MainWindow : Window
         Grid.SetColumn(drag, 1);
         grid.Children.Add(drag);
         var caption = new StackPanel { Orientation = Orientation.Horizontal };
-        caption.Children.Add(CaptionButton(IconName.Minimize, "Minimieren", () => WindowState = WindowState.Minimized, WindowDecorationsElementRole.MinimizeButton));
-        caption.Children.Add(CaptionButton(WindowState == WindowState.Maximized ? IconName.Restore : IconName.Maximize, "Maximieren",
+        caption.Children.Add(CaptionButton(IconName.Minimize, L("Minimieren"), () => WindowState = WindowState.Minimized, WindowDecorationsElementRole.MinimizeButton));
+        caption.Children.Add(CaptionButton(WindowState == WindowState.Maximized ? IconName.Restore : IconName.Maximize, L("Maximieren"),
             () => WindowState = WindowState == WindowState.Maximized ? WindowState.Normal : WindowState.Maximized, WindowDecorationsElementRole.MaximizeButton));
-        caption.Children.Add(CaptionButton(IconName.Close, "Schliessen", Close, WindowDecorationsElementRole.CloseButton, close: true));
+        caption.Children.Add(CaptionButton(IconName.Close, L("Schliessen"), Close, WindowDecorationsElementRole.CloseButton, close: true));
         Grid.SetColumn(caption, 2);
         grid.Children.Add(caption);
         foreach (var c in new Control[] { drag, brand })

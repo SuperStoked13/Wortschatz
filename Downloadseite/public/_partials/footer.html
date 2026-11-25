@@ -7,6 +7,7 @@
         <a href="/checksums.txt">Prüfsummen</a>
         {{#site.contactEmail}}<a href="{{site.mailto}}">Kontakt</a>{{/site.contactEmail}}
         {{#site.login}}{{^login}}<form method="post" action="/logout"><button class="footer-logout" type="submit">Abmelden</button></form>{{/login}}{{/site.login}}
+        <a href="{{page.other}}" hreflang="en" lang="en" data-lang-switch="en">English</a>
       </nav>
       <p class="footer-copy">© {{site.year}} Wortschatz{{#site.operator}}, {{site.operator}}{{/site.operator}}</p>
     </div>

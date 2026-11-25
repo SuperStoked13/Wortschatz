@@ -6,6 +6,8 @@
 // to its project file.
 import PackageDescription
 
+let coreSettings: [SwiftSetting] = []
+
 let package = Package(
     name: "WortschatzCore",
     platforms: [.macOS(.v14)],
@@ -15,7 +17,8 @@ let package = Package(
     targets: [
         .target(
             name: "WortschatzCore",
-            path: "Sources/WortschatzCore"
+            path: "Sources/WortschatzCore",
+            swiftSettings: coreSettings
         ),
         .target(
             name: "WortschatzImport",
@@ -26,7 +29,8 @@ let package = Package(
             name: "WortschatzCoreTests",
             dependencies: ["WortschatzCore"],
             path: "Tests/WortschatzCoreTests",
-            resources: [.copy("Fixtures")]
+            resources: [.copy("Fixtures")],
+            swiftSettings: coreSettings
         ),
         .testTarget(
             name: "WortschatzImportTests",

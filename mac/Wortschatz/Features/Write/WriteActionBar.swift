@@ -21,9 +21,10 @@ struct WriteActionBar: View {
         }
     }
 
-    /// The countdown of the auto-advance that is still pending.
+    /// The countdown of the auto-advance that is still pending. Not for the short beat after a
+    /// copy is typed out (`CopyStep`): there it would only flicker.
     private var runningCountdown: StudyCountdown? {
-        guard let countdown, countdown.token == state.autoAdvance?.token else { return nil }
+        guard let countdown, countdown.token == state.autoAdvance?.token, state.phase != .copy else { return nil }
         return countdown
     }
 

@@ -7,7 +7,9 @@ using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Threading;
 using Wortschatz.App.DesignSystem;
+using Wortschatz.App.Services;
 using Wortschatz.Core;
+using static Wortschatz.Core.CoreText;
 
 namespace Wortschatz.App.Features.Overview;
 
@@ -18,16 +20,18 @@ namespace Wortschatz.App.Features.Overview;
 /// </summary>
 public sealed class OverviewScreen(AppModel model, MainView window) : Screen(model, window)
 {
+    /// <summary>Sorting by name stays Swiss German (the date follows the app's language, <see cref="DayLabel"/>).</summary>
     static readonly CultureInfo DeCh = CultureInfo.GetCultureInfo("de-CH");
 
     protected override Control Build()
     {
         var library = Model.Library;
         var now = DateTime.Now;
+        _shownClock = ClockText(now, library.Now, library);
         var content = new StackPanel { Spacing = AppDevice.IsPhone ? 18 : 26, Margin = AppDevice.IsPhone ? new Thickness(8, 4, 8, 24) : new Thickness(34, 14, 34, 34), MaxWidth = 1180 };
         if (library.IsEmpty)
         {
-            content.Children.Add(Header(now, "Schön, dass du da bist. Leg dein erstes Lernset an und starte direkt."));
+            content.Children.Add(Header(now, L("Schön, dass du da bist. Leg dein erstes Lernset an und starte direkt.")));
             content.Children.Add(EmptyLibrary());
             content.Children.Add(Steps());
             return Ui.Scroll(content);
@@ -44,18 +48,44 @@ public sealed class OverviewScreen(AppModel model, MainView window) : Screen(mod
     static Control Header(DateTime now, string lead)
     {
         var p = WsTheme.P;
-        var greeting = now.Hour switch { >= 5 and < 11 => "Guten Morgen", >= 11 and < 18 => "Guten Tag", _ => "Guten Abend" };
-        return Ui.V(4, Ui.Eyebrow(now.ToString("dddd, d. MMMM", DeCh)), Ui.Title(greeting, 34), Ui.Text(lead, 17, color: p.TextSecondary, wrap: TextWrapping.Wrap));
+        return Ui.V(4, Ui.Eyebrow(DayLabel(now)), Ui.Title(Greeting(now), 34), Ui.Text(lead, 17, color: p.TextSecondary, wrap: TextWrapping.Wrap));
+    }
+
+    static string Greeting(DateTime now) => now.Hour switch { >= 5 and < 11 => L("Guten Morgen"), >= 11 and < 18 => L("Guten Tag"), _ => L("Guten Abend") };
+
+    /// <summary>
+    /// What of the page follows the clock: the greeting, the date and when each set was last studied («vor 5 Minuten»,
+    /// on the cards and in the hero), worked out for the time <paramref name="nowMs"/>.
+    /// </summary>
+    string ClockText(DateTime now, double nowMs, LibrarySnapshot library)
+    {
+        var text = new System.Text.StringBuilder(Greeting(now)).Append('\n').Append(DayLabel(now));
+        foreach (var summary in library.Sets)
+            if (summary.Set.LastStudiedAt is { } last) text.Append('\n').Append(TimeUtil.RelativeTime(last, nowMs, Model.Store.TimeZone));
+        return text.ToString();
+    }
+
+    string? _shownClock;
+
+    /// <summary>
+    /// "Montag, 12. Oktober"; in English the weekday and the system's order of day and month ("Monday, October 12" or
+    /// "Monday, 12 October"; Mac: OverviewHeader.dayLabel with AppLanguage.formattingLocale).
+    /// </summary>
+    static string DayLabel(DateTime now)
+    {
+        var culture = AppLanguage.FormattingCulture;
+        string pattern = AppLanguage.Current == "en" ? "dddd, " + culture.DateTimeFormat.MonthDayPattern : "dddd, d. MMMM";
+        return now.ToString(pattern, culture);
     }
 
     /// <summary><c>leadText</c> of dashboard.js.</summary>
     static string LeadText(LibrarySnapshot library)
     {
         var streak = library.Stats.Streak;
-        if (streak.Today > 0) return $"Heute schon {Labels.Plural(streak.Today, "Antwort", "Antworten")} – weiter so!";
-        if (streak.Current > 0) return $"Lerne heute, damit deine Serie von {Labels.Plural(streak.Current, "Tag", "Tagen")} weiterläuft.";
-        if (library.Resume is not null) return "Mach dort weiter, wo du aufgehört hast.";
-        return "Bereit für ein paar Wörter? Wähle ein Lernset und leg los.";
+        if (streak.Today > 0) return L($"Heute schon {Labels.Plural(streak.Today, "Antwort", "Antworten")} – weiter so!");
+        if (streak.Current > 0) return L($"Lerne heute, damit deine Serie von {Labels.Plural(streak.Current, "Tag", "Tagen")} weiterläuft.");
+        if (library.Resume is not null) return L("Mach dort weiter, wo du aufgehört hast.");
+        return L("Bereit für ein paar Wörter? Wähle ein Lernset und leg los.");
     }
 
     Control EmptyLibrary()
@@ -63,9 +93,9 @@ public sealed class OverviewScreen(AppModel model, MainView window) : Screen(mod
         var p = WsTheme.P;
         WsButton[] actions =
         [
-            Ui.Primary("Erstes Lernset erstellen", () => Model.OpenEditor(), icon: IconName.Plus),
-            Ui.Secondary("Liste einfügen", () => Model.OpenEditor(startWithImport: true), IconName.Copy),
-            Ui.Secondary("Backup laden", () => _ = Settings.SettingsScreen.ImportBackup(Model, Window), IconName.Upload),
+            Ui.Primary(L("Erstes Lernset erstellen"), () => Model.OpenEditor(), icon: IconName.Plus),
+            Ui.Secondary(L("Liste einfügen"), () => Model.OpenEditor(startWithImport: true), IconName.Copy),
+            Ui.Secondary(L("Backup laden"), () => _ = Settings.SettingsScreen.ImportBackup(Model, Window), IconName.Upload),
         ];
         // Phone: the actions one under the other, across the card.
         if (AppDevice.IsPhone)
@@ -76,8 +106,8 @@ public sealed class OverviewScreen(AppModel model, MainView window) : Screen(mod
             }
         var body = Ui.V(14,
             Icons.Icon(IconName.Stack, 40, p.Accent),
-            Ui.Text("Noch keine Lernsets", 24, FontWeight.Bold),
-            Ui.Text("Erstelle dein erstes Lernset aus einer Vokabelliste – in wenigen Sekunden kannst du mit Lernen loslegen.", 15, color: p.TextSecondary, wrap: TextWrapping.Wrap),
+            Ui.Text(L("Noch keine Lernsets"), 24, FontWeight.Bold),
+            Ui.Text(L("Erstelle dein erstes Lernset aus einer Vokabelliste – in wenigen Sekunden kannst du mit Lernen loslegen."), 15, color: p.TextSecondary, wrap: TextWrapping.Wrap),
             AppDevice.IsPhone ? Ui.V(8, actions) : Ui.H(10, actions));
         body.MaxWidth = 620;
         body.HorizontalAlignment = HorizontalAlignment.Left;
@@ -86,10 +116,10 @@ public sealed class OverviewScreen(AppModel model, MainView window) : Screen(mod
 
     static (IconName Icon, string Title, string Text)[] StepTexts =>
     [
-        (IconName.Copy, "Liste einfügen", AppDevice.ReadsPhotos ? "Wortschatz erkennt Begriffe und Übersetzungen automatisch – auch aus Fotos und PDFs."
-            : "Wortschatz erkennt Begriffe und Übersetzungen automatisch – auch aus PDFs."),
-        (IconName.Sparkles, "Lernen", "Neue Begriffe kommen zuerst als Multiple Choice, danach schreibst du sie selbst – bis alles sitzt."),
-        (IconName.Trophy, "Fortschritt sehen", "Zweimal in Folge richtig – und ein Begriff gilt als gemeistert."),
+        (IconName.Copy, L("Liste einfügen"), AppDevice.ReadsPhotos ? L("Wortschatz erkennt Begriffe und Übersetzungen automatisch – auch aus Fotos und PDFs.")
+            : L("Wortschatz erkennt Begriffe und Übersetzungen automatisch – auch aus PDFs.")),
+        (IconName.Sparkles, L("Lernen"), L("Neue Begriffe kommen zuerst als Multiple Choice, danach schreibst du sie selbst – bis alles sitzt.")),
+        (IconName.Trophy, L("Fortschritt sehen"), L("Zweimal in Folge richtig – und ein Begriff gilt als gemeistert.")),
     ];
 
     /// <summary>The three "how it works" steps below the empty state, equally high (Mac: OverviewEmptyState's StepTile).</summary>
@@ -128,9 +158,16 @@ public sealed class OverviewScreen(AppModel model, MainView window) : Screen(mod
 
     DispatcherTimer? _minuteTimer;
 
-    /// <summary>Greeting, date and relative times stay current while the window stays open (Mac: TimelineView(.everyMinute)).</summary>
+    /// <summary>
+    /// Greeting, date and relative times stay current while the window stays open (Mac: TimelineView(.everyMinute)).
+    /// Until 25.11.2026 the minute rebuilt the page with the snapshot's old time: «vor 5 Minuten» stayed until the
+    /// library changed.
+    /// </summary>
     public override void Activate()
     {
+        // Back on the overview after a while (the snapshot is from the last change of the library): the times as of now.
+        var library = Model.Library;
+        if (ClockText(DateTime.Now, TimeUtil.NowMs(), library) != ClockText(DateTime.Now, library.Now, library)) Model.RefreshLibraryTime();
         base.Activate();
         _minuteTimer?.Stop();
         var now = DateTime.Now;
@@ -139,8 +176,12 @@ public sealed class OverviewScreen(AppModel model, MainView window) : Screen(mod
         _minuteTimer.Tick += (_, _) =>
         {
             _minuteTimer!.Interval = TimeSpan.FromMinutes(1);
-            // Not while the keyboard is on the page (a rebuild would drop the focus).
-            if (Model.Prompt is null && !View.IsKeyboardFocusWithin) Refresh();
+            // Only when a text that follows the clock changed (not every minute when everything was studied days ago):
+            // then with a snapshot of the time now. Not while the keyboard is on the page (a rebuild would drop the focus).
+            if (Model.Prompt is not null || View.IsKeyboardFocusWithin) return;
+            if (ClockText(DateTime.Now, TimeUtil.NowMs(), Model.Library) == _shownClock) return;
+            Model.RefreshLibraryTime();
+            Refresh();
         };
         _minuteTimer.Start();
     }
@@ -157,14 +198,18 @@ public sealed class OverviewScreen(AppModel model, MainView window) : Screen(mod
     {
         var p = WsTheme.P;
         var streak = stats.Streak;
-        var tiles = StatTile.Row(12,
-            StatTile.Create("Lernserie", $"{streak.Current}", IconName.Flame, streak.Current > 0 ? p.Flame : p.New.Fill, streak.Current == 1 ? "Tag" : "Tage",
+        // Phone: three tiles side by side are narrow – short labels keep each on one line (and the tiles low). Not
+        // IsWide: the overview is built before the first size arrives (ViewWidth still the PC default then).
+        bool phone = AppDevice.IsPhone;
+        var tiles = StatTile.Row(phone ? 8 : 12,
+            StatTile.Create(L("Lernserie"), $"{streak.Current}", IconName.Flame, streak.Current > 0 ? p.Flame : p.New.Fill, streak.Current == 1 ? L("Tag") : L("Tage"),
                 LibrarySidebar.StreakCaption(streak)),
-            StatTile.Create("Heute beantwortet", $"{streak.Today}", IconName.CheckCircle, streak.Today > 0 ? p.Accent : p.New.Fill, caption: $"Letzte 7 Tage: {stats.Week}"),
-            StatTile.Create("Begriffe gemeistert", $"{stats.Mastered}", IconName.Trophy, stats.Mastered > 0 ? p.Mastered.Fill : p.New.Fill,
-                caption: $"von {Labels.Plural(stats.Total, "Begriff", "Begriffen")}"));
-        if (streak.Longest > 0) ToolTip.SetTip(tiles.Children[0], $"Längste Serie: {Labels.Plural(streak.Longest, "Tag", "Tage")}");
-        ToolTip.SetTip(tiles.Children[2], "Ein Begriff gilt als gemeistert, wenn du ihn zweimal in Folge richtig beantwortest.");
+            StatTile.Create(phone ? L("Heute") : L("Heute beantwortet"), $"{streak.Today}", IconName.CheckCircle, streak.Today > 0 ? p.Accent : p.New.Fill,
+                caption: phone ? L($"7 Tage: {stats.Week}") : L($"Letzte 7 Tage: {stats.Week}")),
+            StatTile.Create(phone ? L("Gemeistert") : L("Begriffe gemeistert"), $"{stats.Mastered}", IconName.Trophy, stats.Mastered > 0 ? p.Mastered.Fill : p.New.Fill,
+                caption: L($"von {Labels.Plural(stats.Total, "Begriff", "Begriffen")}")));
+        if (streak.Longest > 0) ToolTip.SetTip(tiles.Children[0], L($"Längste Serie: {Labels.Plural(streak.Longest, "Tag", "Tage")}"));
+        ToolTip.SetTip(tiles.Children[2], L("Ein Begriff gilt als gemeistert, wenn du ihn zweimal in Folge richtig beantwortest."));
         return tiles;
     }
 
@@ -189,21 +234,21 @@ public sealed class OverviewScreen(AppModel model, MainView window) : Screen(mod
             if (resume.Mode == StudyMode.Learn && summary.Learn is { } learn)
             {
                 counts = new SetProgress(learn.Counts.Total, learn.Counts.Mastered, learn.Counts.Learning, learn.Counts.Fresh, 0);
-                eyebrow = "Weiterlernen · Lernen";
+                eyebrow = L("Weiterlernen · Lernen");
                 eyebrowIcon = IconName.Sparkles;
-                meta = StudyCopy.Join(StudyCopy.SubsetLabel(learn.Subset, "Ausgewählte Begriffe"), learn.RoundText, learn.MasteredText);
+                meta = StudyCopy.Join(StudyCopy.SubsetLabel(learn.Subset, L("Ausgewählte Begriffe")), learn.RoundText, learn.MasteredText);
                 progress = learn.ProgressValue;
-                action = "Weiterlernen";
+                action = L("Weiterlernen");
             }
             else
             {
                 var write = summary.Write!;
                 counts = summary.Stats;
-                eyebrow = "Weiterlernen · Schreiben";
+                eyebrow = L("Weiterlernen · Schreiben");
                 eyebrowIcon = IconName.Keyboard;
-                meta = StudyCopy.Join(write.RoundText, write.Counters.Total > 0 ? $"{write.Counters.Correct} von {write.Counters.Total} richtig" : null);
+                meta = StudyCopy.Join(write.RoundText, write.Counters.Total > 0 ? L($"{write.Counters.Correct} von {write.Counters.Total} richtig") : null);
                 progress = write.ProgressValue;
-                action = "Fortsetzen";
+                action = L("Fortsetzen");
             }
             actionIcon = IconName.Play;
         }
@@ -211,11 +256,11 @@ public sealed class OverviewScreen(AppModel model, MainView window) : Screen(mod
         {
             summary = library.Sets[0];
             counts = summary.Stats;
-            eyebrow = summary.Set.LastStudiedAt is not null ? "Zuletzt gelernt" : "Zuletzt bearbeitet";
+            eyebrow = summary.Set.LastStudiedAt is not null ? L("Zuletzt gelernt") : L("Zuletzt bearbeitet");
             eyebrowIcon = IconName.Clock;
             meta = StudyCopy.Terms(summary.Stats.Total) + " · " + (summary.Set.LastStudiedAt is { } last
-                ? TimeUtil.RelativeTime(last, library.Now, Model.Store.TimeZone) : "noch nicht gelernt");
-            action = "Öffnen";
+                ? TimeUtil.RelativeTime(last, library.Now, Model.Store.TimeZone) : L("noch nicht gelernt"));
+            action = L("Öffnen");
             actionIcon = IconName.ChevronRight;
         }
         else return null;
@@ -228,8 +273,8 @@ public sealed class OverviewScreen(AppModel model, MainView window) : Screen(mod
         if (progress is { } value)
         {
             var bar = new ProgressLine(value, p.Accent, AppDevice.IsPhone ? 200 : 320) { HorizontalAlignment = HorizontalAlignment.Left, Margin = new Thickness(0, 4, 0, 0) };
-            AutomationProperties.SetName(bar, "Fortschritt");
-            AutomationProperties.SetHelpText(bar, $"{(int)Math.Round(value * 100)} Prozent");
+            AutomationProperties.SetName(bar, L("Fortschritt"));
+            AutomationProperties.SetHelpText(bar, L($"{(int)Math.Round(value * 100)} Prozent"));
             text.Children.Add(bar);
         }
         text.VerticalAlignment = VerticalAlignment.Center;
@@ -281,7 +326,8 @@ public sealed class OverviewScreen(AppModel model, MainView window) : Screen(mod
 
     // MARK: Sets
 
-    static readonly (string Key, string Label)[] Sorts = [("recent", "Zuletzt gelernt"), ("name", "Name"), ("newest", "Neueste")];
+    /// <summary>The sort choices (computed: the labels follow the app's language).</summary>
+    static (string Key, string Label)[] Sorts => [("recent", L("Zuletzt gelernt")), ("name", L("Name")), ("newest", L("Neueste"))];
 
     Control SetGrid(LibrarySnapshot library)
     {
@@ -297,13 +343,17 @@ public sealed class OverviewScreen(AppModel model, MainView window) : Screen(mod
         var sortKey = Model.Preferences.OverviewSort;
         int sortIndex = Math.Max(0, Array.FindIndex(Sorts, s => s.Key == sortKey));
         var sort = new WsSegmented(Sorts.Select(s => s.Label).ToList(), sortIndex, 118);
-        ToolTip.SetTip(sort, "Sortieren nach");
+        ToolTip.SetTip(sort, L("Sortieren nach"));
         var grid = new AdaptiveGrid { MinItemWidth = 270, MaxItemWidth = 420, Spacing = 12 };
         void Fill()
         {
             grid.Children.Clear();
-            grid.Children.Add(NewSetCard());
+            // Phone: the big dashed card stood before one's own sets, as big as one of them (the + is in the bar
+            // already, 06.11.2026) – there it comes last, a slim row (with no sets yet it stays first and big).
+            bool slim = AppDevice.IsPhone && library.Sets.Count > 0;
+            if (!slim) grid.Children.Add(NewSetCard());
             foreach (var summary in Sorted(library.Sets, Model.Preferences.OverviewSort)) grid.Children.Add(SetCard(summary, library.Now));
+            if (slim) grid.Children.Add(NewSetCard(slim: true));
         }
         sort.SelectionChanged += i =>
         {
@@ -311,7 +361,7 @@ public sealed class OverviewScreen(AppModel model, MainView window) : Screen(mod
             Fill();
         };
         Fill();
-        var title = Ui.H(8, Ui.Text("Deine Lernsets", 20, FontWeight.Bold, font: WsTheme.Prompt), count);
+        var title = Ui.H(8, Ui.Text(L("Deine Lernsets"), 20, FontWeight.Bold, font: WsTheme.Prompt), count);
         if (AppDevice.IsPhone)
         {
             // Phone: the sort choice under the heading, across the width.
@@ -336,16 +386,34 @@ public sealed class OverviewScreen(AppModel model, MainView window) : Screen(mod
     }
 
     /// <summary>The dashed "Neues Lernset" card at the start of the grid (Mac: NewSetCard).</summary>
-    Control NewSetCard()
+    Control NewSetCard(bool slim = false)
     {
         var p = WsTheme.P;
+        if (slim)
+        {
+            var row = Ui.H(10, Icons.Icon(IconName.Plus, 18, p.AccentText, 2.4), Ui.Text(L("Neues Lernset"), 15, FontWeight.SemiBold, p.AccentText));
+            row.HorizontalAlignment = HorizontalAlignment.Center;
+            row.VerticalAlignment = VerticalAlignment.Center;
+            var frame = new Grid { MinHeight = 52 };
+            frame.Children.Add(new Avalonia.Controls.Shapes.Rectangle
+            {
+                RadiusX = 16,
+                RadiusY = 16,
+                StrokeThickness = 1.5,
+                Stroke = new SolidColorBrush(p.Accent, 0.5),
+                StrokeDashArray = [4, 3.3],
+                Fill = new SolidColorBrush(p.Accent, 0.04),
+            });
+            frame.Children.Add(row);
+            return Ui.Clickable(frame, () => Model.OpenEditor(), L("Neues Lernset"), 16, Colors.Transparent, Palette.Hex(Ui.Rgb(p.Accent), 0.08));
+        }
         var plus = new Border { Width = 44, Height = 44, CornerRadius = new CornerRadius(22), Background = WsTheme.B(p.AccentSoft), Child = Icons.Icon(IconName.Plus, 20, p.AccentText, 2.4) };
         plus.Child.HorizontalAlignment = HorizontalAlignment.Center;
         plus.Child.VerticalAlignment = VerticalAlignment.Center;
         plus.HorizontalAlignment = HorizontalAlignment.Center;
-        var title = Ui.Text("Neues Lernset", 15.5, FontWeight.Bold);
+        var title = Ui.Text(L("Neues Lernset"), 15.5, FontWeight.Bold);
         title.HorizontalAlignment = HorizontalAlignment.Center;
-        var note = Ui.Text(AppDevice.ReadsPhotos ? "Liste einfügen oder Datei, PDF oder Foto importieren" : "Liste einfügen oder Datei oder PDF importieren", 13, color: p.TextSecondary, wrap: TextWrapping.Wrap, align: TextAlignment.Center);
+        var note = Ui.Text(AppDevice.ReadsPhotos ? L("Liste einfügen oder Datei, PDF oder Foto importieren") : L("Liste einfügen oder Datei oder PDF importieren"), 13, color: p.TextSecondary, wrap: TextWrapping.Wrap, align: TextAlignment.Center);
         note.HorizontalAlignment = HorizontalAlignment.Center;
         var body = Ui.V(10, plus, Ui.V(2, title, note));
         body.VerticalAlignment = VerticalAlignment.Center;
@@ -362,11 +430,11 @@ public sealed class OverviewScreen(AppModel model, MainView window) : Screen(mod
         });
         body.Margin = new Thickness(18);
         dashed.Children.Add(body);
-        var button = Ui.Clickable(dashed, () => Model.OpenEditor(), "Neues Lernset", 20, Colors.Transparent, Palette.Hex(Ui.Rgb(p.Accent), 0.08));
+        var button = Ui.Clickable(dashed, () => Model.OpenEditor(), L("Neues Lernset"), 20, Colors.Transparent, Palette.Hex(Ui.Rgb(p.Accent), 0.08));
         button.VerticalAlignment = VerticalAlignment.Stretch;
         button.VerticalContentAlignment = VerticalAlignment.Stretch;
         dashed.VerticalAlignment = VerticalAlignment.Stretch;
-        ToolTip.SetTip(button, "Neues Lernset (Ctrl+N)");
+        ToolTip.SetTip(button, L("Neues Lernset (Ctrl+N)"));
         return button;
     }
 
@@ -391,16 +459,17 @@ public sealed class OverviewScreen(AppModel model, MainView window) : Screen(mod
         top.Children.Add(gauge);
         var upper = Ui.V(10, top, Ui.StatusBar(summary.Stats.Mastered, summary.Stats.Learning, summary.Stats.Total, 6, null, p.Dark ? p.Track : Palette.Hex(0xDDE0E8)));
         var open = Ui.Clickable(upper, () => Model.OpenSet(set.Id), set.Title, 12, Colors.Transparent, Colors.Transparent);
-        ToolTip.SetTip(open, "Öffnet das Lernset");
+        ToolTip.SetTip(open, L("Öffnet das Lernset"));
         var counts = summary.Stats;
-        AutomationProperties.SetHelpText(open, $"{StudyCopy.Terms(counts.Total)}, {counts.Mastered} gemeistert, {counts.Learning} am Lernen, {counts.Fresh} neu. Öffnet das Lernset");
+        // Mac: the value "52 Begriffe, 3 gemeistert, 2 am Lernen, 47 neu" and the hint "Öffnet das Lernset".
+        AutomationProperties.SetHelpText(open, $"{StudyCopy.Terms(counts.Total)}, {L($"{counts.Mastered} gemeistert, {counts.Learning} am Lernen, {counts.Fresh} neu")}. {L("Öffnet das Lernset")}");
 
         WsButton quick = summary.Learn is not null
-            ? Ui.Primary("Weiterlernen", () => Model.Study(set.Id, StudyMode.Learn), null, IconName.Play, 34)
-            : Ui.Secondary("Lernen", () => Model.Study(set.Id, StudyMode.Learn), IconName.Sparkles, height: 34);
+            ? Ui.Primary(L("Weiterlernen"), () => Model.Study(set.Id, StudyMode.Learn), null, IconName.Play, 34)
+            : Ui.Secondary(L("Lernen"), () => Model.Study(set.Id, StudyMode.Learn), IconName.Sparkles, height: 34);
         quick.Chrome.Padding = new Thickness(14, 0);
         quick.IsEnabled = !summary.IsEmpty;
-        AutomationProperties.SetHelpText(quick, summary.Learn is not null ? $"{set.Title} weiterlernen" : $"{set.Title} lernen");
+        AutomationProperties.SetHelpText(quick, summary.Learn is not null ? L($"{set.Title} weiterlernen") : L($"{set.Title} lernen"));
         var bottom = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto"), ColumnSpacing = 8 };
         var status = StatusLabel(summary, now);
         status.VerticalAlignment = VerticalAlignment.Center;
@@ -416,10 +485,10 @@ public sealed class OverviewScreen(AppModel model, MainView window) : Screen(mod
             Background = WsTheme.B(p.Card),
             BorderBrush = WsTheme.B(p.Hairline),
             BorderThickness = new Thickness(1),
-            ContextMenu = SetActions.Menu(Model, Window, summary, includesStudy: true),
         };
         card.PointerEntered += (_, _) => card.BorderBrush = WsTheme.B(Palette.Hex(Ui.Rgb(p.Accent), 0.45));
         card.PointerExited += (_, _) => card.BorderBrush = WsTheme.B(p.Hairline);
+        SetActions.AttachMenu(card, Model, Window, summary, includesStudy: true);
         return card;
     }
 
@@ -440,15 +509,15 @@ public sealed class OverviewScreen(AppModel model, MainView window) : Screen(mod
             return row;
         }
         Control Dot() => new Border { Width = 7, Height = 7, CornerRadius = new CornerRadius(4), Background = WsTheme.B(p.Accent) };
-        if (summary.Learn is { } learn) return Line(Dot(), learn.ShortDetail, p.AccentText, FontWeight.Medium, $"Lernen: {learn.Detail}");
-        if (summary.Write is { } write) return Line(Dot(), $"Schreiben · {write.ShortDetail}", p.AccentText, FontWeight.Medium, $"Schreiben: {write.RoundText}");
-        if (summary.IsAllMastered) return Line(Icons.Icon(IconName.CheckCircle, 15, p.Mastered.Text, 2), "Alles gemeistert", p.Mastered.Text, FontWeight.Normal);
+        if (summary.Learn is { } learn) return Line(Dot(), learn.ShortDetail, p.AccentText, FontWeight.Medium, L($"Lernen: {learn.Detail}"));
+        if (summary.Write is { } write) return Line(Dot(), L($"Schreiben · {write.ShortDetail}"), p.AccentText, FontWeight.Medium, L($"Schreiben: {write.RoundText}"));
+        if (summary.IsAllMastered) return Line(Icons.Icon(IconName.CheckCircle, 15, p.Mastered.Text, 2), L("Alles gemeistert"), p.Mastered.Text, FontWeight.Normal);
         if (summary.Set.LastStudiedAt is { } last)
         {
             var when = TimeUtil.RelativeTime(last, now, Model.Store.TimeZone);
-            return Line(Icons.Icon(IconName.Clock, 15, p.TextSecondary, 2), StudyCopy.Capitalized(when), p.TextSecondary, FontWeight.Normal, $"Zuletzt gelernt {when}");
+            return Line(Icons.Icon(IconName.Clock, 15, p.TextSecondary, 2), StudyCopy.Capitalized(when), p.TextSecondary, FontWeight.Normal, L($"Zuletzt gelernt {when}"));
         }
-        return Line(Icons.Icon(IconName.Sparkles, 15, p.TextSecondary, 2), "Noch nicht gelernt", p.TextSecondary, FontWeight.Normal);
+        return Line(Icons.Icon(IconName.Sparkles, 15, p.TextSecondary, 2), L("Noch nicht gelernt"), p.TextSecondary, FontWeight.Normal);
     }
 
     public override bool HandleKey(KeyEventArgs e, bool isRepeat)

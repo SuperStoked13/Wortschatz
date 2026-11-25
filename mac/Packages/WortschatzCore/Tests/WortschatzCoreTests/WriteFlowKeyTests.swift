@@ -97,7 +97,8 @@ struct WriteFlowKeyTests {
         d = driver(copy: true)
         d.answer("x")
         out.append(Snapshot("copy", d))
-        d.type("le chat")
+        // Accepted without its article (typed out as shown, the copy would continue by itself).
+        d.type("chat")
         out.append(Snapshot("copyTypedCorrect", d))
         d = driver(copy: true)
         d.press(.optionReturn)
@@ -456,7 +457,9 @@ struct WriteFlowKeyTests {
         }
         if !after.phase.isCard { check(after.input.isEmpty, "no input outside the card") }
         if after.autoAdvance != nil {
-            check(after.phase == .feedback(.correct) && !after.isBlocked, "timer only after a correct answer")
+            check(
+                (after.phase == .feedback(.correct) || after.phase == .copy) && !after.isBlocked,
+                "timer only after a correct answer or a typed-out copy")
         }
         if let pending = after.pending {
             check(after.phase.isMiss && pending.qid == after.question?.qid, "open miss on screen")
@@ -522,7 +525,8 @@ struct WriteFlowKeyTests {
         // The walk got around.
         #expect(answered >= 5)
         #expect(changes >= 80, "only \(changes) events changed the state")
-        #expect(visited.count >= 5)
+        // A typed-out copy waits for its beat (or Return), so some walks reach no fifth phase.
+        #expect(visited.count >= 4, "only \(visited)")
         #expect(dialogs > 0)
         #expect(visited.contains(.question) && visited.contains(.feedback(.correct)))
         #expect(visited.contains { $0.isMiss })

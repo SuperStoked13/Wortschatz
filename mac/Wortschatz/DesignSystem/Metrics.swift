@@ -36,8 +36,6 @@ nonisolated enum LayoutMetrics {
     static let contentWidth: CGFloat = 1080
     /// Minimum height of a multiple-choice tile.
     static let choiceTileMinHeight: CGFloat = 84
-    /// Minimum height of the study card.
-    static let studyCardMinHeight: CGFloat = 260
 
     /// Space above the study card (Lernen, Schreiben): a little below the toolbar in tall
     /// windows, close to it in short ones.
@@ -109,5 +107,55 @@ extension View {
     /// `.animation(_:value:)` that turns into a short cross-fade under Reduce Motion.
     func motionAnimation<V: Equatable>(_ animation: Animation = Motion.spring, value: V) -> some View {
         modifier(MotionAnimationModifier(animation: animation, value: value))
+    }
+}
+
+// MARK: - Study screens grow with the window
+
+extension EnvironmentValues {
+    /// How much bigger the study screens (Lernen, Multiple Choice, Schreiben, Karteikarten) draw
+    /// their main parts than designed: 1 at the smallest window, more where there is room
+    /// (`StudyScale`). Applied to font sizes, the column width and the answer tiles themselves,
+    /// so text stays sharp (a `scaleEffect` would scale it as a picture).
+    @Entry var studyScale: CGFloat = 1
+}
+
+/// Windows grows its study screens as a whole (`MainView.StudyScale`); the Mac grows their main
+/// sizes by the same kind of factor (Anthony, 25.11.2026: "a bit bigger, there's room").
+nonisolated enum StudyScale {
+    /// The space the study screens were designed for (the smallest window without toolbar).
+    static let designSize = CGSize(width: 980, height: 600)
+    /// No bigger than this, also on a large screen.
+    static let maximum: CGFloat = 1.2
+
+    /// The factor for a study screen of `size`: in steps of 0.05 (no new layout for every point
+    /// a window is resized by), at least 1.
+    static func factor(for size: CGSize) -> CGFloat {
+        guard size.width > 0, size.height > 0 else { return 1 }
+        let fit = min(size.width / designSize.width, size.height / designSize.height)
+        return min(maximum, max(1, (fit * 20).rounded(.down) / 20))
+    }
+
+    /// Widths (the study column, the flashcard) grow half as much as text and heights, so
+    /// nothing gets stretched (Anthony, 25.11.2026: the flashcards were too big).
+    static func widthFactor(_ scale: CGFloat) -> CGFloat {
+        1 + (scale - 1) / 2
+    }
+}
+
+private struct StudyScaleProvider: ViewModifier {
+    @State private var scale: CGFloat = 1
+
+    func body(content: Content) -> some View {
+        content
+            .environment(\.studyScale, scale)
+            .onGeometryChange(for: CGFloat.self) { StudyScale.factor(for: $0.size) } action: { scale = $0 }
+    }
+}
+
+extension View {
+    /// A study screen's stage: its content grows with the space it has (`StudyScale`).
+    func studyScaled() -> some View {
+        modifier(StudyScaleProvider())
     }
 }

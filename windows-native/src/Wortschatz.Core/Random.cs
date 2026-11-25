@@ -30,8 +30,14 @@ public static class Rand
     /// <summary>JS <c>seed &gt;&gt;&gt; 0</c> for any integer seed.</summary>
     public static RNG Mulberry32(long seed) => Mulberry32(unchecked((uint)seed));
 
-    /// <summary>The system random source (<c>Math.random</c>).</summary>
-    public static RNG SystemRNG() => () => Random.Shared.NextDouble();
+    /// <summary>The system random source (<c>Math.random</c>), unless <see cref="Fixed"/> stands in for it.</summary>
+    public static RNG SystemRNG() => Fixed ?? (() => Random.Shared.NextDouble());
+
+    /// <summary>
+    /// A seeded source every engine takes instead of the system's (null: random). The snapshot tool sets it: every run
+    /// asks the same questions in the same order, so two runs draw the same pictures and a change can be compared.
+    /// </summary>
+    public static RNG? Fixed { get; set; }
 }
 
 /// <summary>Port of IDGen.swift (src/lib/id.js): random, URL-safe identifiers.</summary>

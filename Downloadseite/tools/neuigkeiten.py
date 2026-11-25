@@ -72,6 +72,47 @@ def items_of(lines, start, end):
     return items
 
 
+KINDS_EN = {'neu': 'New', 'verbessert': 'Improved', 'behoben': 'Fixed'}
+EN_LINE = re.compile(r'^\s*EN:\s*(.*)$')
+
+
+def changes_of(path, version, platform):
+    """[(deutsch, englisch)] der Einträge für platform ('mac' oder 'windows') im Abschnitt «## <version> – …», ohne
+    die Plattform in Klammern («Neu (Mac): …» → «Neu: …»). Für die Updates der Apps (appcast.py, windows_update.py).
+    Eine Version, die keine Zahl ist (ein Tag wie «beta»), hat keine."""
+    if not re.fullmatch(r'\d+(?:\.\d+){0,3}', version):
+        return []
+    with open(path, encoding='utf-8') as handle:
+        lines = handle.read().split('\n')
+    section = next(
+        (s for s in sections(lines)
+         if VERSION.match(s[2]) and version_key(VERSION.match(s[2]).group(1)) == version_key(version)),
+        None)
+    if section is None:
+        return []
+    changes = []
+    for item in items_of(lines, section[0], section[1]):
+        platforms = platforms_of(item[0])
+        if platforms and platform not in platforms:
+            continue
+        match = KIND.match(item[0])
+        kind = match.group(1) if match else ''
+        text_de = item[0][match.end():].strip() if match else ITEM.sub('', item[0]).strip()
+        text_en = None
+        for line in item[1:]:
+            en = EN_LINE.match(line)
+            if en:
+                text_en = en.group(1).strip()
+            elif text_en is None:
+                text_de += ' ' + line.strip()
+            else:
+                text_en += ' ' + line.strip()
+        prefix_de = f'{kind}: ' if kind else ''
+        prefix_en = f'{KINDS_EN.get(kind.lower(), kind)}: ' if kind else ''
+        changes.append((prefix_de + text_de, prefix_en + (text_en or text_de)))
+    return changes
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument('version')

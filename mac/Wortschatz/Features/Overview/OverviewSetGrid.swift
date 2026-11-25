@@ -9,9 +9,9 @@ enum OverviewSort: String, CaseIterable, Identifiable {
 
     var label: String {
         switch self {
-        case .recent: "Zuletzt gelernt"
-        case .name: "Name"
-        case .newest: "Neueste"
+        case .recent: String(localized: "Zuletzt gelernt")
+        case .name: String(localized: "Name", comment: "Sort the sets by title")
+        case .newest: String(localized: "Neueste")
         }
     }
 
@@ -168,9 +168,10 @@ private struct CardStatusLabel: View {
     @ViewBuilder
     private var content: some View {
         if let learn = summary.learn {
-            running(learn.shortDetail, full: "Lernen: \(learn.detail)")
+            running(learn.shortDetail, full: String(localized: "Lernen: \(learn.detail)"))
         } else if let write = summary.write {
-            running("Schreiben · \(write.shortDetail)", full: "Schreiben: \(write.roundText)")
+            running(
+                String(localized: "Schreiben · \(write.shortDetail)"), full: String(localized: "Schreiben: \(write.roundText)"))
         } else if summary.isAllMastered {
             Label("Alles gemeistert", systemImage: "checkmark.circle.fill")
                 .foregroundStyle(Theme.mastered.text)

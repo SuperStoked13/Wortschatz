@@ -17,48 +17,29 @@ final class SetEditorModel {
         case edit(setID: String)
     }
 
-    /// How imported cards join the list.
-    enum ApplyMode: Sendable {
-        case replace, append
-    }
-
     /// A question the sheet shows as an alert.
     enum Prompt: Identifiable, Equatable {
-        /// "Karten übernehmen": the list has cards already (Anhängen / Ersetzen).
-        case applyImport(cards: [ParsedCard], existing: Int, keepsProgress: Bool)
-        /// Saving while recognised pairs still wait in the import box.
-        case pendingImport(count: Int)
         /// Esc with unsaved changes.
         case discard(isEditing: Bool)
 
         var id: String {
             switch self {
-            case .applyImport: "apply"
-            case .pendingImport: "pending"
             case .discard: "discard"
             }
         }
 
         var title: String {
             switch self {
-            case .applyImport: "Karten übernehmen"
-            case .pendingImport: "Liste noch nicht übernommen"
-            case .discard: "Änderungen verwerfen?"
+            case .discard: String(localized: "Änderungen verwerfen?")
             }
         }
 
         var message: String {
             switch self {
-            case let .applyImport(cards, existing, keepsProgress):
-                let question = "Dein Lernset enthält schon \(Labels.plural(existing, "Karte", "Karten")). Möchtest du die \(Labels.plural(cards.count, "neue Karte", "neuen Karten")) anhängen oder die bisherigen ersetzen?"
-                return keepsProgress ? "\(question)\n\nBeim Ersetzen bleibt der Lernfortschritt für gleiche Begriffe erhalten." : question
-            case let .pendingImport(count):
-                let waiting = count == 1 ? "wartet noch 1 erkanntes Paar" : "warten noch \(count) erkannte Paare"
-                return "Im Importfeld \(waiting). Sollen sie vor dem Speichern angehängt werden?"
             case let .discard(isEditing):
                 return isEditing
-                    ? "Deine Änderungen an diesem Lernset sind noch nicht gespeichert und gehen verloren."
-                    : "Dein neues Lernset ist noch nicht gespeichert und geht verloren."
+                    ? String(localized: "Deine Änderungen an diesem Lernset sind noch nicht gespeichert und gehen verloren.")
+                    : String(localized: "Dein neues Lernset ist noch nicht gespeichert und geht verloren.")
             }
         }
     }
@@ -107,7 +88,9 @@ final class SetEditorModel {
     private(set) var details: String
     private(set) var termLang: Lang
     private(set) var defLang: Lang
-    /// The learner picked the language (an existing set's languages count as picked).
+    /// The learner picked the language (an existing set's languages count as picked). A new
+    /// set starts with neither: "Automatisch" until the import recognises the languages, or
+    /// until saving looks at the cards (`resolvedLanguages`).
     private(set) var termTouched: Bool
     private(set) var defTouched: Bool
     /// The picker was filled from the recognised list ("Automatisch erkannt").
@@ -135,6 +118,9 @@ final class SetEditorModel {
     @ObservationIgnored private var spellingTask: Task<Void, Never>?
     @ObservationIgnored private let speller = VocabSpellChecker.shared
     @ObservationIgnored private var undoRecords: [UndoRecord] = []
+    /// What the learner changed in cards that come from the import box, by their pair
+    /// (`importKey`), so a new parse (another Trennung, "Seiten tauschen", more text) keeps it.
+    @ObservationIgnored private var importEdits: [String: ImportEdit] = [:]
     @ObservationIgnored private var requestCounter = 0
 
     init(app: AppModel, request: EditorRequest) {
@@ -145,7 +131,8 @@ final class SetEditorModel {
         mode = original.map { .edit(setID: $0.id) } ?? .create
         title = original?.title ?? ""
         details = original?.description ?? ""
-        termLang = original?.termLang ?? .fr
+        // New sets: "Automatisch" (Anthony, 25.11.2026); `.other` until something is recognised.
+        termLang = original?.termLang ?? .other
         defLang = original?.defLang ?? .de
         termTouched = original != nil
         defTouched = original != nil
@@ -155,6 +142,7 @@ final class SetEditorModel {
         baseline = fingerprint()
         importPanel.languages = { [weak self] in self?.importLanguages ?? ImportLanguages() }
         importPanel.onDetected = { [weak self] result in self?.detected(result) }
+        importPanel.onResult = { [weak self] result in self?.syncImport(result) }
         importPanel.onFileName = { [weak self] name in self?.suggestTitle(fromFileName: name) }
         checkDuplicates()
         checkSpelling()
@@ -163,8 +151,12 @@ final class SetEditorModel {
     // MARK: Derived
 
     var isEditing: Bool { mode != .create }
-    var heading: String { isEditing ? "Lernset bearbeiten" : "Neues Lernset" }
+    var heading: String { isEditing ? String(localized: "Lernset bearbeiten") : String(localized: "Neues Lernset") }
     var saveLabel: String { SetEditorCopy.saveLabel(isEditing: isEditing) }
+
+    /// "Automatisch": the side has no language yet (neither picked nor recognised).
+    var termIsAuto: Bool { !termTouched && !termDetected }
+    var defIsAuto: Bool { !defTouched && !defDetected }
 
     var importLanguages: ImportLanguages {
         ImportLanguages(termLang: termLang, defLang: defLang, termTouched: termTouched, defTouched: defTouched)
@@ -204,8 +196,6 @@ final class SetEditorModel {
         !isClosed && (fingerprint() != baseline || importPanel.hasText)
     }
 
-    private var isListEmpty: Bool { !rows.contains(where: \.isFilled) }
-
     // MARK: Title, description, languages
 
     func setTitle(_ value: String) {
@@ -238,6 +228,19 @@ final class SetEditorModel {
         details = String(value.prefix(SetEditorCopy.descriptionLimit))
     }
 
+    /// "Automatisch" in a language picker: the recognition decides again.
+    func setTermAuto() {
+        termTouched = false
+        termDetected = false
+        importPanel.reparse()
+    }
+
+    func setDefAuto() {
+        defTouched = false
+        defDetected = false
+        importPanel.reparse()
+    }
+
     func setTermLang(_ lang: Lang) {
         termTouched = true
         termDetected = false
@@ -256,11 +259,17 @@ final class SetEditorModel {
         checkSpelling()
     }
 
-    /// "Begriffe und Definitionen tauschen": languages and every row (undoable).
+    /// "Begriffe und Definitionen tauschen": languages and every row (undoable). The cards of
+    /// the import box turn with them: its recognition is turned too.
     func flipSides() {
-        undoable("Seiten tauschen", toast: "Begriffe und Definitionen getauscht", systemImage: "arrow.left.arrow.right") {
-            termTouched = true
-            defTouched = true
+        undoable(
+            String(localized: "Seiten tauschen"), toast: String(localized: "Begriffe und Definitionen getauscht"),
+            systemImage: "arrow.left.arrow.right", includesSwap: true
+        ) {
+            let wasAuto = (term: termIsAuto, def: defIsAuto)
+            let swappedBefore = importPanel.result?.swapped
+            termTouched = !wasAuto.def
+            defTouched = !wasAuto.term
             termDetected = false
             defDetected = false
             (termLang, defLang) = (defLang, termLang)
@@ -268,19 +277,27 @@ final class SetEditorModel {
                 (row.term, row.definition) = (row.definition, row.term)
                 row.flags = SetEditorCopy.swapped(row.flags)
             }
+            importPanel.reparse()
+            // The new languages may already turn the recognition; if not, "Seiten tauschen" does.
+            if let swappedBefore, let after = importPanel.result?.swapped, after == swappedBefore {
+                importPanel.toggleSwap()
+            }
         }
         checkDuplicates()
         checkSpelling()
-        importPanel.reparse()
     }
 
     /// Recognised languages fill the pickers the learner has not chosen (`onDetected`).
     private func detected(_ result: ParseResult) {
-        let nextTerm = !termTouched && SetEditorCopy.isKnown(result.termLang) ? result.termLang : termLang
-        let nextDef = !defTouched && SetEditorCopy.isKnown(result.defLang) ? result.defLang : defLang
-        guard nextTerm != nextDef, nextTerm != termLang || nextDef != defLang else { return }
-        if nextTerm != termLang { termDetected = true }
-        if nextDef != defLang { defDetected = true }
+        let termKnown = !termTouched && SetEditorCopy.isKnown(result.termLang)
+        let defKnown = !defTouched && SetEditorCopy.isKnown(result.defLang)
+        let nextTerm = termKnown ? result.termLang : termLang
+        let nextDef = defKnown ? result.defLang : defLang
+        guard nextTerm != nextDef else { return }
+        // Recognised also when it is the language the picker already had (German).
+        if termKnown { termDetected = true }
+        if defKnown { defDetected = true }
+        guard nextTerm != termLang || nextDef != defLang else { return }
         termLang = nextTerm
         defLang = nextDef
         checkSpelling()
@@ -324,13 +341,15 @@ final class SetEditorModel {
         if term { row.term = value } else { row.definition = value }
         if !row.flags.isEmpty { row.flags = [] }
         if row.isInvalid, row.isComplete || !row.isFilled { row.isInvalid = false }
+        noteImportEdit(row)
         if term { scheduleDuplicates() }
         scheduleSpelling()
     }
 
     func toggleStar(_ row: SetEditorRow) {
         row.starred.toggle()
-        Announcer.announce(row.starred ? "Markiert" : "Markierung entfernt")
+        noteImportEdit(row)
+        Announcer.announce(row.starred ? String(localized: "Markiert") : String(localized: "Markierung entfernt"))
     }
 
     /// "Karte hinzufügen" (and Return / Tab at the end of the list).
@@ -349,13 +368,14 @@ final class SetEditorModel {
         guard let index = rows.firstIndex(where: { $0.id == row.id }) else { return }
         let change = {
             self.rows.remove(at: index)
+            if let key = row.importKey { self.setImportEdit(.removed, for: key) }
             if self.rows.isEmpty { self.rows.append(SetEditorRow()) }
         }
         if row.isFilled {
-            undoable("Karte löschen", toast: "Karte gelöscht", systemImage: "trash", change)
+            undoable(String(localized: "Karte löschen"), toast: String(localized: "Karte gelöscht"), systemImage: "trash", change)
         } else {
             change()
-            Announcer.announce("Karte gelöscht")
+            Announcer.announce(String(localized: "Karte gelöscht"))
         }
         scheduleDuplicates()
         // Keyboard users keep working at the same position.
@@ -405,6 +425,7 @@ final class SetEditorModel {
         guard rows.count > 1, !row.isFilled, let index = rows.firstIndex(where: { $0.id == row.id }) else { return false }
         let previous = index > 0 ? rows[index - 1] : nil
         rows.remove(at: index)
+        if let key = row.importKey { setImportEdit(.removed, for: key) }
         scheduleDuplicates()
         if let previous {
             requestFocus(.definition(previous.id))
@@ -419,12 +440,14 @@ final class SetEditorModel {
         row.definition = definition
         row.flags = []
         row.isInvalid = false
+        noteImportEdit(row)
         requestFocus(.definition(row.id))
         scheduleDuplicates()
         scheduleSpelling()
     }
 
-    /// A whole list pasted into a field goes to the import box (`onPasteList`).
+    /// A whole list pasted into a field goes to the import box (`onPasteList`); its pairs come
+    /// into the cards from there.
     private func divertList(_ text: String) {
         importPanel.setText(text, append: true)
         toasts.show(SetEditorCopy.listDiverted, systemImage: "sparkles")
@@ -439,17 +462,6 @@ final class SetEditorModel {
         var rows = rows
         while rows.count < SetEditorCopy.minimumRows { rows.append(SetEditorRow()) }
         return rows
-    }
-
-    private func setRows(_ newRows: [SetEditorRow]) {
-        rows = Self.padded(newRows)
-    }
-
-    /// Appends after the last non-empty row (trailing empty rows are reused).
-    private func appendRows(_ newRows: [SetEditorRow]) {
-        var kept = rows
-        while let last = kept.last, !last.isFilled { kept.removeLast() }
-        rows = Self.padded(kept + newRows)
     }
 
     // MARK: Duplicates
@@ -522,11 +534,13 @@ final class SetEditorModel {
         guard range.location != NSNotFound else { return }
         let corrected = text.replacingCharacters(in: range, with: replacement)
         undoable(
-            "Tippfehler korrigieren", toast: "«\(issue.word)» durch «\(replacement)» ersetzt", tone: .success,
+            String(localized: "Tippfehler korrigieren"), toast: String(localized: "«\(issue.word)» durch «\(replacement)» ersetzt"),
+            tone: .success,
             systemImage: "textformat.abc"
         ) {
             if isTerm { row.term = corrected } else { row.definition = corrected }
             if !row.flags.isEmpty { row.flags = [] }
+            noteImportEdit(row)
         }
         if isTerm { checkDuplicates() }
         checkSpelling()
@@ -536,117 +550,155 @@ final class SetEditorModel {
     func ignoreSpelling(_ issue: SpellingIssue, isTerm: Bool) {
         speller.ignore(issue.word, lang: isTerm ? termLang : defLang)
         checkSpelling()
-        importPanel.spellingDidChange()
-        Announcer.announce("«\(issue.word)» wird nicht mehr als Tippfehler markiert")
+        Announcer.announce(String(localized: "«\(issue.word)» wird nicht mehr als Tippfehler markiert"))
     }
 
     // MARK: Import
 
-    /// "N Karten übernehmen": replaces an empty list, else asks Anhängen / Ersetzen.
-    func applyImport() {
-        guard prompt == nil else { return }
-        let cards = importPanel.pendingCards()
-        guard importPanel.hasText, !cards.isEmpty else { return }
-        let existing = stats.filled
-        if existing > 0 {
-            prompt = .applyImport(cards: cards, existing: existing, keepsProgress: isEditing)
-        } else {
-            apply(cards, mode: .replace)
+    /// A learner's change to a card that came from the import box.
+    enum ImportEdit: Equatable {
+        case changed(term: String, definition: String, starred: Bool)
+        case removed
+    }
+
+    /// The identity of a recognised pair: term and definition as the parser made them, and
+    /// which of several equal pairs it is (the parser keeps doubled pairs), so a change to one
+    /// copy never touches the other.
+    static func importKey(term: String, definition: String, occurrence: Int) -> String {
+        "\(term)\u{1F}\(definition)\u{1F}\(occurrence)"
+    }
+
+    /// The import box parsed (`ImportPanelModel.onResult`): its pairs are cards right away, no
+    /// "übernehmen" (Anthony, 25.11.2026). The cards that came from the box (`importKey`) are
+    /// replaced in place, so another Trennung, "Seiten tauschen" or more text shows in the card
+    /// list at once; what the learner changed in them stays (`importEdits`, found again by the
+    /// pair, also turned round). The first pairs go after the last filled card.
+    private func syncImport(_ result: ParseResult?) {
+        let wanted = importedCards(result)
+        let slots = rows.indices.filter { rows[$0].importKey != nil }
+        let current = slots.map { rows[$0] }
+        if wanted.count == current.count,
+            zip(wanted, current).allSatisfy({ card, row in
+                card.key == row.importKey && card.term == row.term && card.definition == row.definition
+                    && card.starred == row.starred && card.flags == row.flags
+            })
+        {
+            return
+        }
+        for (card, row) in zip(wanted, current) {
+            if row.importKey != card.key { row.importKey = card.key }
+            if row.term != card.term { row.term = card.term }
+            if row.definition != card.definition { row.definition = card.definition }
+            if row.starred != card.starred { row.starred = card.starred }
+            if row.flags != card.flags { row.flags = card.flags }
+            if row.isInvalid, row.isComplete { row.isInvalid = false }
+        }
+        var next = rows
+        if current.count > wanted.count {
+            for index in slots[wanted.count...].reversed() { next.remove(at: index) }
+        } else if wanted.count > current.count {
+            let created = wanted[current.count...].map { card in
+                SetEditorRow(
+                    term: card.term, definition: card.definition, starred: card.starred, flags: card.flags, importKey: card.key)
+            }
+            if let last = slots.last {
+                next.insert(contentsOf: created, at: last + 1)
+            } else {
+                // After the last filled card (empty rows at the end make way).
+                while let row = next.last, !row.isFilled { next.removeLast() }
+                next.append(contentsOf: created)
+            }
+        }
+        while next.count < SetEditorCopy.minimumRows { next.append(SetEditorRow()) }
+        if next.map(\.id) != rows.map(\.id) { rows = next }
+        checkDuplicates()
+        scheduleSpelling()
+    }
+
+    /// The recognised pairs as cards, with the learner's changes.
+    private func importedCards(_ result: ParseResult?) -> [ImportedCard] {
+        var cards: [ImportedCard] = []
+        var seen: [String: Int] = [:]
+        for parsed in result?.cards ?? [] {
+            let pair = "\(parsed.term)\u{1F}\(parsed.definition)"
+            let occurrence = seen[pair, default: 0]
+            seen[pair] = occurrence + 1
+            let key = Self.importKey(term: parsed.term, definition: parsed.definition, occurrence: occurrence)
+            let turned = Self.importKey(term: parsed.definition, definition: parsed.term, occurrence: occurrence)
+            switch importEdits[key] ?? importEdits[turned].map({ Self.turned($0) }) {
+            case .removed:
+                continue
+            case let .changed(term, definition, starred):
+                cards.append(ImportedCard(key: key, term: term, definition: definition, starred: starred, flags: []))
+            case nil:
+                cards.append(
+                    ImportedCard(key: key, term: parsed.term, definition: parsed.definition, starred: false, flags: parsed.flags))
+            }
+        }
+        return cards
+    }
+
+    private struct ImportedCard {
+        let key: String
+        let term: String
+        let definition: String
+        let starred: Bool
+        let flags: [ParseFlag]
+    }
+
+    private static func turned(_ edit: ImportEdit) -> ImportEdit {
+        switch edit {
+        case .removed: .removed
+        case let .changed(term, definition, starred): .changed(term: definition, definition: term, starred: starred)
         }
     }
 
-    /// The answer to "Karten übernehmen" (nil: cancelled). Takes the prompt that was shown:
-    /// the alert may already have cleared `prompt` when its button runs.
-    func resolveApply(_ shown: Prompt, mode: ApplyMode?) {
-        guard case let .applyImport(cards, _, _) = shown else { return }
-        prompt = nil
-        if let mode { apply(cards, mode: mode) }
-    }
-
-    private func apply(_ cards: [ParsedCard], mode: ApplyMode) {
-        let created = cards.map(SetEditorRow.init(parsed:))
+    /// "Text leeren": the box and its cards go, undoably (the toast's "Rückgängig" and ⌘Z bring
+    /// both back, with the learner's changes to the cards).
+    func clearImportText() {
+        let removed = rows.filter { $0.importKey != nil && $0.isFilled }.count
+        guard removed > 0 else {
+            importPanel.clearText()
+            return
+        }
         undoable(
-            "Karten übernehmen", toast: "\(Labels.plural(cards.count, "Karte", "Karten")) übernommen", tone: .success,
-            includesImport: true
+            String(localized: "Text leeren"),
+            toast: String(localized: "Liste geleert – \(Labels.plural(removed, "Karte", "Karten")) entfernt"),
+            systemImage: "xmark.circle", includesImport: true
         ) {
-            switch mode {
-            case .append:
-                appendRows(created)
-            case .replace:
-                // Replacing keeps the ids (and the progress) of rows with the same term.
-                setRows(isEditing ? Self.withPreservedIDs(created, previous: rows) : created)
-            }
-            importPanel.reset()
-            importPanel.isExpanded = false
+            importPanel.clearText()
+            importEdits = [:]
         }
         checkDuplicates()
-        checkSpelling()
-        if mode == .append, let first = created.first {
-            scroll(to: .row(first.id), anchor: .center)
-        } else {
-            scroll(to: .cards, anchor: .top)
-        }
     }
 
-    /// Imported rows replacing existing ones keep the card id and star of a row with the same
-    /// term (`withPreservedIds`).
-    static func withPreservedIDs(_ created: [SetEditorRow], previous: [SetEditorRow]) -> [SetEditorRow] {
-        var pool: [String: [SetEditorRow]] = [:]
-        for row in previous {
-            let key = SetEditorCopy.termKey(row.term)
-            guard row.cardID != nil, !key.isEmpty else { continue }
-            pool[key, default: []].append(row)
+    /// Remembers what the learner did to a card from the import box.
+    private func noteImportEdit(_ row: SetEditorRow) {
+        guard let key = row.importKey else { return }
+        setImportEdit(.changed(term: row.term, definition: row.definition, starred: row.starred), for: key)
+    }
+
+    private func setImportEdit(_ edit: ImportEdit, for key: String) {
+        importEdits[key] = edit
+        // The pair turned round is the same pair: one entry for both.
+        let parts = key.split(separator: "\u{1F}", omittingEmptySubsequences: false)
+        if parts.count == 3, let occurrence = Int(parts[2]) {
+            importEdits[Self.importKey(term: String(parts[1]), definition: String(parts[0]), occurrence: occurrence)] = nil
         }
-        for row in created {
-            let key = SetEditorCopy.termKey(row.term)
-            guard var matches = pool[key], !matches.isEmpty else { continue }
-            let match = matches.removeFirst()
-            pool[key] = matches
-            row.cardID = match.cardID
-            row.starred = match.starred
-        }
-        return created
     }
 
     // MARK: Saving
 
-    /// ⌘↩ / ⌘S: takes a list still waiting in the import box over (asking first when the
-    /// list has cards), validates, then creates or updates the set.
+    /// ⌘↩ / ⌘S ("Lernset erstellen" / "Sichern"): the latest text of the import box counts
+    /// (its pairs are cards already), then validates and creates or updates the set.
     func save() {
         guard !isSaving, !isClosed, prompt == nil else { return }
         if importPanel.isBusy {
-            toasts.show("Bitte warte, bis der Import fertig ist.")
+            toasts.show(String(localized: "Bitte warte, bis der Import fertig ist."))
             return
         }
-        let pending = importPanel.pendingCount()
-        if pending > 0 {
-            if isListEmpty {
-                takeOverPending(append: false)
-            } else {
-                prompt = .pendingImport(count: pending)
-                return
-            }
-        }
+        importPanel.flushParse()
         commit()
-    }
-
-    /// The answer to "Liste noch nicht übernommen": true appends, false saves without the
-    /// list, nil goes back to editing.
-    func resolvePendingImport(_ shown: Prompt, append: Bool?) {
-        guard case .pendingImport = shown else { return }
-        prompt = nil
-        guard let append else { return }
-        if append { takeOverPending(append: true) }
-        commit()
-    }
-
-    private func takeOverPending(append: Bool) {
-        let created = importPanel.pendingCards().map(SetEditorRow.init(parsed:))
-        if append { appendRows(created) } else { setRows(created) }
-        importPanel.reset()
-        importPanel.isExpanded = false
-        checkDuplicates()
-        checkSpelling()
     }
 
     private func commit() {
@@ -655,6 +707,7 @@ final class SetEditorModel {
         let cards = rows.filter(\.isFilled).map(\.draft)
         let cleanTitle = JSCompat.trim(title)
         let cleanDetails = JSCompat.trim(details)
+        let (termLang, defLang) = resolvedLanguages(cards)
         do {
             let saved: VocabSet
             switch mode {
@@ -669,13 +722,25 @@ final class SetEditorModel {
             isClosed = true
             finish()
             app.editorDidSave(setID: saved.id)
-            app.toasts.show(isEditing ? "Änderungen gespeichert" : "Lernset erstellt", tone: .success)
+            app.toasts.show(
+                isEditing ? String(localized: "Änderungen gespeichert") : String(localized: "Lernset erstellt"), tone: .success)
         } catch {
             isSaving = false
             toasts.show(
-                AppModel.message(for: error, fallback: "Das Lernset konnte nicht gespeichert werden."), tone: .danger,
+                AppModel.message(for: error, fallback: String(localized: "Das Lernset konnte nicht gespeichert werden.")),
+                tone: .danger,
                 duration: .seconds(7))
         }
+    }
+
+    /// The languages to save: a side still on "Automatisch" gets the language its cards are in
+    /// (`LangDetect`), else "Andere" (term) or German (definition).
+    private func resolvedLanguages(_ cards: [CardDraft]) -> (Lang, Lang) {
+        var term = termLang
+        var def = defLang
+        if termIsAuto { term = LangDetect.detectColumn(cards.map(\.term)).lang.lang ?? .other }
+        if defIsAuto { def = LangDetect.detectColumn(cards.map(\.definition)).lang.lang ?? .de }
+        return (term, def)
     }
 
     /// Marks every problem and moves the focus to the first one (`validateAll`).
@@ -757,12 +822,12 @@ final class SetEditorModel {
             isClosed = true
             finish()
             app.closeEditor()
-            app.toasts.show("Dieses Lernset wurde gelöscht.", tone: .danger)
+            app.toasts.show(String(localized: "Dieses Lernset wurde gelöscht."), tone: .danger)
             return
         }
         guard fresh.updatedAt != loadedAt, !isDirty else { return }
         load(fresh)
-        toasts.show("Das Lernset wurde anderswo geändert – die neue Version ist geladen.")
+        toasts.show(String(localized: "Das Lernset wurde anderswo geändert – die neue Version ist geladen."))
     }
 
     private func load(_ set: VocabSet) {
@@ -772,6 +837,7 @@ final class SetEditorModel {
         termLang = set.termLang
         defLang = set.defLang
         rows = Self.padded(set.cards.map(SetEditorRow.init(card:)))
+        importEdits = [:]
         loadedAt = set.updatedAt
         baseline = fingerprint()
         checkDuplicates()
@@ -806,7 +872,19 @@ final class SetEditorModel {
         var rows: [SetEditorRow.Snapshot]
         var termLang: Lang
         var defLang: Lang
+        var languages: LanguageState
+        var importEdits: [String: ImportEdit]
+        /// The whole import box (its text too), for changes of the box.
         var importPanel: ImportPanelModel.Snapshot?
+        /// Only its "Seiten tauschen" (turning the sides keeps what was typed in the box since).
+        var importSwapsSides: Bool?
+    }
+
+    private struct LanguageState: Equatable {
+        var termTouched: Bool
+        var defTouched: Bool
+        var termDetected: Bool
+        var defDetected: Bool
     }
 
     /// The target of one undoable change on the undo manager.
@@ -820,25 +898,29 @@ final class SetEditorModel {
         }
     }
 
-    private func undoState(includesImport: Bool) -> UndoState {
+    private func undoState(includesImport: Bool, includesSwap: Bool) -> UndoState {
         UndoState(
             rows: rows.map(\.snapshot), termLang: termLang, defLang: defLang,
-            importPanel: includesImport ? importPanel.snapshot() : nil)
+            languages: LanguageState(
+                termTouched: termTouched, defTouched: defTouched, termDetected: termDetected, defDetected: defDetected),
+            importEdits: importEdits,
+            importPanel: includesImport ? importPanel.snapshot() : nil,
+            importSwapsSides: includesSwap ? importPanel.swapsSides : nil)
     }
 
     /// Runs `change` and offers to undo it: a toast with "Rückgängig" and ⌘Z (with redo).
     private func undoable(
         _ actionName: String, toast message: String, tone: ToastCenter.Toast.Tone = .neutral, systemImage: String? = nil,
-        includesImport: Bool = false, _ change: () -> Void
+        includesImport: Bool = false, includesSwap: Bool = false, _ change: () -> Void
     ) {
-        let before = undoState(includesImport: includesImport)
+        let before = undoState(includesImport: includesImport, includesSwap: includesSwap)
         change()
-        let record = UndoRecord(before: before, after: undoState(includesImport: includesImport))
+        let record = UndoRecord(before: before, after: undoState(includesImport: includesImport, includesSwap: includesSwap))
         undoRecords.append(record)
         registerUndo(record, actionName: actionName, reverting: true)
         toasts.show(
             message, tone: tone, systemImage: systemImage,
-            action: .init("Rückgängig") { [weak self, weak record] in
+            action: .init(String(localized: "Rückgängig")) { [weak self, weak record] in
                 guard let self, let record, !self.isClosed else { return }
                 self.undoManager?.removeAllActions(withTarget: record)
                 self.restore(record.before)
@@ -857,14 +939,24 @@ final class SetEditorModel {
 
     private func restore(_ state: UndoState) {
         rows = state.rows.map(SetEditorRow.init)
+        // Before the import box parses again (`syncImport` finds the learner's changes here).
+        importEdits = state.importEdits
         let languagesChanged = state.termLang != termLang || state.defLang != defLang
         termLang = state.termLang
         defLang = state.defLang
+        termTouched = state.languages.termTouched
+        defTouched = state.languages.defTouched
+        termDetected = state.languages.termDetected
+        defDetected = state.languages.defDetected
+        // The cards from the import box follow the box as it is now (it may have changed since).
         if let panel = state.importPanel {
             importPanel.restore(panel)
-            if panel.isExpanded { scroll(to: .importPanel, anchor: .top) }
-        } else if languagesChanged {
+        } else if let swaps = state.importSwapsSides, swaps != importPanel.swapsSides {
+            importPanel.setSwapsSides(swaps)
+        } else if languagesChanged, importPanel.hasText {
             importPanel.reparse()
+        } else {
+            syncImport(importPanel.result)
         }
         checkDuplicates()
         checkSpelling()

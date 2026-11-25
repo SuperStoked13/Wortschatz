@@ -627,6 +627,34 @@ struct LibraryStoreTests {
         ])
     }
 
+    @Test func batchNotifiesOnceWithAllKeysAndUndoesEverythingWhenOneWriteThrows() throws {
+        let env = StoreEnv()
+        let store = env.store!
+        let set = try store.createSet(title: "A", cards: Kit.sample)
+        let card = set.cards[0].id
+        var events: [StoreChange] = []
+        let off = store.subscribe { events.append($0) }
+        try store.batch {
+            try store.recordAnswer(set.id, card, correct: true)
+            try store.saveLearnJSON(set.id, Kit.learnState)
+        }
+        #expect(events.count == 1)
+        let keys: Set<String> = Set(events.first?.keys ?? [])
+        let expected: Set<String> = ["progress:" + set.id, "learn:" + set.id]
+        #expect(keys.isSuperset(of: expected))
+
+        let progress = store.getProgress(set.id)
+        #expect(throws: LibraryStoreError.self) {
+            try store.batch {
+                try store.recordAnswer(set.id, card, correct: false)
+                try store.recordAnswer(set.id, "no-such-card", correct: true)
+            }
+        }
+        off()
+        #expect(events.count == 1)
+        #expect(store.getProgress(set.id) == progress)
+    }
+
     @Test func updateSetClearsTheLearnSessionExactlyWhenItClearsTheWriteSession() throws {
         let env = StoreEnv()
         let store = env.store!

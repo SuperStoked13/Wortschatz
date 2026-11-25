@@ -5,6 +5,7 @@ using Avalonia.Layout;
 using Avalonia.Media;
 using Wortschatz.App.DesignSystem;
 using Wortschatz.Core;
+using static Wortschatz.Core.CoreText;
 
 namespace Wortschatz.App.Features.Study;
 
@@ -65,7 +66,7 @@ public static class StudyAnswerBox
             text.MaxLines = 3;
             var check = StudyStatusPill.FeedbackSymbol(Study.StudyStatus.Kinds.Correct, P.Success.Fill, 22);
             var row = Ui.H(12, text, check);
-            AutomationProperties.SetName(row, $"Deine Antwort, richtig: {correctAnswer}");
+            AutomationProperties.SetName(row, L($"Deine Antwort, richtig: {correctAnswer}"));
             if (accepted)
             {
                 Effects.Of(row).Enter(new Placement(Opacity: 0), Curve.EaseOut(0.2));

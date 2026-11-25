@@ -17,7 +17,6 @@ public sealed class AdaptiveRow : Decorator
     readonly double _spacing;
     readonly Dictionary<Mode, double> _naturalWidth = [];
     Mode _mode = Mode.Large;
-    double _available = double.NaN;
 
     public AdaptiveRow(Func<Mode, IEnumerable<Control>> make, double spacing = 10)
     {
@@ -59,7 +58,6 @@ public sealed class AdaptiveRow : Decorator
                 }
             }
         }
-        _available = availableSize.Width;
         return base.MeasureOverride(availableSize);
     }
 

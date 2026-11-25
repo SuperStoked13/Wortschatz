@@ -325,6 +325,43 @@ public sealed record StudyOptionsPatch(
         return output;
     }
 
+    /// <summary>
+    /// The options of <paramref name="touched"/> that are here the same as in <paramref name="standard"/> dropped: a set's
+    /// own option set back to the standard is no longer its own (LibraryStore.UpdateOwnStudyOptions). The values in
+    /// effect stay the same.
+    /// </summary>
+    public StudyOptionsPatch DroppingStandard(StudyOptionsPatch touched, StudyOptions standard)
+    {
+        static T? Drop<T>(object? touchedValue, T? value, T standardValue) where T : struct =>
+            touchedValue is not null && value is { } v && EqualityComparer<T>.Default.Equals(v, standardValue) ? null : value;
+        var o = this with
+        {
+            AnswerWith = Drop(touched.AnswerWith, AnswerWith, standard.AnswerWith),
+            Shuffle = Drop(touched.Shuffle, Shuffle, standard.Shuffle),
+            CopyAnswer = Drop(touched.CopyAnswer, CopyAnswer, standard.CopyAnswer),
+            AutoAdvance = Drop(touched.AutoAdvance, AutoAdvance, standard.AutoAdvance),
+            Audio = Drop(touched.Audio, Audio, standard.Audio),
+        };
+        if (o.Tolerance is { } t && touched.Tolerance is { } tt)
+        {
+            var s = standard.Tolerance;
+            var kept = new TolerancePatch(
+                Drop(tt.Articles, t.Articles, s.Articles), Drop(tt.Abbreviations, t.Abbreviations, s.Abbreviations),
+                Drop(tt.MultipleAnswers, t.MultipleAnswers, s.MultipleAnswers), Drop(tt.Parentheses, t.Parentheses, s.Parentheses),
+                Drop(tt.IgnoreCase, t.IgnoreCase, s.IgnoreCase), Drop(tt.IgnoreAccents, t.IgnoreAccents, s.IgnoreAccents),
+                Drop(tt.Typos, t.Typos, s.Typos));
+            o = o with { Tolerance = kept.IsEmpty ? null : kept };
+        }
+        if (o.Learn is { } l && touched.Learn is { } tl)
+        {
+            var s = standard.Learn;
+            var kept = new LearnOptionsPatch(Drop(tl.RoundSize, l.RoundSize, s.RoundSize), Drop(tl.Mc, l.Mc, s.Mc), Drop(tl.Written, l.Written, s.Written),
+                Drop(tl.Retype, l.Retype, s.Retype));
+            o = o with { Learn = kept.IsEmpty ? null : kept };
+        }
+        return o;
+    }
+
     public JSONValue ToJson()
     {
         var map = new JsonObjectMap();
@@ -401,11 +438,6 @@ public sealed record CardProgress(
 
 /// <summary>The side the learner answers: <c>Term</c> means the prompt is the definition.</summary>
 public enum AskSide { Term, Definition }
-
-public static class AskSideExtensions
-{
-    public static AskSide Other(this AskSide side) => side == AskSide.Term ? AskSide.Definition : AskSide.Term;
-}
 
 public enum StudySubsetKind { All, Starred, Learning, Missed, CardIds }
 

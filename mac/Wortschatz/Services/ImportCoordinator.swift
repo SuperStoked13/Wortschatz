@@ -35,9 +35,9 @@ final class ImportCoordinator {
     }
 
     /// Toast after `cancel()`.
-    static let cancelledMessage = "Import abgebrochen"
+    static let cancelledMessage = String(localized: "Import abgebrochen")
     /// Toast when files arrive while an import runs.
-    static let busyMessage = "Bitte warte, bis der aktuelle Import fertig ist."
+    static let busyMessage = String(localized: "Bitte warte, bis der aktuelle Import fertig ist.")
     /// The progress view appears only for imports slower than this (like the web app).
     static let progressDelay: Duration = .milliseconds(160)
 
@@ -65,7 +65,7 @@ final class ImportCoordinator {
         generation += 1
         let current = generation
         isRunning = true
-        progress = ImportProgress(fraction: 0, message: "Datei wird gelesen …")
+        progress = ImportProgress(fraction: 0, message: String(localized: "Datei wird gelesen …"))
         revealTask = Task { [weak self] in
             try? await Task.sleep(for: Self.progressDelay)
             guard let self, !Task.isCancelled, self.generation == current, self.isRunning else { return }

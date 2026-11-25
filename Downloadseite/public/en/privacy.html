@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+{{> head}}
+  <title>Privacy: Wortschatz</title>
+  <meta name="description" content="What data the Wortschatz website processes, and why.">
+  <meta name="robots" content="noindex">
+  <link rel="canonical" href="{{site.origin}}/en/privacy">
+</head>
+<body class="page">
+{{> sprite}}
+{{> nav-en}}
+  <main id="inhalt" class="prose">
+    <h1>Privacy</h1>
+    <p class="prose-lead">This website presents Wortschatz and offers the app for download. It uses {{#site.login}}only a cookie for signing in (see below) and {{/site.login}}no {{^site.login}}cookies, no {{/site.login}}analytics or advertising services and no third-party content. Fonts, images and scripts all come from this server.</p>
+    <p>The German version of this page is the one that applies: <a href="/datenschutz" hreflang="de" lang="de">Datenschutz</a>. This English version is a translation.</p>
+
+    <h2>Who runs it</h2>
+    {{#site.operator}}<p>{{site.operator}}{{#site.contactEmail}}, <a href="{{site.mailto}}">{{site.contactEmail}}</a>{{/site.contactEmail}}</p>{{/site.operator}}
+    {{^site.operator}}{{#site.contactEmail}}<p><a href="{{site.mailto}}">{{site.contactEmail}}</a></p>{{/site.contactEmail}}{{/site.operator}}
+    {{^site.operator}}{{^site.contactEmail}}<p>The website is run privately. Contact details will follow.</p>{{/site.contactEmail}}{{/site.operator}}
+
+    <h2>What the server processes</h2>
+    <p>With every visit, the server receives your IP address, the address you asked for, the time and the details your browser sends along with every request. They are used to deliver the site and protect it from abuse:</p>
+    <ul>
+      <li>The server counts how many requests and how much data come from one address, and briefly slows down addresses that overload the website. These counters live only in memory, never reach the disk and disappear after two days at most.</li>
+      <li>The server’s log shows your IP address only shortened (for example 203.0.113.0), so it no longer points to a single connection. The log is used for troubleshooting and deleted regularly.</li>
+      {{#downloads.local}}<li>For downloads, the server counts how often each version was downloaded per day. This number says nothing about the people who downloaded it.</li>{{/downloads.local}}
+      {{#site.login}}<li>The website is password protected. After you sign in, your browser stores a cookie so you don’t have to enter the password on every visit. It contains only its expiry date and a checksum, nothing about you, and expires after {{site.loginDays}} days.</li>{{/site.login}}
+    </ul>
+
+    <h2>Encryption and name</h2>
+    <p>The connection is encrypted with HTTPS (certificate from Let’s Encrypt). The name wortschatz.duckdns.org is pointed at this server by the DuckDNS service. DuckDNS only sees which address the server has, not who visits the website. If you open the site through the fallback address at Cloudflare (for example on a network that blocks DuckDNS), the encryption ends there and Cloudflare forwards the requests to this server. Cloudflare can see everything that goes through that address: the internet address, the pages you open and the download links{{#site.login}}, including the password and the sign-in cookie{{/site.login}}.</p>
+
+    <h2>Language</h2>
+    <p>The website is available in German and English. Which one you see depends on your browser’s language settings. If you pick one yourself (DE or EN at the top of the page), your browser remembers your choice in its local storage. It stays on your device and is never sent to the server.</p>
+
+    {{#downloads.github}}
+    <h2>Downloads</h2>
+    <p>The apps are hosted on GitHub (github.com), a service of GitHub, Inc., a subsidiary of Microsoft. Clicking the download button takes you straight there, and GitHub sends you the file. GitHub receives your IP address and the details your browser sends along, and GitHub’s privacy terms apply. This website loads nothing from GitHub and passes no data to GitHub.</p>
+    {{/downloads.github}}
+
+    <h2>Donations</h2>
+    <p>The donation links lead to Ko-fi (ko-fi.com), a third-party service. This website loads nothing from Ko-fi and passes no data to Ko-fi. Only when you follow one of these links and donate on Ko-fi do Ko-fi’s privacy terms apply there.</p>
+
+    <h2>The app</h2>
+    <p>{{^appUpdates.any}}Wortschatz itself sends no data. {{/appUpdates.any}}{{#appUpdates.any}}Wortschatz sends nothing of what you study. {{/appUpdates.any}}Study sets, progress and settings stay on your computer: in the Mac app in its own folder, in the Windows app under %LOCALAPPDATA%\Wortschatz. Both apps work without the internet.{{#appUpdates.macOnly}} Only the Mac app goes online, to check for updates: about once a day it asks GitHub (github.com, a service of GitHub, Inc., a subsidiary of Microsoft) whether there is a new version, and downloads it from there. GitHub sees your Mac’s internet address and which versions of Wortschatz and macOS it runs, and GitHub’s privacy terms apply.{{/appUpdates.macOnly}}{{#appUpdates.windowsOnly}} Only the Windows app goes online, to check for updates: about once a day it asks GitHub (github.com, a service of GitHub, Inc., a subsidiary of Microsoft) whether there is a new version, and downloads it from there. GitHub sees your computer’s internet address and which version of Wortschatz it runs, and GitHub’s privacy terms apply.{{/appUpdates.windowsOnly}}{{#appUpdates.both}} The apps only go online to check for updates: about once a day they ask GitHub (github.com, a service of GitHub, Inc., a subsidiary of Microsoft) whether there is a new version, and download it from there. GitHub sees your computer’s internet address and which version of Wortschatz it runs (on a Mac also of macOS), and GitHub’s privacy terms apply.{{/appUpdates.both}}{{#appUpdates.any}} You can turn this off in the app under Settings › Data › “Update Automatically”.{{/appUpdates.any}}</p>
+
+    <h2>Your rights</h2>
+    <p>You can ask what data about you is being processed and request that it be corrected or deleted. Since the server stores no data that can be traced back to you, there is usually nothing to delete.{{#site.contactEmail}} To do so, write to <a href="{{site.mailto}}">{{site.contactEmail}}</a>.{{/site.contactEmail}}</p>
+
+    <p class="prose-meta">Last updated: November 2026</p>
+  </main>
+{{> footer-en}}
+</body>
+</html>

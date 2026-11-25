@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head>
+{{> head}}
+  <title>Sign in: Wortschatz</title>
+  <meta name="robots" content="noindex">
+</head>
+<body class="page page-login">
+  <main id="inhalt" class="error-page login-page">
+    <img class="error-icon" src="{{@asset /assets/img/icon-128.png}}" srcset="{{@asset /assets/img/icon-128.png}} 1x, {{@asset /assets/img/icon-256.png}} 2x" alt="" width="96" height="96">
+    <h1>Wortschatz</h1>
+    <p class="error-message">This site is password protected.</p>
+    <form class="login-form" method="post" action="/en/login">
+      <input type="hidden" name="weiter" value="{{login.next}}">
+      <label class="login-label" for="passwort">Password</label>
+      <input class="login-input" id="passwort" name="passwort" type="password" autocomplete="current-password" required autofocus>
+      {{#login.wrong}}<p class="login-error" role="alert">That password isn’t right.</p>{{/login.wrong}}
+      <button class="btn btn-primary login-button" type="submit">Sign in</button>
+    </form>
+  </main>
+{{> footer-en}}
+</body>
+</html>

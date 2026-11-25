@@ -8,6 +8,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     weak var model: AppModel?
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        model?.replyToTermination() ?? .terminateNow
+        guard let model else { return .terminateNow }
+        let reply = model.replyToTermination()
+        // "Jetzt neu starten" (Einstellungen › Sprache): the library is saved, so the new instance
+        // may start; it waits until this one has quit.
+        if reply == .terminateNow, AppLanguage.relaunchRequested { AppLanguage.launchNewInstance() }
+        return reply
     }
 }

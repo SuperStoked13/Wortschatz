@@ -28,13 +28,15 @@ struct SettingsWipeSheet: View {
             switch step {
             case .explain:
                 header(
-                    systemImage: "trash", title: "Alle Daten löschen?",
-                    message: SettingsCopy.wipeMessage(sets: sets))
+                    systemImage: "trash", title: String(localized: "Alle Daten löschen?"),
+                    message: SettingsCopy.wipeMessage(sets: sets) + extraNote)
                 if !sets.isEmpty { backupTip }
             case .confirm:
                 header(
-                    systemImage: "exclamationmark.triangle.fill", title: "Wirklich alles löschen?",
-                    message: "Das kann nicht rückgängig gemacht werden. Ohne Backup sind deine Lernsets danach endgültig weg.")
+                    systemImage: "exclamationmark.triangle.fill", title: String(localized: "Wirklich alles löschen?"),
+                    message: String(
+                        localized: "Das kann nicht rückgängig gemacht werden. Ohne Backup sind deine Lernsets danach endgültig weg."
+                    ))
             }
             buttons
         }
@@ -104,7 +106,12 @@ struct SettingsWipeSheet: View {
         withAnimation(Motion.animation(Motion.snappy, reduceMotion: reduceMotion)) {
             step = .confirm
         }
-        Announcer.announce("Wirklich alles löschen? Das kann nicht rückgängig gemacht werden.")
+        Announcer.announce(String(localized: "Wirklich alles löschen? Das kann nicht rückgängig gemacht werden."))
+    }
+
+    /// What else wiping does, if anything (added to the explanation).
+    private var extraNote: String {
+        ""
     }
 
     /// Clears the library, the settings and the chosen voices, saves at once, removes the older
@@ -113,7 +120,7 @@ struct SettingsWipeSheet: View {
         do {
             try model.store.clearAll()
         } catch {
-            model.report(error, fallback: "Die Daten konnten nicht gelöscht werden.")
+            model.report(error, fallback: String(localized: "Die Daten konnten nicht gelöscht werden."))
             dismiss()
             return
         }
@@ -125,7 +132,7 @@ struct SettingsWipeSheet: View {
         // "von diesem Mac gelöscht": the rotating backups and a set-aside damaged copy go too,
         // so no recovery can bring the deleted sets back.
         model.store.backend.discardBackups()
-        model.toasts.show("Alle Daten wurden gelöscht.", tone: .success)
+        model.toasts.show(String(localized: "Alle Daten wurden gelöscht."), tone: .success)
         dismiss()
     }
 }

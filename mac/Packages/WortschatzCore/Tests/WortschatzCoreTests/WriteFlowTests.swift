@@ -290,6 +290,29 @@ struct WriteFlowTests {
         #expect(d.announcements(next) == ["Deutsch: lieb"])
     }
 
+    @Test("a copy typed out continues without Return after a short beat")
+    func copyTypedOut() {
+        let d = Self.driver(copy: true)
+        d.answer("x")
+        #expect(d.phase == .copy)
+        #expect(d.question?.cardId == "a")
+        // Accepted like an answer (without its article): the beat starts…
+        d.type("chat")
+        #expect(d.phase == .copy)
+        #expect(d.state.autoAdvance?.ms == CopyStep.advanceMs)
+        let spoiled = d.timers.last?.token
+        // …and typing on so that it is no longer right stops it.
+        d.type("le cha")
+        #expect(d.state.autoAdvance == nil)
+        _ = d.send(.autoAdvanceFired(token: spoiled ?? -1), after: 0)
+        #expect(d.phase == .copy)
+        d.type("le chat")
+        #expect(d.phase == .copy)
+        d.fireTimer()
+        #expect(d.phase == .question)
+        #expect(d.question?.cardId != "a")
+    }
+
     @Test("⌘↩ “Ich hatte recht” counts the miss as correct and moves on")
     func override() throws {
         let d = Self.driver()
@@ -542,8 +565,8 @@ struct WriteFlowTests {
 
     // MARK: - Options and dialogs
 
-    @Test("options pause the timer; a new direction asks to restart")
-    func optionsRestart() throws {
+    @Test("options pause the timer; direction and order apply at once")
+    func optionsApplyAtOnce() throws {
         let d = Self.driver()
         d.answerCorrectly()
         d.send(.requestOptions)
@@ -556,31 +579,46 @@ struct WriteFlowTests {
         var options = d.state.options
         options.answerWith = .both
         d.send(.optionsChanged(options))
-        d.send(.overlayDismissed())
-        let prompt = try #require(d.state.prompt)
-        #expect(prompt == .restartForOptions(directionChanged: true, resumesTimer: true, copyChanged: false))
-        #expect(prompt.message.hasPrefix("Die neue Abfragerichtung gilt ab einem Neustart."))
-        #expect(prompt.cancelLabel == "Später")
-        // "Später": the paused timer runs again.
-        let later = d.send(.promptAnswered(confirmed: false))
-        #expect(d.phase == .feedback(.correct))
-        #expect(later.contains(.scheduleAutoAdvance(ms: 900, token: 2)))
-        #expect(d.state.focusSerial == 1)
-        // Closing the sheet again without a change does not ask again.
-        d.send(.requestOptions)
-        d.send(.overlayDismissed())
+        // A question per card on the new side; the answer given stays done.
+        #expect(d.session?.setOptions == SessionSetOptions(answerWith: .both, shuffle: false))
+        #expect(d.session?.order == ["a:t", "b:t", "c:t", "a:d", "b:d", "c:d"])
+        #expect(d.session?.done == ["a:t"])
+        #expect(d.stored?.session.setOptions.answerWith == .both)
+        let resumed = d.send(.overlayDismissed())
         #expect(d.state.prompt == nil)
-        // A new order asks too; confirming starts over with the new options.
+        // The paused timer runs again.
+        #expect(d.phase == .feedback(.correct))
+        #expect(resumed.contains(.scheduleAutoAdvance(ms: 900, token: 2)))
+        #expect(d.state.focusSerial == 1)
+        // A new order applies at once too.
         d.send(.requestOptions)
         options.shuffle = true
         d.send(.optionsChanged(options))
         d.send(.overlayDismissed())
-        #expect(d.state.prompt == .restartForOptions(directionChanged: false, resumesTimer: true, copyChanged: false))
-        #expect(d.state.prompt?.message.hasPrefix("Die neue Reihenfolge") == true)
-        d.send(.promptAnswered(confirmed: true))
-        #expect(d.phase == .question)
+        #expect(d.state.prompt == nil)
         #expect(d.session?.setOptions == SessionSetOptions(answerWith: .both, shuffle: true))
-        #expect(d.session?.order.count == 6)
+        #expect(Set(d.session?.queue ?? []) == ["b:t", "c:t", "a:d", "b:d", "c:d"])
+    }
+
+    @Test("a new direction turns the question on screen around; a resumed session follows the options")
+    func directionTurnsTheQuestionAround() throws {
+        let d = Self.driver()
+        #expect(d.question?.qid == "a:t")
+        var options = d.state.options
+        options.answerWith = .definition
+        d.send(.optionsChanged(options))
+        #expect(d.phase == .question)
+        #expect(d.question?.qid == "a:d")
+        #expect(d.question?.prompt == "le chat")
+        #expect(d.session?.order == ["a:d", "b:d", "c:d"])
+        d.answerCorrectly()
+        // Changed elsewhere while Write mode was left: the stored session follows when it resumes.
+        _ = try d.store.updateStudyOptions(d.setId, StudyOptionsPatch(answerWith: .term))
+        let e = d.reopen()
+        #expect(e.session?.setOptions.answerWith == .term)
+        #expect(e.session?.done == ["a:t"])
+        #expect(e.question?.qid == "b:t")
+        #expect(e.stored?.session.setOptions.answerWith == .term)
     }
 
     @Test("options: switching the copy step on shows it for the open miss; Neu starten asks")

@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+{{> head}}
+  <title>What’s new: Wortschatz</title>
+  <meta name="description" content="What’s new in the latest versions of Wortschatz for Mac and Windows.">
+  <link rel="canonical" href="{{site.origin}}/en/whats-new">
+</head>
+<body class="page">
+{{> sprite}}
+{{> nav-en}}
+  <main id="inhalt" class="prose updates">
+    <h1>What’s new</h1>
+    <p class="prose-lead">What’s been added to Wortschatz for Mac and Windows. Download a new version <a href="/en#download">on the home page</a> and use it to replace the old app. Your study sets stay where they are.</p>
+
+    {{#updates.upcoming}}
+    <section class="release release-upcoming" aria-labelledby="coming-soon">
+      <div class="release-head">
+        <h2 id="coming-soon">Coming soon</h2>
+        <p class="release-date">Arrives with the next version</p>
+      </div>
+      <ul class="changes">
+        {{#updates.upcoming.changes}}
+        <li class="change">{{#kindLabel}}<span class="change-kind change-kind-{{kind}}">{{kindLabel}}</span>{{/kindLabel}}<span class="change-text"><span{{#textLang}} lang="{{textLang}}"{{/textLang}}>{{text}}</span>{{#platformLabel}} <span class="change-platform">{{platformLabel}} only</span>{{/platformLabel}}</span></li>
+        {{/updates.upcoming.changes}}
+      </ul>
+    </section>
+    {{/updates.upcoming}}
+
+    {{#updates.versions}}
+    <section class="release panel" id="{{anchor}}" aria-labelledby="{{anchor}}-title">
+      <div class="release-head">
+        <h2 id="{{anchor}}-title">Version {{version}}</h2>
+        {{#dateLabel}}<p class="release-date"><time datetime="{{date}}">{{dateLabel}}</time></p>{{/dateLabel}}
+      </div>
+      {{#note}}<p class="release-note" lang="de">{{note}}</p>{{/note}}
+      {{#hasChanges}}
+      <ul class="changes">
+        {{#changes}}
+        <li class="change">{{#kindLabel}}<span class="change-kind change-kind-{{kind}}">{{kindLabel}}</span>{{/kindLabel}}<span class="change-text"><span{{#textLang}} lang="{{textLang}}"{{/textLang}}>{{text}}</span>{{#platformLabel}} <span class="change-platform">{{platformLabel}} only</span>{{/platformLabel}}</span></li>
+        {{/changes}}
+      </ul>
+      {{/hasChanges}}
+    </section>
+    {{/updates.versions}}
+
+    {{^updates.any}}
+    <p class="updates-empty">This is where new versions of Wortschatz are described: new features, improvements and fixes. So far there’s only the first version.</p>
+    {{/updates.any}}
+  </main>
+{{> footer-en}}
+</body>
+</html>

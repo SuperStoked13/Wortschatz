@@ -1,6 +1,6 @@
 import Foundation
 
-/// A backup file that cannot be read or is not a JSON object (German message for the UI).
+/// A backup file that cannot be read or is not a JSON object (message for the UI).
 public struct BackupFileError: Error, Equatable, Sendable, LocalizedError {
     public var message: String
 
@@ -15,9 +15,9 @@ public struct BackupFileError: Error, Equatable, Sendable, LocalizedError {
 /// plus the file names of the web app's downloads.
 public enum Backup {
     /// `READ_ERROR`
-    public static let READ_ERROR = "Die Datei konnte nicht gelesen werden."
+    public static var READ_ERROR: String { L("Die Datei konnte nicht gelesen werden.") }
     /// `PARSE_ERROR`
-    public static let PARSE_ERROR = "Die Datei ist keine gültige Backup-Datei (JSON)."
+    public static var PARSE_ERROR: String { L("Die Datei ist keine gültige Backup-Datei (JSON).") }
 
     // MARK: Text export
 

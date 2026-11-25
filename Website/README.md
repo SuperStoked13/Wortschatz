@@ -2,34 +2,15 @@
 
 A Quizlet-style vocabulary trainer: you study a set with **Lernen** (multiple choice, then written answers), practise spelling with **Schreiben**, flip **Karteikarten** and test yourself with a **Prüfung**. The interface is in German.
 
-## Folder layout
+## What this folder is now
 
-The project folder holds three parts:
+`Website/` is the original version of Wortschatz: plain HTML, CSS and JavaScript modules. Up to version 1.1 it was
+the interface of the Windows app (a small Go host showed it in WebView2). Since 1.2 the Windows app is the native
+port in `windows-native/`, and this folder is no longer shipped anywhere.
 
-- `Website/` — the interface of the Windows app (this folder): plain HTML, CSS and JavaScript modules. It is not a website and does not run on its own; `windows/build.sh` embeds it in the exe.
-- `mac/` — the native Mac app (SwiftUI). `mac/scripts/build.sh` builds it into `mac/build/Wortschatz.app`.
-- `windows/` — the Windows app: a small host program (`windows/host`, Go) that shows the web app in Microsoft's WebView2. `windows/build.sh` builds it into **`windows/dist/Wortschatz.exe`**.
-
-## Start
-
-**Windows:** double-click **`Wortschatz.exe`**. There is nothing to install: it uses Microsoft's WebView2 runtime, which comes with Windows 11 and almost every Windows 10. The exe is self-contained; you can copy it anywhere (Desktop, Documents, a USB stick).
-
-- Your sets, progress and settings are stored in **`%LOCALAPPDATA%\Wortschatz`**, not next to the exe. They stay there when you replace the exe with a newer one.
-- The first time, Windows may show «Der Computer wurde durch Windows geschützt» (SmartScreen, because the exe is not signed). Click **Weitere Informationen → Trotzdem ausführen**.
-- If WebView2 is missing or too old, Wortschatz says so and offers to open Microsoft's download page.
-- Read-aloud uses the voices installed in Windows. If a language has no voice (often French on a German Windows), Wortschatz tells you; add one in the Windows settings under **Zeit und Sprache**.
-
-**Mac:** use the Mac app (`mac/build/Wortschatz.app`).
-
-### Moving your sets between computers
-
-Each app keeps its own data. To move your sets, progress and statistics from one to the other (for example from the Mac to Windows):
-
-1. On the Mac: **Einstellungen → Backup exportieren**. This saves a file like `wortschatz-backup-2026-10-14.json`.
-2. Copy the file to the Windows computer (USB stick, cloud folder, e-mail).
-3. In the Windows app: **Einstellungen → Backup importieren** (or drag the file onto the backup panel). If the app already has sets, choose **Zusammenführen** to keep them, or **Alles ersetzen**.
-
-It works the same way in the other direction: both apps use the same backup format. In the Windows app, exported files (backups, text exports) go to your **Downloads** folder.
+It stays as the **JavaScript reference**: the generators in `mac/Parity/` run its code to produce the test fixtures
+(`mac/Packages/WortschatzCore/Tests/WortschatzCoreTests/Fixtures/`) that the Mac app and the Windows app are both
+tested against. Change it only together with the apps, and regenerate the fixtures (`mac/scripts/gen-fixtures.sh`).
 
 ## Features
 
@@ -41,8 +22,10 @@ It works the same way in the other direction: both apps use the same backup form
   - If German is on the left, it swaps the sides automatically.
 - **Learn mode (*Lernen*, the main mode, modelled on Quizlet Learn):**
   - New words first appear as **multiple choice with 4 options** (keys 1–4). You can also **type the first letters** of an answer and press Enter to choose it.
+  - The wrong options are as alike as possible: cards of the **same word class** (noun, verb, adjective/adverb, expression, number), then the most similar ones – close by in the set, same article, similar length and spelling (`src/core/wordclass.js`).
   - After a correct answer, the word is asked **in writing** the next time. A second correct answer makes it *gemeistert*.
-  - A mistake sends the word back to multiple choice, and it comes up again at the end of the round.
+  - A mistake resets the word; it comes back after about 10–15 other questions. Each word is asked as multiple choice
+    only until it was answered right once: from then on it stays written, also after a mistake (since 24.11.2026).
   - You study in **rounds of 7 words**, with a progress summary after each round. Mastered words are replaced by new ones until the whole set is mastered.
   - **Wiederholungsfragen** (option): each round also asks a few words you already mastered, so they stay fresh.
   - Options: question types, words per round, answer direction, tolerance, read-aloud and retyping.
@@ -69,9 +52,7 @@ It works the same way in the other direction: both apps use the same backup form
 
 ## Development
 
-The interface itself needs no build step and nothing to install: plain HTML, CSS and JavaScript modules.
+Nothing to build or install: plain HTML, CSS and JavaScript modules.
 
 - `tests/run.sh`: runs all unit tests with macOS's built-in JavaScriptCore (no Node needed). `tests/run.sh grading` runs only the files whose name contains "grading".
-- `windows/build.sh` (in the project folder, next to `Website/`): builds `windows/dist/Wortschatz.exe` on the Mac. It downloads its own Go compiler into `~/Library/Caches/Wortschatz/windows-toolchain` the first time and embeds the web app (`index.html`, `src/`, `styles/`, `assets/`) in the exe, so rebuild it after changing the web app.
-- Design spec: `docs/superpowers/specs/2026-10-11-wortschatz-design.md`. Implementation plans: `docs/superpowers/plans/`.
-- PDF reading (pdf.js) and photo OCR (tesseract.js) are downloaded on first use, so those two imports need an internet connection. Everything else works offline.
+- Design specs (written before the apps): `docs/superpowers/specs/`.

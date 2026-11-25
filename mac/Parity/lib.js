@@ -1,7 +1,7 @@
 // Shared helpers for the parity generators (mac/Parity/gen-*.js).
 //
 // Generators are ES modules run with JavaScriptCore (`jsc -m`, no Node): they import the web
-// reference via ABSOLUTE paths, compute results for many inputs and print ONE JSON document:
+// reference relatively (`../../Website/…`), compute results for many inputs and print ONE JSON document:
 //
 //   {"module":"<name>","count":N,"cases":[
 //   {"id":"<fn>#<n>","fn":"<fn>","args":[...],"out":<result>},
@@ -12,7 +12,8 @@
 // Everything here must be deterministic: never use Math.random or Date.now (use mulberry32 and
 // fixed timestamps).
 
-export const REPO = '../../Website';
+// The web reference (Website/ in the project folder), found from this file's own place, wherever the project is.
+export const REPO = decodeURIComponent(import.meta.url.replace(/^file:\/\//, '')).replace(/\/mac\/Parity\/lib\.js$/, '/Website');
 
 // The seeded PRNG of tests/learn.test.js (bit-for-bit identical to Swift `mulberry32(seed:)`).
 export function mulberry32(seed) {

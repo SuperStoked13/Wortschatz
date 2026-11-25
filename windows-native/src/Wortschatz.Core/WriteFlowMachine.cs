@@ -1,3 +1,5 @@
+using static Wortschatz.Core.CoreText;
+
 namespace Wortschatz.Core;
 
 // Port of WriteFlowMachine.swift: the engine of WriteFlow. One reducer step as a small mutable machine
@@ -182,7 +184,16 @@ public static partial class WriteFlow
                 case Event.RequestOptions:
                     if (!s.IsBlocked) OpenOptions();
                     break;
-                case Event.OptionsChanged changed: s.Options = changed.Options; break;
+                case Event.OptionsChanged changed:
+                {
+                    var before = s.Options;
+                    s.Options = changed.Options;
+                    // Changed outside while the round is on screen (imported from another device): asks at once. Changes in
+                    // the options ask when they close (AfterOptions).
+                    if (s.Overlay is null && (before.AnswerWith != changed.Options.AnswerWith || before.Shuffle != changed.Options.Shuffle))
+                        AskForChangedOptions();
+                    break;
+                }
                 case Event.OverlayDismissed dismissed: CloseOverlay(dismissed.RestartRequested); break;
                 case Event.PromptAnswered answered: AnswerPrompt(answered.Confirmed); break;
                 case Event.Restart:
@@ -293,7 +304,43 @@ public static partial class WriteFlow
                 StartFresh(wanted ?? StudySubset.All);
                 return;
             }
+            // A direction or «Mischen» changed elsewhere since the round started (Einstellungen, the set's options): a round
+            // without answers simply starts again with it (issue #7); one with answers asks.
+            if (!showResultsAgain && !HasAnswers(saved) && saved.FinishedAt is null && ShapedOtherwise(saved))
+            {
+                StartFresh(wanted ?? saved.Subset);
+                return;
+            }
             ResumeSaved(saved, feedback, showResultsAgain, wanted);
+            if (!showResultsAgain) AskForChangedOptions();
+        }
+
+        /// <summary>The session runs with another direction or order than the options give.</summary>
+        bool ShapedOtherwise(SessionState session) =>
+            session.SetOptions.AnswerWith != s.Options.AnswerWith || session.SetOptions.Shuffle != s.Options.Shuffle;
+
+        /// <summary>
+        /// The direction or «Mischen» was changed outside the session since it started (Einstellungen, the set's options,
+        /// another device): «Neu starten?» as after the options (issue #7, 24.11.2026, Windows; before, the round went on
+        /// with the old ones, and nothing said so). After «Später» (KeepChangedOptions) it is not asked again while the
+        /// options stay so.
+        /// </summary>
+        void AskForChangedOptions()
+        {
+            if (s.IsBlocked || s.Session is not { FinishedAt: null } session || !ShapedOtherwise(session)) return;
+            if (s.Kept?.Covers(session.StartedAt, KeptSettingsJson(s.Options)) == true) return;
+            bool timerWasRunning = s.AutoAdvance is not null;
+            ClearAdvance();
+            s.Prompt = new Prompt.RestartForOptions(session.SetOptions.AnswerWith != s.Options.AnswerWith, timerWasRunning, CopyChanged: false);
+        }
+
+        /// <summary>«Später» on «Neu starten?»: the session keeps its direction and order while the options are as now (stored on this device).</summary>
+        void KeepChangedOptions()
+        {
+            if (s.Session is not { FinishedAt: null } session) return;
+            var kept = new KeptOptions(session.StartedAt, KeptSettingsJson(s.Options));
+            s.Kept = kept;
+            effects.Add(new Effect.KeepOptions(kept));
         }
 
         void StartFresh(StudySubset subset)
@@ -422,7 +469,7 @@ public static partial class WriteFlow
             if (!HasText(value))
             {
                 s.Rejections++;
-                Announce("Gib zuerst eine Antwort ein – oder wähle «Weiss ich nicht».");
+                Announce(L("Gib zuerst eine Antwort ein – oder wähle «Weiss ich nicht»."));
                 return;
             }
             var graded = Grade(info, value);
@@ -474,7 +521,7 @@ public static partial class WriteFlow
             if (s.Feedback is not { } fb || fb.Result is not { } result) return;
             s.Phase = Phase.FeedbackOf(FeedbackKind.Correct);
             // "Genau!" right above a "Genau: …" correction would read oddly; a synonym shows the word the card asked for.
-            var praise = fb.Synonym ? "Auch richtig!" : result.Exact ? PickPraise() : "Richtig!";
+            var praise = fb.Synonym ? L("Auch richtig!") : result.Exact ? PickPraise() : L("Richtig!");
             fb = fb with { Praise = praise };
             s.Feedback = fb;
             int ms = s.Options.AutoAdvance ? (result.Exact ? AdvanceMs : AdvanceMsWithNotes) : 0;
@@ -495,11 +542,27 @@ public static partial class WriteFlow
                 s.Input = "";
                 s.InputInvalid = false;
             }
-            var lead = fb.DontKnow ? "Kein Problem." : "Nicht ganz.";
+            var lead = fb.DontKnow ? L("Kein Problem.") : L("Nicht ganz.");
+            var answer = L($"Richtige Antwort: {info.Expected}.");
             var hint = fb.HintLabel is { } h ? $" {h}." : "";
-            var tail = fb.Copy ? " Tippe die richtige Antwort ab." : "";
-            Announce($"{lead} Richtige Antwort: {info.Expected}.{hint}{tail}");
+            var tail = fb.Copy ? " " + L("Tippe die richtige Antwort ab.") : "";
+            Announce($"{lead} {answer}{hint}{tail}");
             Lock();
+        }
+
+        /// <summary>
+        /// The copy typed out continues by itself after a short beat, like Enter (CopyStep); typing on so that it no
+        /// longer is stops the countdown.
+        /// </summary>
+        public void ContinueTypedOutCopy()
+        {
+            if (s.IsBlocked || s.Phase != Phase.Copy || (InfoFor(s.Question) ?? s.Question) is not { } info) return;
+            if (!CopyStep.IsTypedOut(s.Input, info.Expected, s.Options.Tolerance, info.AnswerLang))
+            {
+                ClearAdvance();
+                return;
+            }
+            if (s.AutoAdvance is null) StartAdvance(CopyStep.AdvanceMs);
         }
 
         void SubmitCopy(string value)
@@ -516,7 +579,7 @@ public static partial class WriteFlow
             {
                 s.InputInvalid = true;
                 s.Rejections++;
-                Announce("Noch nicht ganz – tippe die richtige Antwort genau ab.");
+                Announce(L("Noch nicht ganz – tippe die richtige Antwort genau ab."));
             }
         }
 
@@ -580,7 +643,7 @@ public static partial class WriteFlow
             s.Phase = Phase.Summary;
             s.Summary = summary;
             s.Results = null;
-            Announce($"Runde {summary.Round} geschafft: {summary.Correct} von {summary.Total} richtig.");
+            Announce(L($"Runde {summary.Round} geschafft: {summary.Correct} von {summary.Total} richtig."));
             Lock();
         }
 
@@ -619,7 +682,7 @@ public static partial class WriteFlow
             s.Results = new Results(stats, stats.MissedCardIds.Where(Usable).ToList(), CardIdsInSession().Count,
                 session.SetOptions.AnswerWith == AnswerWith.Both);
             var percent = JSCompat.NumberToString(JSCompat.Round(stats.Accuracy * 100));
-            Announce($"Geschafft! {percent} Prozent beim ersten Versuch richtig.");
+            Announce(L($"Geschafft! {percent} Prozent beim ersten Versuch richtig."));
             Lock();
         }
 
@@ -774,6 +837,7 @@ public static partial class WriteFlow
             if (!s.Phase.IsCard) return;
             if (s.Phase == Phase.FeedbackOf(FeedbackKind.Correct) && (resumesTimer || s.Options.AutoAdvance)) ShowCorrect();
             else if (s.Phase.IsMiss && copyChanged) ShowIncorrect();
+            else if (s.Phase == Phase.Copy) ContinueTypedOutCopy();
         }
 
         void ConfirmRestart(bool resumesTimer)
@@ -796,7 +860,11 @@ public static partial class WriteFlow
                     break;
                 case Prompt.RestartForOptions options:
                     if (confirmed && s.Session is { } session) StartFresh(session.Subset);
-                    else ResumeAfterOverlay(options.ResumesTimer, options.CopyChanged);
+                    else
+                    {
+                        KeepChangedOptions();
+                        ResumeAfterOverlay(options.ResumesTimer, options.CopyChanged);
+                    }
                     break;
                 case Prompt.ReplaceRound replace:
                     if (confirmed) StartFresh(replace.Wanted);

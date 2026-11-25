@@ -111,19 +111,37 @@ public sealed class SilentSpeech : SpeechService
     public override void Stop() { }
 }
 
-/// <summary>SAPI 5 through late-bound COM (no extra packages; works on every Windows 10/11).</summary>
+/// <summary>
+/// SAPI 5 through late-bound COM (no extra packages; works on every Windows 10/11). The voice and the list of installed
+/// voices come on first use (reading aloud, the voice settings): creating them is COM and registry work of a few hundred
+/// milliseconds that held up the window at every start. Stopping before that has nothing to stop.
+/// </summary>
 public sealed class SapiSpeech : SpeechService
 {
     const int SVSFlagsAsync = 1, SVSFPurgeBeforeSpeak = 2, SVSFIsNotXML = 16;
-    readonly dynamic _voice;
+    readonly Type _type;
+    bool _ready, _unavailable;
+    dynamic? _voice;
     /// <summary>The voice Windows reads with by default (Einstellungen › Sprachausgabe), for «Andere».</summary>
-    readonly object? _defaultToken;
-    readonly int _rate;
+    object? _defaultToken;
+    int _rate;
     readonly Dictionary<string, object> _tokens = new(StringComparer.Ordinal);
     readonly List<VoiceInfo> _voices = [];
 
-    SapiSpeech(dynamic voice)
+    SapiSpeech(Type type) => _type = type;
+
+    void EnsureReady()
     {
+        if (_ready) return;
+        _ready = true;
+        dynamic voice;
+        try { voice = Activator.CreateInstance(_type)!; }
+        catch (Exception)
+        {
+            // As before, when the app then took SilentSpeech: «Andere» counts as readable, nothing is heard.
+            _unavailable = true;
+            return;
+        }
         _voice = voice;
         try { _defaultToken = (object?)voice.Voice; }
         catch (Exception) { _defaultToken = null; }
@@ -213,7 +231,7 @@ public sealed class SapiSpeech : SpeechService
         try
         {
             var type = Type.GetTypeFromProgID("SAPI.SpVoice");
-            return type is null ? null : new SapiSpeech(Activator.CreateInstance(type)!);
+            return type is null ? null : new SapiSpeech(type);
         }
         catch (Exception)
         {
@@ -221,14 +239,29 @@ public sealed class SapiSpeech : SpeechService
         }
     }
 
-    public override IReadOnlyList<VoiceInfo> InstalledVoices => _voices;
+    public override IReadOnlyList<VoiceInfo> InstalledVoices
+    {
+        get
+        {
+            EnsureReady();
+            return _voices;
+        }
+    }
 
-    protected override bool HasDefaultVoice => _defaultToken is not null;
+    protected override bool HasDefaultVoice
+    {
+        get
+        {
+            EnsureReady();
+            return _unavailable || _defaultToken is not null;
+        }
+    }
 
     protected override void SpeakWith(VoiceInfo? voice, string text)
     {
+        EnsureReady();
         var token = voice is null ? _defaultToken : _tokens.GetValueOrDefault(voice.Id);
-        if (token is null) return;
+        if (token is null || _voice is null) return;
         try
         {
             _voice.Voice = (dynamic)token;
@@ -240,6 +273,7 @@ public sealed class SapiSpeech : SpeechService
 
     public override void Stop()
     {
+        if (_voice is null) return;
         try { _voice.Speak("", SVSFlagsAsync | SVSFPurgeBeforeSpeak); }
         catch (Exception) { }
     }
@@ -249,6 +283,7 @@ public sealed class SapiSpeech : SpeechService
     {
         get
         {
+            if (_voice is null) return false;
             try { return (int)_voice.Status.RunningState == 2; }
             catch (Exception) { return false; }
         }

@@ -8,9 +8,10 @@ import { LinkSigner } from '../lib/tokens.mjs';
 import { ConcurrencyGate, DailyBudget, DailyQuota, TokenBucket, WindowCounter, dayKey, downloadFloor } from '../lib/limits.mjs';
 import { compile, escapeHtml, render } from '../lib/templates.mjs';
 import { notModified, parseRange, pickEncoding } from '../lib/http.mjs';
-import { formatSize } from '../lib/releases.mjs';
+import { formatSize, githubReleaseUrl } from '../lib/releases.mjs';
 import { ByteRate } from '../lib/throttle.mjs';
 import { changelogView, compareVersions, parseChangelog } from '../lib/changelog.mjs';
+import { englishLabel, errorText, formatDate, languageOfPath, message, preferredLanguage } from '../lib/lang.mjs';
 
 describe('config', () => {
   it('has safe defaults', () => {
@@ -365,12 +366,80 @@ describe('changelog', () => {
     assert.equal(both.versions[0].changes.length, 3);
   });
 
+  it('reads the English line of an entry and shows it on the English page', () => {
+    const source = [
+      '## Nächste Version',
+      '- Neu: Arabisch und Mandarin,',
+      '  über zwei Zeilen.',
+      '  EN: Arabic and Mandarin,',
+      '  over two lines.',
+      '- Behoben (Mac): Ohne Englisch.',
+      'EN: nicht eingerückt',
+      '## 1.0 – 2026-10-14',
+    ].join('\n');
+    const log = parseChangelog(source);
+    assert.equal(log.upcoming[0].text, 'Arabisch und Mandarin, über zwei Zeilen.');
+    assert.equal(log.upcoming[0].textEn, 'Arabic and Mandarin, over two lines.');
+    assert.deepEqual(log.problems.map((p) => p.line), [7]);
+    const en = changelogView(log, releases('1.0', '1.0'), 'en').upcoming.changes;
+    assert.deepEqual(en.map((c) => [c.kindLabel, c.text, c.textLang]), [
+      ['New', 'Arabic and Mandarin, over two lines.', ''],
+      ['Fixed', 'Ohne Englisch.', 'de'],
+    ]);
+    assert.equal(changelogView(log, releases('1.0', '1.0')).upcoming.changes[0].text, 'Arabisch und Mandarin, über zwei Zeilen.');
+    assert.equal(changelogView(parseChangelog(SOURCE), releases('1.1', '1.1'), 'en').versions[0].dateLabel, '20 October 2026');
+  });
+
   it('is empty without entries', () => {
     const view = changelogView(parseChangelog('## Nächste Version\n\n## 1.0 – 2026-10-14\n'), releases('1.0', '1.0'));
     assert.equal(view.any, false);
     assert.equal(view.latest, null);
     // Without a starting point nothing is ever counted as released.
     assert.equal(changelogView(parseChangelog('## Nächste Version\n- Neu: X\n'), releases('1.0', '1.0')).upcoming.changes.length, 1);
+  });
+});
+
+describe('languages', () => {
+  it('picks German or English like lang.js: whichever the browser lists first', () => {
+    assert.equal(preferredLanguage(undefined), 'de', 'no header: German');
+    assert.equal(preferredLanguage(''), 'de');
+    assert.equal(preferredLanguage('de-CH,de;q=0.9,en;q=0.8'), 'de');
+    assert.equal(preferredLanguage('en-US,en;q=0.9,de;q=0.8'), 'en');
+    assert.equal(preferredLanguage('fr-CH, fr;q=0.9, de;q=0.7, en;q=0.8'), 'en', 'by weight, not order');
+    assert.equal(preferredLanguage('fr-CH,fr;q=0.9,de;q=0.8'), 'de');
+    assert.equal(preferredLanguage('ja,zh;q=0.5'), 'en', 'neither: English');
+    assert.equal(preferredLanguage('en;q=0,de'), 'de', 'q=0 means not wanted');
+    assert.equal(preferredLanguage('*'), 'en');
+  });
+
+  it('knows the English pages by their path', () => {
+    assert.equal(languageOfPath('/en'), 'en');
+    assert.equal(languageOfPath('/en/whats-new'), 'en');
+    assert.equal(languageOfPath('/english'), 'de');
+    assert.equal(languageOfPath('/'), 'de');
+  });
+
+  it('translates the labels of the release manifests and formats dates', () => {
+    assert.equal(englishLabel('macOS 26 oder neuer'), 'macOS 26 or later');
+    assert.equal(englishLabel('Windows 10 oder 11'), 'Windows 10 or 11');
+    assert.equal(englishLabel('Apple Silicon und Intel'), 'Apple Silicon and Intel');
+    assert.equal(englishLabel('64 Bit (x64)'), '64-bit (x64)');
+    assert.equal(formatDate('2026-10-20', 'en'), '20 October 2026');
+    assert.equal(formatDate('2026-10-20'), '20. Oktober 2026');
+    assert.equal(formatDate('', 'en'), '');
+  });
+
+  it('has every message in both languages', () => {
+    for (const status of [400, 401, 403, 404, 405, 410, 413, 414, 415, 421, 429, 500, 503]) {
+      assert.notDeepEqual(errorText(status, 'en'), errorText(status, 'de'), String(status));
+    }
+    for (const key of ['busy', 'refused', 'notYet', 'invalidLink', 'expired', 'otherDevice', 'newVersion', 'used', 'replacing']) {
+      const values = { platform: 'macOS', seconds: 120 };
+      assert.ok(message(key, 'en', values).message, key);
+      assert.notEqual(message(key, 'en', values).title, message(key, 'de', values).title, key);
+    }
+    assert.match(message('expired', 'en', { seconds: 120 }).message, /2 minutes/);
+    assert.match(message('expired', 'de', { seconds: 60 }).message, /1 Minute\b/);
   });
 });
 
@@ -406,5 +475,86 @@ describe('http helpers', () => {
   it('formats in Swiss German', () => {
     assert.equal(formatSize(9_437_184), '9.4 MB');
     assert.equal(formatSize(800), '1 KB');
+  });
+});
+
+describe('githubReleaseUrl', () => {
+  const repo = 'SuperStoked13/Wortschatz';
+  const file = 'Wortschatz-1.5-Windows.exe';
+  const good = `https://github.com/SuperStoked13/Wortschatz/releases/download/v1.5/${file}`;
+
+  it('takes a release file of the repository as GitHub writes it', () => {
+    assert.equal(githubReleaseUrl(good, repo, file), good);
+    assert.equal(githubReleaseUrl(good, 'superstoked13/wortschatz', file), good);
+    assert.equal(githubReleaseUrl(good.replace('v1.5', 'v1.6.2-mac'), repo, file), good.replace('v1.5', 'v1.6.2-mac'));
+  });
+
+  it('refuses everything else', () => {
+    for (const value of [
+      good.replace('https:', 'http:'),
+      good.replace('github.com', 'github.com.example.org'),
+      good.replace('github.com', 'GITHUB.com'),
+      good.replace('github.com', 'github.com:443'),
+      good.replace('https://', 'https://user@'),
+      good.replace('SuperStoked13', 'Other'),
+      good.replace('/Wortschatz/', '/Wortschatz2/'),
+      good.replace('/releases/download/', '/raw/main/'),
+      good.replace('/v1.5/', '/v1.5/sub/'),
+      good.replace('/v1.5/', '/../'),
+      good.replace('/v1.5/', '/%2e%2e/'),
+      good.replace('/v1.5/', '/-x/'),
+      `${good}?download=1`,
+      `${good}#x`,
+      good.replace(file, 'Wortschatz-1.4-Windows.exe'),
+      `${good} `,
+      'javascript:alert(1)',
+      '',
+      `https://github.com/SuperStoked13/Wortschatz/releases/download/v1.5/${'a'.repeat(400)}`,
+    ]) {
+      assert.equal(githubReleaseUrl(value, repo, file), '', value);
+    }
+    assert.equal(githubReleaseUrl(42, repo, file), '');
+    assert.equal(githubReleaseUrl(good, '', file), '');
+  });
+});
+
+describe('config: DOWNLOAD_REPO', () => {
+  it('defaults to the public repository and checks the form', () => {
+    assert.equal(loadConfig({}).downloadRepo, 'SuperStoked13/Wortschatz');
+    assert.equal(loadConfig({ DOWNLOAD_REPO: 'a-b/c.d_e' }).downloadRepo, 'a-b/c.d_e');
+    for (const value of ['nur-ein-teil', 'a/b/c', 'https://github.com/a/b', '-a/b', 'a/..', 'a b/c']) {
+      assert.throws(() => loadConfig({ DOWNLOAD_REPO: value }), /DOWNLOAD_REPO/, value);
+    }
+  });
+});
+
+describe('config: LISTEN_SOCKET', () => {
+  it('is off by default and takes only an absolute path', () => {
+    assert.equal(loadConfig({}).socket, '');
+    assert.equal(loadConfig({ LISTEN_SOCKET: '/run/wortschatz//web.sock' }).socket, '/run/wortschatz/web.sock');
+    for (const value of ['web.sock', './web.sock', `/${'x'.repeat(120)}`]) {
+      assert.throws(() => loadConfig({ LISTEN_SOCKET: value }), /LISTEN_SOCKET/, value);
+    }
+  });
+});
+
+describe('clientIp over the proxy socket', () => {
+  const trust = buildTrust('private');
+  const over = (header) => ({ socket: {}, headers: header === undefined ? {} : { 'x-forwarded-for': header } });
+
+  it('takes the address the proxy names, read from the right', () => {
+    assert.equal(clientIp(over('203.0.113.7'), trust, { proxySocket: true }), '203.0.113.7');
+    assert.equal(clientIp(over('198.51.100.1, 203.0.113.7'), trust, { proxySocket: true }), '203.0.113.7');
+    assert.equal(clientIp(over('203.0.113.7, 172.20.0.1'), trust, { proxySocket: true }), '203.0.113.7');
+  });
+
+  it('is nobody in particular without a usable header', () => {
+    assert.equal(clientIp(over(undefined), trust, { proxySocket: true }), '');
+    assert.equal(clientIp(over('kaputt'), trust, { proxySocket: true }), '');
+    assert.equal(ipKey(''), 'unknown');
+  });
+
+  it('changes nothing without the socket', () => {
+    assert.equal(clientIp(over('203.0.113.7'), trust), '');
   });
 });

@@ -1,8 +1,9 @@
 /*
-  Wortschatz website: the download buttons (with signed links from the server), the
-  Return key as the page's one primary action, toasts, copy buttons and the light on
-  interactive glass. Everything works without JavaScript too: the forms then post
-  directly and the server answers with the file.
+  Wortschatz website: the download buttons (with signed links from the server, or plain
+  links to the file on GitHub), the Return key as the page's one primary action, toasts,
+  copy buttons and the light on interactive glass. Everything works without JavaScript
+  too: the forms then post directly and the server answers with the file, and the links
+  are links.
 */
 (() => {
   'use strict';
@@ -10,6 +11,45 @@
   const html = document.documentElement;
   const still = window.matchMedia('(prefers-reduced-motion: reduce)');
   const SVG = 'http://www.w3.org/2000/svg';
+  const lang = html.lang.startsWith('en') ? 'en' : 'de';
+
+  // ------------------------------------------------------------- language
+
+  const TEXT = {
+    de: {
+      close: 'Meldung schliessen',
+      running: 'Download läuft',
+      failedTitle: 'Download nicht möglich',
+      failedText: 'Der Download konnte nicht gestartet werden. Versuch es gleich nochmals.',
+      started: 'Download gestartet',
+      next: 'So geht es weiter',
+      copy: 'Kopieren',
+      copied: 'Kopiert',
+      selected: 'Markiert',
+    },
+    en: {
+      close: 'Close message',
+      running: 'Downloading',
+      failedTitle: 'Download not possible',
+      failedText: 'The download couldn’t be started. Try again in a moment.',
+      started: 'Download started',
+      next: 'What to do next',
+      copy: 'Copy',
+      copied: 'Copied',
+      selected: 'Selected',
+    },
+  }[lang];
+
+  // The DE/EN switch: remembered for the next visit (lang.js), on this device only.
+  document.addEventListener('click', (event) => {
+    const target = event.target instanceof Element ? event.target.closest('[data-lang-switch]') : null;
+    if (!target) return;
+    try {
+      window.localStorage.setItem('wortschatz-sprache', target.dataset.langSwitch);
+    } catch {
+      // No storage (private window, blocked): the link still leads to the other language.
+    }
+  });
 
   // ------------------------------------------------------------- platform
 
@@ -27,21 +67,24 @@
   const isPhone = platform === 'ios' || platform === 'android';
   html.dataset.platform = platform;
 
-  /** Makes the form of `name` the primary (accent) button everywhere on the page. */
+  // A download is a form (the file from this server) or a link (the file on GitHub).
+  const DOWNLOADS = 'form.dl-form[data-platform], a.dl-link[data-platform]';
+
+  /** Makes the download of `name` the primary (accent) button everywhere on the page. */
   function makePrimary(name) {
-    for (const form of document.querySelectorAll('form.dl-form[data-platform]')) {
-      const primary = form.dataset.platform === name;
-      const button = form.querySelector('button');
+    for (const download of document.querySelectorAll(DOWNLOADS)) {
+      const primary = download.dataset.platform === name;
+      const button = download.matches('a') ? download : download.querySelector('button');
       button?.classList.toggle('btn-primary', primary);
       button?.classList.toggle('btn-glass', !primary);
-      const hint = form.querySelector('[data-return-hint]');
+      const hint = download.querySelector('[data-return-hint]');
       if (hint) hint.hidden = !primary || isPhone;
     }
   }
 
   const heroActions = document.querySelector('[data-hero-actions]');
   if (heroActions) {
-    const windowsForm = heroActions.querySelector('form[data-platform="windows"]');
+    const windowsForm = heroActions.querySelector('form[data-platform="windows"], a.dl-link[data-platform="windows"]');
     if (platform === 'windows' && windowsForm) {
       heroActions.prepend(windowsForm);
       makePrimary('windows');
@@ -96,7 +139,7 @@
     const close = document.createElement('button');
     close.type = 'button';
     close.className = 'toast-close';
-    close.setAttribute('aria-label', 'Meldung schliessen');
+    close.setAttribute('aria-label', TEXT.close);
     close.append(icon('i-close', 'i'));
 
     node.append(icon(tone === 'error' ? 'i-x-circle' : 'i-check-circle', 'toast-icon'), body, close);
@@ -126,7 +169,7 @@
 
   // ------------------------------------------------------------- downloads
 
-  const sizeFormat = new Intl.NumberFormat('de-CH', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+  const sizeFormat = new Intl.NumberFormat(lang === 'en' ? 'en-GB' : 'de-CH', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
   const formatSize = (bytes) =>
     bytes < 1_000_000 ? `${Math.max(1, Math.round(bytes / 1000))} KB` : `${sizeFormat.format(bytes / 1_000_000)} MB`;
 
@@ -135,10 +178,24 @@
     if (!label) return;
     const original = label.dataset.original || label.textContent;
     label.dataset.original = original;
-    label.textContent = 'Download läuft';
+    label.textContent = TEXT.running;
     window.setTimeout(() => {
       label.textContent = original;
     }, 4000);
+  }
+
+  /** After a download has begun: the button says so, a toast names the file, and the first-start steps open. */
+  function started(name, button, file, size) {
+    showStarted(button);
+    const help = document.querySelector(`details[data-help="${name === 'windows' ? 'windows' : 'mac'}"]`);
+    const bytes = Number(size);
+    toast({
+      title: TEXT.started,
+      text: file && bytes > 0 ? `${file}, ${formatSize(bytes)}` : file || '',
+      action: help ? { label: TEXT.next, href: `#${help.id}` } : null,
+    });
+    // Straight to the first-start steps, which are needed before the app opens.
+    if (help) openHelp(help.id);
   }
 
   async function startDownload(form) {
@@ -151,7 +208,8 @@
       try {
         response = await fetch(form.action, {
           method: 'POST',
-          headers: { Accept: 'application/json', 'Content-Type': 'application/x-www-form-urlencoded' },
+          // The server's messages in the page's language.
+          headers: { Accept: 'application/json', 'Accept-Language': lang, 'Content-Type': 'application/x-www-form-urlencoded' },
           body: new URLSearchParams(new FormData(form)).toString(),
           credentials: 'same-origin',
           cache: 'no-store',
@@ -171,21 +229,13 @@
       if (!response.ok || !data || typeof data.url !== 'string' || !data.url.startsWith('/dl/')) {
         toast({
           tone: 'error',
-          title: data?.title || 'Download nicht möglich',
-          text: data?.message || 'Der Download konnte nicht gestartet werden. Versuch es gleich nochmals.',
+          title: data?.title || TEXT.failedTitle,
+          text: data?.message || TEXT.failedText,
         });
         return;
       }
       window.location.assign(data.url);
-      showStarted(button);
-      const name = form.dataset.platform === 'windows' ? 'windows' : 'mac';
-      toast({
-        title: 'Download gestartet',
-        text: `${data.file}, ${formatSize(data.size)}`,
-        action: { label: 'So geht es weiter', href: `#hilfe-${name}` },
-      });
-      // Straight to the first-start steps, which are needed before the app opens.
-      openHelp(`hilfe-${name}`);
+      started(form.dataset.platform, button, data.file, data.size);
     } finally {
       delete form.dataset.busy;
       button?.classList.remove('is-busy');
@@ -198,6 +248,14 @@
     if (!window.fetch || !window.URLSearchParams || !window.FormData) return;
     event.preventDefault();
     startDownload(form);
+  });
+
+  // A link to the file on GitHub: the browser follows it and saves the file (the page stays);
+  // here only what follows a download. A click with a modifier opens a tab instead, so nothing.
+  document.addEventListener('click', (event) => {
+    const link = event.target instanceof Element ? event.target.closest('a.dl-link[data-platform]') : null;
+    if (!link || event.defaultPrevented || event.button !== 0 || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+    started(link.dataset.platform, link, link.dataset.file, link.dataset.size);
   });
 
   // --------------------------------------------- the page's Return action
@@ -220,13 +278,14 @@
     const active = document.activeElement;
     if (active && active !== document.body && active !== html) return;
     if (!heroActions || !heroInView || isPhone) return;
-    const button = heroActions.querySelector('form .btn-primary');
-    const form = button?.closest('form');
-    if (!form) return;
+    const button = heroActions.querySelector('form .btn-primary, a.dl-link.btn-primary');
+    if (!button) return;
     event.preventDefault();
     button.classList.add('is-pressed');
     window.setTimeout(() => button.classList.remove('is-pressed'), 160);
-    startDownload(form);
+    // A link: as if clicked (follows it, and the click handler above does the rest).
+    if (button.matches('a')) button.click();
+    else startDownload(button.closest('form'));
   });
 
   const release = () => bigKey?.classList.remove('is-down');
@@ -242,14 +301,17 @@
     const copy = target?.closest('[data-copy]');
     if (copy) {
       const label = copy.querySelector('[data-copy-label]');
+      if (label && !label.dataset.original) label.dataset.original = label.textContent;
       const reset = () => {
         copy.classList.remove('is-done');
-        if (label) label.textContent = 'Kopieren';
+        if (label) label.textContent = label.dataset.original || TEXT.copy;
       };
+      // A link to this page: at the address it was opened under (the Cloudflare address works where DuckDNS is blocked).
+      const text = copy.hasAttribute('data-copy-page') ? window.location.origin + window.location.pathname : copy.dataset.copy;
       try {
-        await navigator.clipboard.writeText(copy.dataset.copy);
+        await navigator.clipboard.writeText(text);
         copy.classList.add('is-done');
-        if (label) label.textContent = 'Kopiert';
+        if (label) label.textContent = TEXT.copied;
       } catch {
         const code = copy.parentElement?.querySelector('[data-checksum]');
         if (code) {
@@ -258,15 +320,17 @@
           const selection = window.getSelection();
           selection?.removeAllRanges();
           selection?.addRange(range);
-          if (label) label.textContent = 'Markiert';
+          if (label) label.textContent = TEXT.selected;
+        } else if (label) {
+          label.textContent = text;
         }
       }
       window.setTimeout(reset, 2200);
       return;
     }
 
-    const help = target?.closest('a[href^="#hilfe-"]');
-    if (help) {
+    const help = target?.closest('a[href^="#"]');
+    if (help && document.getElementById(help.getAttribute('href').slice(1)) instanceof HTMLDetailsElement) {
       event.preventDefault();
       const id = help.getAttribute('href').slice(1);
       openHelp(id);
@@ -283,7 +347,11 @@
     details.querySelector('summary')?.focus({ preventScroll: true });
   }
 
-  if (location.hash.startsWith('#hilfe-')) openHelp(location.hash.slice(1));
+  try {
+    if (location.hash.length > 1) openHelp(decodeURIComponent(location.hash.slice(1)));
+  } catch {
+    // a broken address: nothing to open
+  }
 
   // ----------------------------------------------------- light on glass
 

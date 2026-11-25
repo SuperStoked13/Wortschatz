@@ -53,7 +53,7 @@ struct ImportTextView: NSViewRepresentable {
         textView.textContainer?.widthTracksTextView = true
         textView.focusRingType = .none
         textView.string = text
-        textView.setAccessibilityLabel("Vokabelliste zum Importieren")
+        textView.setAccessibilityLabel(String(localized: "Vokabelliste zum Importieren"))
         textView.setAccessibilityIdentifier("editor-import-text")
         textView.setAccessibilityHelp(ImportPanelModel.hint)
         textView.onImport = { [weak coordinator] sources in coordinator?.parent.onImport(sources) }

@@ -10,6 +10,8 @@ struct LearnFinishView: View {
     let cards: [Card]
     let termLang: Lang
     let defLang: Lang
+    /// The set, for the ★ in "Am häufigsten falsch" (nil: no stars, e.g. in snapshots).
+    var setID: String? = nil
     /// The longest run of correct answers while the screen was open (`AnswerStreak.best`).
     var bestStreak = 0
     /// The repetition questions of the session, if it had them.
@@ -48,14 +50,18 @@ struct LearnFinishView: View {
 
             Grid(horizontalSpacing: Spacing.s, verticalSpacing: Spacing.s) {
                 GridRow {
-                    StatTile(stats.total == 1 ? "Begriff" : "Begriffe", value: "\(stats.total)", systemImage: "square.stack.3d.up.fill")
                     StatTile(
-                        stats.rounds == 1 ? "Runde" : "Runden", value: "\(stats.rounds)",
+                        stats.total == 1 ? String(localized: "Begriff") : String(localized: "Begriffe"), value: "\(stats.total)",
+                        systemImage: "square.stack.3d.up.fill")
+                    StatTile(
+                        stats.rounds == 1 ? String(localized: "Runde") : String(localized: "Runden"), value: "\(stats.rounds)",
                         systemImage: "arrow.trianglehead.2.clockwise", tint: Theme.info.fill)
                     StatTile(
-                        stats.answered == 1 ? "Antwort" : "Antworten", value: "\(stats.answered)",
+                        stats.answered == 1 ? String(localized: "Antwort") : String(localized: "Antworten (Mehrzahl)", defaultValue: "Antworten", comment: "Noun: the answers (not the button to answer)"), value: "\(stats.answered)",
                         systemImage: "text.bubble.fill", tint: Theme.learning.fill)
-                    StatTile("Treffer", value: WriteFlow.percentText(stats.accuracy), systemImage: "target", tint: Theme.success.fill)
+                    StatTile(
+                        String(localized: "Treffer"), value: WriteFlow.percentText(stats.accuracy), systemImage: "target",
+                        tint: Theme.success.fill)
                     let time = WriteFlow.compactDuration(stats.elapsedMs)
                     StatTile(time.label, value: time.value, systemImage: "clock.fill", tint: Theme.flame)
                 }
@@ -86,7 +92,9 @@ struct LearnFinishView: View {
                     .foregroundStyle(Theme.accentText)
                     .padding(.top, Spacing.xs)
             } else {
-                LearnTermList(title: "Am häufigsten falsch", rows: hardestRows, termLang: termLang, defLang: defLang)
+                LearnTermList(
+                    title: String(localized: "Am häufigsten falsch"), rows: hardestRows, termLang: termLang, defLang: defLang,
+                    starSetID: setID)
             }
         }
         .celebration(origin: UnitPoint(x: 0.5, y: 0.1))
@@ -109,6 +117,7 @@ struct LearnFinishView: View {
 /// The primary button is the Return action ("Fortschritt zurücksetzen und neu lernen",
 /// "Begriffe hinzufügen", "Alle Begriffe üben").
 struct LearnMessageView: View {
+    @Environment(\.studyScale) private var studyScale
     let state: LearnFlow.State
     let send: (LearnFlow.Event) -> Void
     let onWrite: () -> Void
@@ -129,7 +138,7 @@ struct LearnMessageView: View {
                         }
                     }
                 }
-                .frame(maxWidth: LayoutMetrics.studyColumnWidth)
+                .frame(maxWidth: LayoutMetrics.studyColumnWidth * StudyScale.widthFactor(studyScale))
             }
         }
     }

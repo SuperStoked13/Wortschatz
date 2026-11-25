@@ -1,3 +1,5 @@
+using static Wortschatz.Core.CoreText;
+
 namespace Wortschatz.Core;
 
 // Port of Flashcards.swift. Karteikarten (Quizlet's Flashcards with "Fortschritt verfolgen"): the cards
@@ -355,7 +357,7 @@ public sealed class FlashcardDeck : IJsonEncodable
     }
 }
 
-/// <summary>German texts of the flashcards screen.</summary>
+/// <summary>Texts of the flashcards screen (German source, translated with <see cref="CoreText.L(string)"/>).</summary>
 public static class FlashcardCopy
 {
     /// <summary>"1 Karte", "12 Karten".</summary>
@@ -364,37 +366,41 @@ public static class FlashcardCopy
     /// <summary>The set page's line under a running deck: "Runde 2 · 8 von 12 gewusst".</summary>
     public static string RunningDetail(FlashcardDeck deck)
     {
-        var round = deck.Phase == FlashcardDeck.DeckPhase.RoundDone ? $"Runde {deck.Round} geschafft" : $"Runde {deck.Round}";
-        var parts = new List<string> { round, $"{deck.KnownCount} von {deck.Total} gewusst" };
-        if (deck.StarredOnly) parts.Insert(0, "Nur markierte");
+        var round = deck.Phase == FlashcardDeck.DeckPhase.RoundDone ? L($"Runde {deck.Round} geschafft") : L($"Runde {deck.Round}");
+        var parts = new List<string> { round, L($"{deck.KnownCount} von {deck.Total} gewusst") };
+        if (deck.StarredOnly) parts.Insert(0, L("Nur markierte"));
         return string.Join(" · ", parts);
     }
 
     /// <summary>The Return action after a round: "Weiter mit 4 Karten".</summary>
-    public static string NextRoundAction(FlashcardDeck deck) => $"Weiter mit {Cards(deck.LearningCount)}";
+    public static string NextRoundAction(FlashcardDeck deck) => L($"Weiter mit {Cards(deck.LearningCount)}");
 
-    public static string RoundDoneTitle(FlashcardDeck deck) => deck.KnownInRound == 0 ? "Bleib dran!" : "Du machst Fortschritte!";
+    public static string RoundDoneTitle(FlashcardDeck deck) => deck.KnownInRound == 0 ? L("Bleib dran!") : L("Du machst Fortschritte!");
 
     /// <summary>"Du kennst 8 von 12 Karten. Die 4 Karten, die du noch lernst, kommen jetzt nochmal."</summary>
     public static string RoundDoneText(FlashcardDeck deck)
     {
         int learning = deck.LearningCount;
         var again = learning == 1
-            ? "Die Karte, die du noch lernst, kommt jetzt nochmal."
-            : $"Die {learning} Karten, die du noch lernst, kommen jetzt nochmal.";
-        return $"Du kennst {deck.KnownCount} von {Cards(deck.Total)}. {again}";
+            ? L("Die Karte, die du noch lernst, kommt jetzt nochmal.")
+            : L($"Die {learning} Karten, die du noch lernst, kommen jetzt nochmal.");
+        var known = L($"Du kennst {deck.KnownCount} von {Cards(deck.Total)}.");
+        return $"{known} {again}";
     }
 
     public static string FinishedTitle(FlashcardDeck deck) =>
-        deck.Total == 1 ? "Super, du kennst die Karte!" : $"Super, du kennst alle {deck.Total} Karten!";
+        deck.Total == 1 ? L("Super, du kennst die Karte!") : L($"Super, du kennst alle {deck.Total} Karten!");
 
     public static string FinishedText(FlashcardDeck deck)
     {
-        var rounds = deck.Round == 1 ? "Gleich in der ersten Runde – stark." : $"Geschafft in {deck.Round} Runden.";
-        return $"{rounds} Teste dich jetzt in «Lernen», damit sie auch als gemeistert zählen.";
+        var rounds = deck.Round == 1 ? L("Gleich in der ersten Runde – stark.") : L($"Geschafft in {deck.Round} Runden.");
+        var test = deck.Total == 1
+            ? L("Teste dich jetzt in «Lernen», damit sie auch als gemeistert zählt.")
+            : L("Teste dich jetzt in «Lernen», damit sie auch als gemeistert zählen.");
+        return $"{rounds} {test}";
     }
 
     /// <summary>The confirmation before starting over.</summary>
     public static string RestartMessage(FlashcardDeck deck) =>
-        $"Deine Sortierung ({RunningDetail(deck)}) beginnt von vorne. Dein Lernfortschritt bleibt erhalten.";
+        L($"Deine Sortierung ({RunningDetail(deck)}) beginnt von vorne. Dein Lernfortschritt bleibt erhalten.");
 }

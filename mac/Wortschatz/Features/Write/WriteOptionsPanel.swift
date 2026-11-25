@@ -4,9 +4,9 @@ import WortschatzCore
 /// The Write options (⌘K, toolbar "Optionen"): what this set does differently from the
 /// standard, then direction, order, the copy step, auto-advance, read-aloud and the tolerance
 /// (port of the web app's options sheet in Write mode, src/screens/write-dialogs.js with
-/// src/ui/study-options.js). Every change is stored at once for this set; when the popover
-/// closes, a new direction or order asks to restart (`WriteFlow`). "Neu starten" asks right
-/// away, "Fertig" (↩) closes.
+/// src/ui/study-options.js). Every change is stored for this set and applies at once, also to the
+/// running session (`WriteFlow`: direction and order via `WriteSession.setOptions`). "Neu starten"
+/// asks right away, "Fertig" (↩) closes.
 struct WriteOptionsPanel: View {
     let controller: WriteController
 
@@ -22,7 +22,7 @@ struct WriteOptionsPanel: View {
                 ) {
                     controller.resetOptionsToStandard()
                 }
-                WriteOptionsSections(options: options, termLang: termLang, defLang: defLang) {
+                WriteOptionsSections(options: options, termLang: termLang, defLang: defLang, setID: controller.setID) {
                     controller.updateOptions($0)
                 }
             }
@@ -45,6 +45,7 @@ struct WriteOptionsPanel: View {
                 .buttonStyle(.borderedProminent)
             }
             .controlSize(.large)
+            .buttonBorderShape(.capsule)
             .padding(.horizontal, Spacing.l)
             .padding(.vertical, Spacing.m)
         }
@@ -59,6 +60,8 @@ struct WriteOptionsSections: View {
     let options: StudyOptions
     let termLang: Lang
     let defLang: Lang
+    /// The set whose own "Soundeffekte" and synonyms switches show (nil: none).
+    var setID: String? = nil
     let update: (StudyOptionsPatch) -> Void
 
     var body: some View {
@@ -89,6 +92,9 @@ struct WriteOptionsSections: View {
                 Text("Vorlesen")
                 Text("Begriffe in der Lernsprache automatisch vorlesen.")
             }
+            if let setID {
+                SetSoundEffectsToggle(setID: setID)
+            }
         } header: {
             Text("Abfrage")
         }
@@ -103,6 +109,9 @@ struct WriteOptionsSections: View {
                     Text(item.label)
                     Text(item.example)
                 }
+            }
+            if let setID {
+                SetExtendedSynonymsToggle(setID: setID)
             }
         } header: {
             Text("Toleranz")
@@ -120,35 +129,40 @@ struct WriteOptionsSections: View {
 
 /// Texts of the Write options form (src/ui/study-options.js, Write mode).
 enum WriteOptionsCopy {
-    /// "Du siehst Deutsch und schreibst Französisch." (`directionText` in Write mode).
+    /// "Du siehst Deutsch und schreibst Französisch." (`directionText` in Write mode): one whole
+    /// sentence per way the two sides are named (`sideNames` of study-options.js: by language,
+    /// Begriff/Definition when both sides share one, Lernsprache/Übersetzung without one).
     static func directionText(_ answerWith: AnswerWith, termLang: Lang, defLang: Lang) -> String {
-        if answerWith == .both { return "Jede Karte wird in beide Richtungen abgefragt." }
-        let names = sideNames(termLang: termLang, defLang: defLang)
-        let (shown, typed) = answerWith == .definition ? (names.term, names.definition) : (names.definition, names.term)
-        return "Du siehst \(shown.seen) und schreibst \(typed.written)."
-    }
-
-    private struct Side {
-        let seen: String
-        let written: String
-    }
-
-    /// `sideNames` of study-options.js (the parts Write mode's sentence needs).
-    private static func sideNames(termLang: Lang, defLang: Lang) -> (term: Side, definition: Side) {
+        if answerWith == .both { return String(localized: "Jede Karte wird in beide Richtungen abgefragt.") }
         if termLang != .other && termLang == defLang {
-            return (
-                Side(seen: "den Begriff", written: "den Begriff"),
-                Side(seen: "die Definition", written: "die Definition")
-            )
+            return answerWith == .definition
+                ? String(localized: "Du siehst den Begriff und schreibst die Definition.")
+                : String(localized: "Du siehst die Definition und schreibst den Begriff.")
         }
-        func named(_ lang: Lang) -> Side {
-            let name = Labels.langName(lang)
-            return Side(seen: name, written: name)
+        // The sides' language names; nil without a language.
+        let termName = termLang != .other ? Labels.langName(termLang) : nil
+        let definitionName = defLang != .other ? Labels.langName(defLang) : nil
+        if answerWith == .definition {
+            switch (termName, definitionName) {
+            case let (term?, definition?):
+                return String(localized: "Du siehst \(term) und schreibst \(definition).")
+            case let (term?, nil):
+                return String(localized: "Du siehst \(term) und schreibst die Übersetzung.")
+            case let (nil, definition?):
+                return String(localized: "Du siehst den Begriff in der Lernsprache und schreibst \(definition).")
+            case (nil, nil):
+                return String(localized: "Du siehst den Begriff in der Lernsprache und schreibst die Übersetzung.")
+            }
         }
-        return (
-            termLang != .other
-                ? named(termLang) : Side(seen: "den Begriff in der Lernsprache", written: "in der Lernsprache"),
-            defLang != .other ? named(defLang) : Side(seen: "die Übersetzung", written: "die Übersetzung")
-        )
+        switch (definitionName, termName) {
+        case let (definition?, term?):
+            return String(localized: "Du siehst \(definition) und schreibst \(term).")
+        case let (definition?, nil):
+            return String(localized: "Du siehst \(definition) und schreibst in der Lernsprache.")
+        case let (nil, term?):
+            return String(localized: "Du siehst die Übersetzung und schreibst \(term).")
+        case (nil, nil):
+            return String(localized: "Du siehst die Übersetzung und schreibst in der Lernsprache.")
+        }
     }
 }

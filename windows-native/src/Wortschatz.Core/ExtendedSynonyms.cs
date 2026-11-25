@@ -1,4 +1,3 @@
-using System.Globalization;
 using System.Text;
 
 namespace Wortschatz.Core;
@@ -8,68 +7,13 @@ public sealed record SynonymQuery(string Prompt, string Expected, Lang PromptLan
 
 /// <summary>
 /// Port of ExtendedSynonyms.swift: the pure part of accepting synonyms that are not in the set.
-/// The Mac app asks Apple's on-device language model for translations; Windows has no such model
-/// yet, so the app passes no <c>extraAnswers</c>. The functions are here so a future model (or a
-/// dictionary) can plug in exactly like on the Mac.
+/// The Mac app asks Apple's on-device language model for translations; Windows and Android have no
+/// such model and take the expected answer's synonyms from built-in thesauri instead
+/// (ExtendedSynonyms.Thesaurus.cs, SynonymLexicon). The Swift file's language-model part (translation
+/// request, cleaning and matching the model's answers) has no counterpart here.
 /// </summary>
-public static class ExtendedSynonyms
+public static partial class ExtendedSynonyms
 {
-    public static readonly IReadOnlyDictionary<Lang, string> ModelLanguageNames = new Dictionary<Lang, string>
-    {
-        [Lang.De] = "German", [Lang.Fr] = "French", [Lang.En] = "English", [Lang.Es] = "Spanish", [Lang.It] = "Italian", [Lang.Zh] = "Chinese",
-    };
-
-    const int MaxAnswerLength = 60;
-    const int MaxAnswerWords = 5;
-    const int MaxTranslations = 8;
-
-    public static bool Supports(SynonymQuery q) =>
-        q.PromptLang != q.AnswerLang && ModelLanguageNames.ContainsKey(q.PromptLang) && ModelLanguageNames.ContainsKey(q.AnswerLang)
-        && HasLetters(q.Prompt) && HasLetters(q.Expected);
-
-    public static string? TranslationRequest(string text, Lang from, Lang to)
-    {
-        if (!ModelLanguageNames.TryGetValue(from, out var source) || !ModelLanguageNames.TryGetValue(to, out var target)) return null;
-        var quoted = TextNormalizer.NormalizeBasic(text).Replace("\"", "'");
-        return $"Translate the {source} word or phrase \"{quoted}\" into {target}.";
-    }
-
-    public static bool WorthChecking(string given, GradeResult result, SynonymQuery query, Card? card, IReadOnlyList<Card> cards, AskSide ask)
-    {
-        if (result.Correct || result.Hint is not null || !Supports(query)) return false;
-        var text = JSCompat.Trim(given);
-        if (!HasLetters(text) || new StringInfo(text).LengthInTextElements > MaxAnswerLength
-            || text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries).Length > MaxAnswerWords) return false;
-        if (AlternativeKeys(query.Prompt, query.PromptLang).Contains(LooseKey(text, query.PromptLang))) return false;
-        if (card is not null && Synonyms.IsAnswerOfOtherCard(text, card, cards, ask, query.AnswerLang)) return false;
-        return true;
-    }
-
-    public static List<string> CleanTranslations(IEnumerable<string> raw, Lang lang)
-    {
-        var output = new List<string>();
-        var seen = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var item in raw)
-        {
-            foreach (var alt in Grading.SplitAlternatives(item, lang))
-            {
-                var text = JSCompat.Trim(StripBracketed(alt)).Trim('"', '\'', '«', '»', '“', '”', '„', '.', ' ', '\t');
-                if (!HasLetters(text) || new StringInfo(text).LengthInTextElements > MaxAnswerLength) continue;
-                var key = LooseKey(text, lang);
-                if (key.Length == 0 || !seen.Add(key)) continue;
-                output.Add(text);
-                if (output.Count == MaxTranslations) return output;
-            }
-        }
-        return output;
-    }
-
-    public static string? MatchingTranslation(string given, IEnumerable<string> translations, Tolerance tolerance, Lang lang) =>
-        translations.FirstOrDefault(t => Grading.Grade(given, t, tolerance, lang).Correct);
-
-    public static bool ConfirmsPrompt(IReadOnlyList<string> backTranslations, string prompt, Lang lang) =>
-        backTranslations.Count > 0 && AlternativeKeys(prompt, lang).Contains(LooseKey(backTranslations[0], lang));
-
     /// <summary>Comparison key: lower case, no accents, ss for ß, no punctuation or bracketed notes, no leading article.</summary>
     public static string LooseKey(string text, Lang? lang)
     {
@@ -92,7 +36,25 @@ public static class ExtendedSynonyms
         return sb.ToString();
     }
 
-    internal static List<string> ArticlePrefixes(Lang? lang)
+    /// <summary>
+    /// The articles and reflexive pronouns <see cref="LooseKey"/> drops, longest first. Worked out once per language:
+    /// LooseKey runs for every card of the set after a wrong answer (is it another card's answer?), and building the
+    /// list every time cost more than the rest of the key.
+    /// </summary>
+    internal static IReadOnlyList<string> ArticlePrefixes(Lang? lang)
+    {
+        var key = lang?.Raw() ?? "\0";
+        lock (PrefixLock)
+        {
+            if (!PrefixCache.TryGetValue(key, out var list)) PrefixCache[key] = list = BuildArticlePrefixes(lang);
+            return list;
+        }
+    }
+
+    static readonly Dictionary<string, IReadOnlyList<string>> PrefixCache = new(StringComparer.Ordinal);
+    static readonly Lock PrefixLock = new();
+
+    static IReadOnlyList<string> BuildArticlePrefixes(Lang? lang)
     {
         var langs = lang is { } l ? [l] : Grading.ARTICLES.Keys.ToArray();
         var prefixes = new HashSet<string>(StringComparer.Ordinal);
@@ -106,7 +68,7 @@ public static class ExtendedSynonyms
             foreach (var pronoun in Grading.REFLEXIVES.GetValueOrDefault(l2) ?? [])
                 if (pronoun.EndsWith(' ') || pronoun.EndsWith('\'')) prefixes.Add(pronoun);
         }
-        return prefixes.OrderByDescending(p => p.Length).ThenBy(p => p, StringComparer.Ordinal).ToList();
+        return prefixes.OrderByDescending(p => p.Length).ThenBy(p => p, StringComparer.Ordinal).ToArray();
     }
 
     internal static HashSet<string> AlternativeKeys(string text, Lang? lang)

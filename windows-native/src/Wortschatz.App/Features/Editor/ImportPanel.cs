@@ -15,6 +15,7 @@ using Wortschatz.App.DesignSystem;
 using Wortschatz.App.Features.Study;
 using Wortschatz.App.Services;
 using Wortschatz.Core;
+using static Wortschatz.Core.CoreText;
 
 namespace Wortschatz.App.Features.Editor;
 
@@ -68,9 +69,9 @@ public sealed partial class SetEditorScreen
         var p = WsTheme.P;
         var icon = new Border { Width = 36, Height = 36, CornerRadius = new CornerRadius(10), Background = WsTheme.B(p.AccentSoft), Child = Icons.Icon(IconName.Sparkles, 18, p.Accent, 2), VerticalAlignment = VerticalAlignment.Top };
         icon.Child!.HorizontalAlignment = HorizontalAlignment.Center;
-        string subtitle = AppDevice.ReadsPhotos ? "Text einfügen, Datei hochladen oder Foto – die Paare werden automatisch erkannt."
-            : "Text einfügen oder Datei hochladen – die Paare werden automatisch erkannt.";
-        var texts = Ui.V(2, Ui.Text("Vokabelliste importieren", 16, FontWeight.Bold), Ui.Text(subtitle, 13.5, color: p.TextSecondary, wrap: TextWrapping.Wrap));
+        string subtitle = AppDevice.ReadsPhotos ? L("Text einfügen, Datei hochladen oder Foto – die Paare werden automatisch erkannt.")
+            : L("Text einfügen oder Datei hochladen – die Paare werden automatisch erkannt.");
+        var texts = Ui.V(2, Ui.Text(L("Vokabelliste importieren"), 16, FontWeight.Bold), Ui.Text(subtitle, 13.5, color: p.TextSecondary, wrap: TextWrapping.Wrap));
         _chevron = Icons.Icon(IconName.ChevronRight, 16, p.TextSecondary, 2.2);
         _chevron.VerticalAlignment = VerticalAlignment.Center;
         _chevron.RenderTransformOrigin = RelativePoint.Center;
@@ -81,7 +82,7 @@ public sealed partial class SetEditorScreen
         header.Children.Add(texts);
         Grid.SetColumn(_chevron, 2);
         header.Children.Add(_chevron);
-        _importHeader = Ui.Clickable(header, ToggleImport, "Vokabelliste importieren", 14, padding: new Thickness(4));
+        _importHeader = Ui.Clickable(header, ToggleImport, L("Vokabelliste importieren"), 14, padding: new Thickness(4));
         AutomationProperties.SetHelpText(_importHeader, subtitle);
         AutomationProperties.SetHeadingLevel(_importHeader, 2);
 
@@ -102,7 +103,7 @@ public sealed partial class SetEditorScreen
             BorderThickness = new Thickness(1),
         };
         _importBox.Classes.Add("ws");
-        AutomationProperties.SetName(_importBox, "Vokabelliste zum Importieren");
+        AutomationProperties.SetName(_importBox, L("Vokabelliste zum Importieren"));
         AutomationProperties.SetHelpText(_importBox, SetEditorCopy.ImportHint);
         _importBox.TextChanged += (_, _) => EditImportText(_importBox.Text ?? "");
         // Ctrl+V of a copied image or copied files (the text box itself only pastes text).
@@ -135,7 +136,7 @@ public sealed partial class SetEditorScreen
             top.Children.Add(drop);
         }
 
-        _clearButton = Ui.PlainButton("Text leeren", ClearImportText, IconName.X);
+        _clearButton = Ui.PlainButton(L("Text leeren"), ClearImportText, IconName.X);
         var hint = Ui.Text(SetEditorCopy.ImportHint, 13, color: p.TextSecondary, wrap: TextWrapping.Wrap);
         var tools = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto"), ColumnSpacing = 10 };
         tools.Children.Add(hint);
@@ -182,7 +183,7 @@ public sealed partial class SetEditorScreen
         if (_importBody is null) return;
         _importBody.IsVisible = _importOpen;
         _chevron.RenderTransform = new RotateTransform(_importOpen ? 90 : 0);
-        AutomationProperties.SetItemStatus(_importHeader, _importOpen ? "Ausgeklappt" : "Eingeklappt");
+        AutomationProperties.SetItemStatus(_importHeader, _importOpen ? L("Ausgeklappt") : L("Eingeklappt"));
         _clearButton.IsVisible = HasImportText;
         _detection.IsVisible = _parsed is not null;
     }
@@ -219,20 +220,20 @@ public sealed partial class SetEditorScreen
         tiles.Children.Add(Tile(IconName.Magnifier, 7, 13, -1));
         AutomationProperties.SetAccessibilityView(tiles, AccessibilityView.Raw);
         // Phone: nothing to drag; photos need text recognition (not on the phone yet).
-        var title = Ui.Text(AppDevice.IsPhone ? "Datei importieren" : "Datei hierher ziehen", 15, FontWeight.Bold);
-        var formats = Ui.Text(AppDevice.ReadsPhotos ? "TXT, CSV, PDF oder Foto" : "TXT, CSV oder PDF", 13, color: p.TextSecondary);
+        var title = Ui.Text(AppDevice.IsPhone ? L("Datei importieren") : L("Datei hierher ziehen"), 15, FontWeight.Bold);
+        var formats = Ui.Text(AppDevice.ReadsPhotos ? L("TXT, CSV, PDF oder Foto") : L("TXT, CSV oder PDF"), 13, color: p.TextSecondary);
         title.HorizontalAlignment = formats.HorizontalAlignment = HorizontalAlignment.Center;
-        var choose = Ui.Secondary("Datei wählen …", () => _ = OpenFile(), IconName.Upload, height: 34);
+        var choose = Ui.Secondary(L("Datei wählen …"), () => _ = OpenFile(), IconName.Upload, height: 34);
         choose.HorizontalAlignment = HorizontalAlignment.Center;
-        var paste = Ui.PlainButton("Aus Zwischenablage", () => _ = Paste(), null, p.AccentText, 28);
+        var paste = Ui.PlainButton(L("Aus Zwischenablage"), () => _ = Paste(), null, p.AccentText, 28);
         if (paste.Chrome.Child is StackPanel row) row.Children.Add(Ui.KeyCap("Ctrl V"));
         paste.HorizontalAlignment = HorizontalAlignment.Center;
-        ToolTip.SetTip(paste, AppDevice.IsPhone ? "Kopierten Text importieren" : "Text, ein kopiertes Bild oder kopierte Dateien importieren (Ctrl+V im Textfeld)");
+        ToolTip.SetTip(paste, AppDevice.IsPhone ? L("Kopierten Text importieren") : L("Text, ein kopiertes Bild oder kopierte Dateien importieren (Ctrl+V im Textfeld)"));
         // Phone with a camera: photograph the list in the book (the most direct way on a phone).
         WsButton? photo = null;
         if (AppDevice.IsPhone && AppDevice.TakePhoto is not null && AppDevice.ReadsPhotos)
         {
-            photo = Ui.Primary("Foto aufnehmen", () => _ = TakePhoto(), null, IconName.Camera, 38);
+            photo = Ui.Primary(L("Foto aufnehmen"), () => _ = TakePhoto(), null, IconName.Camera, 38);
             photo.HorizontalAlignment = HorizontalAlignment.Center;
         }
         var body = Ui.V(6, tiles, Ui.V(1, title, formats), photo, choose, paste);
@@ -291,7 +292,7 @@ public sealed partial class SetEditorScreen
         var p = WsTheme.P;
         var separators = new WsSegmented(ImportSeparatorExtensions.All.Select(s => s.Label()).ToList(), (int)_separator, 88);
         separators.HorizontalAlignment = HorizontalAlignment.Left;
-        AutomationProperties.SetName(separators, "Trennung zwischen Begriff und Definition");
+        AutomationProperties.SetName(separators, L("Trennung zwischen Begriff und Definition"));
         separators.SelectionChanged += i =>
         {
             _separator = ImportSeparatorExtensions.All[i];
@@ -299,12 +300,12 @@ public sealed partial class SetEditorScreen
             ParseNow();
             if (_separator == ImportSeparator.Custom) Dispatcher.UIThread.Post(() => _customBox.Focus(), DispatcherPriority.Input);
         };
-        _customBox = Ui.Field("z. B. /", _customSeparator, 13, 32);
+        _customBox = Ui.Field(L("z. B. /"), _customSeparator, 13, 32);
         _customBox.Width = 84;
         _customBox.Padding = new Thickness(10, 4);
         _customBox.CornerRadius = new CornerRadius(8);
         _customBox.IsVisible = _separator == ImportSeparator.Custom;
-        AutomationProperties.SetName(_customBox, "Eigenes Trennzeichen");
+        AutomationProperties.SetName(_customBox, L("Eigenes Trennzeichen"));
         _customBox.TextChanged += (_, _) =>
         {
             var value = _customBox.Text ?? "";
@@ -320,7 +321,7 @@ public sealed partial class SetEditorScreen
             Submit(Field_.CustomSeparator);
             return true;
         });
-        var swapLabel = Ui.H(7, EditorGlyphs.Swap(15, _swapsSides ? p.OnAccent : p.Text), Ui.Text("Seiten tauschen", 13.5, FontWeight.SemiBold, _swapsSides ? p.OnAccent : p.Text));
+        var swapLabel = Ui.H(7, EditorGlyphs.Swap(15, _swapsSides ? p.OnAccent : p.Text), Ui.Text(L("Seiten tauschen"), 13.5, FontWeight.SemiBold, _swapsSides ? p.OnAccent : p.Text));
         var swap = new WsButton(swapLabel, _swapsSides ? ButtonKind.Primary : ButtonKind.Glass, 32, padding: new Thickness(12, 0));
         swap.Click += (_, _) =>
         {
@@ -328,10 +329,10 @@ public sealed partial class SetEditorScreen
             ParseNow();
             RenderControls();
         };
-        ToolTip.SetTip(swap, "Begriff und Definition in der Erkennung vertauschen");
-        AutomationProperties.SetName(swap, "Seiten tauschen");
-        AutomationProperties.SetItemStatus(swap, _swapsSides ? "Ein" : "Aus");
-        var label = Ui.Text("Trennung", 13.5, color: p.TextSecondary);
+        ToolTip.SetTip(swap, L("Begriff und Definition in der Erkennung vertauschen"));
+        AutomationProperties.SetName(swap, L("Seiten tauschen"));
+        AutomationProperties.SetItemStatus(swap, _swapsSides ? L("Ein") : L("Aus"));
+        var label = Ui.Text(L("Trennung"), 13.5, color: p.TextSecondary);
         AutomationProperties.SetAccessibilityView(label, AccessibilityView.Raw);
         var row = new WrapPanel { ItemSpacing = 10, LineSpacing = 8 };
         Control choice = separators;
@@ -345,7 +346,7 @@ public sealed partial class SetEditorScreen
             {
                 if (box.SelectedIndex >= 0 && box.SelectedIndex != (int)_separator) separators.Select(box.SelectedIndex);
             };
-            AutomationProperties.SetName(box, "Trennung zwischen Begriff und Definition");
+            AutomationProperties.SetName(box, L("Trennung zwischen Begriff und Definition"));
             choice = box;
         }
         row.Children.Add(Ui.H(10, label, choice, _customBox));
@@ -452,8 +453,8 @@ public sealed partial class SetEditorScreen
         RenderSummary();
         _zeroHelp.IsVisible = count == 0;
         _zeroHelp.Text = _separator == ImportSeparator.Custom && _customSeparator.Length == 0
-            ? "Gib oben dein Trennzeichen ein."
-            : "Wähle eine andere Trennung oder prüfe, ob jede Zeile einen Begriff und eine Übersetzung enthält.";
+            ? L("Gib oben dein Trennzeichen ein.")
+            : L("Wähle eine andere Trennung oder prüfe, ob jede Zeile einen Begriff und eine Übersetzung enthält.");
 
         var warnings = SetEditorCopy.Warnings(result, _fileNotes);
         _warningsHost.Child = warnings.Count == 0 ? null : Warnings(warnings);
@@ -461,12 +462,21 @@ public sealed partial class SetEditorScreen
         RenderSkipped(result.Skipped);
         RenderPreview();
 
-        var apply = Ui.Primary(count > 0 ? $"{Labels.Plural(count, "Karte", "Karten")} übernehmen" : "Karten übernehmen", ApplyImport, null, IconName.Check, 40);
+        var apply = Ui.Primary(count > 0 ? L($"{Labels.Plural(count, "Karte", "Karten")} übernehmen") : L("Karten übernehmen"), ApplyImport, null, IconName.Check, 40);
         apply.IsEnabled = count > 0;
-        ToolTip.SetTip(apply, "Die erkannten Paare in die Kartenliste übernehmen");
+        ToolTip.SetTip(apply, L("Die erkannten Paare in die Kartenliste übernehmen"));
+        var more = count > SetEditorCopy.PreviewRows
+            ? Ui.Text(L($"Alle {count} Paare in der Vorschau – scrolle darin für mehr."), 13.5, color: p.TextSecondary, wrap: TextWrapping.Wrap)
+            : null;
+        if (AppDevice.IsPhone)
+        {
+            // Phone: the note over a full-width button (beside it, it was a narrow column).
+            apply.HorizontalAlignment = HorizontalAlignment.Stretch;
+            _applyHost.Child = Ui.V(8, more, apply);
+            return;
+        }
         var row = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto"), ColumnSpacing = 10 };
-        if (count > SetEditorCopy.PreviewRows)
-            row.Children.Add(Ui.Text($"Alle {count} Paare in der Vorschau – scrolle darin für mehr.", 13.5, color: p.TextSecondary, wrap: TextWrapping.Wrap));
+        if (more is not null) row.Children.Add(more);
         Grid.SetColumn(apply, 1);
         row.Children.Add(apply);
         _applyHost.Child = row;
@@ -492,12 +502,12 @@ public sealed partial class SetEditorScreen
         if (parts.Count > 0) text.Inlines.Add(new Run(" · " + string.Join(" · ", parts)));
         var chips = new WrapPanel { ItemSpacing = 6, LineSpacing = 6, HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Center };
         if (count > 0 && result.Swapped && !_swapsSides)
-            chips.Children.Add(Ui.Chip("Seiten automatisch getauscht"));
-        if (count > 0 && flagged > 0) chips.Children.Add(Ui.Chip($"{flagged} bitte prüfen", p.Warning, IconName.Warning));
+            chips.Children.Add(Ui.Chip(L("Seiten automatisch getauscht")));
+        if (count > 0 && flagged > 0) chips.Children.Add(Ui.Chip(L($"{flagged} bitte prüfen"), p.Warning, IconName.Warning));
         if (count > 0 && typos > 0)
         {
             var chip = Ui.Chip(SetEditorCopy.TypoCount(typos), p.Warning, IconName.Pencil);
-            ToolTip.SetTip(chip, "Diese Wörter kennt die Rechtschreibprüfung nicht – nach dem Übernehmen kannst du sie mit einem Klick korrigieren.");
+            ToolTip.SetTip(chip, L("Diese Wörter kennt die Rechtschreibprüfung nicht – nach dem Übernehmen kannst du sie mit einem Klick korrigieren."));
             chips.Children.Add(chip);
         }
         var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*,Auto"), ColumnSpacing = 10 };
@@ -532,7 +542,7 @@ public sealed partial class SetEditorScreen
             list.Children.Add(row);
         }
         var box = new Border { Child = list, Background = WsTheme.B(p.Warning.Soft), CornerRadius = new CornerRadius(10), Padding = new Thickness(10, 7) };
-        AutomationProperties.SetName(box, $"Hinweise: {string.Join(" ", warnings)}");
+        AutomationProperties.SetName(box, L($"Hinweise: {string.Join(" ", warnings)}"));
         return box;
     }
 
@@ -549,14 +559,14 @@ public sealed partial class SetEditorScreen
         var chevron = Icons.Icon(IconName.ChevronRight, 13, p.TextSecondary, 2.2);
         chevron.RenderTransformOrigin = RelativePoint.Center;
         chevron.RenderTransform = new RotateTransform(_showsSkipped ? 90 : 0);
-        var title = $"{Labels.Plural(skipped.Count, "Zeile", "Zeilen")} übersprungen";
+        var title = L($"{Labels.Plural(skipped.Count, "Zeile", "Zeilen")} übersprungen");
         var toggle = Ui.Clickable(Ui.H(6, chevron, Ui.Text(title, 13.5, color: p.TextSecondary)), () =>
         {
             _showsSkipped = !_showsSkipped;
             RenderSkipped(skipped);
         }, title, 8, padding: new Thickness(2, 3));
         toggle.HorizontalAlignment = HorizontalAlignment.Left;
-        AutomationProperties.SetItemStatus(toggle, _showsSkipped ? "Ausgeklappt" : "Eingeklappt");
+        AutomationProperties.SetItemStatus(toggle, _showsSkipped ? L("Ausgeklappt") : L("Eingeklappt"));
         var body = Ui.V(2, toggle);
         if (_showsSkipped)
         {
@@ -564,14 +574,14 @@ public sealed partial class SetEditorScreen
             foreach (var line in skipped)
             {
                 var row = new Grid { ColumnDefinitions = new ColumnDefinitions("70,*,Auto"), ColumnSpacing = 10 };
-                row.Children.Add(Ui.Text($"Zeile {line.Line}", 13, color: p.TextSecondary));
+                row.Children.Add(Ui.Text(L($"Zeile {line.Line}"), 13, color: p.TextSecondary));
                 var text = Ui.Text(line.Text.Length == 0 ? "–" : line.Text, 13);
                 Grid.SetColumn(text, 1);
                 row.Children.Add(text);
                 var reason = Ui.Text(SetEditorCopy.SkipReasonText(line.Reason), 13, color: p.TextSecondary);
                 Grid.SetColumn(reason, 2);
                 row.Children.Add(reason);
-                AutomationProperties.SetName(row, $"Zeile {line.Line}: {line.Text}, {SetEditorCopy.SkipReasonText(line.Reason)}");
+                AutomationProperties.SetName(row, L($"Zeile {line.Line}: {line.Text}, {SetEditorCopy.SkipReasonText(line.Reason)}"));
                 lines.Children.Add(row);
             }
             body.Children.Add(lines);
@@ -595,13 +605,16 @@ public sealed partial class SetEditorScreen
         }
         var p = WsTheme.P;
         _previewHost.IsVisible = true;
-        const string columns = "40,*,*,26";
+        // Phone: a narrower number column, headers without the languages (they stand in the summary above) and rows that
+        // wrap – «BEGRIFF · FRA…», «la limitation de v…», «der Donaudamp…» were cut (06.11.2026).
+        bool phone = AppDevice.IsPhone;
+        string columns = phone ? "26,*,*,20" : "40,*,*,26";
         var header = new Grid { ColumnDefinitions = new ColumnDefinitions(columns), ColumnSpacing = 10, Margin = new Thickness(10, 7) };
         header.Children.Add(Ui.Eyebrow("#"));
-        var th = Ui.Eyebrow($"Begriff · {Labels.LangName(result.TermLang)}");
+        var th = Ui.Eyebrow(phone ? L("Begriff") : L($"Begriff · {Labels.LangName(result.TermLang)}"));
         Grid.SetColumn(th, 1);
         header.Children.Add(th);
-        var dh = Ui.Eyebrow($"Definition · {Labels.LangName(result.DefLang)}");
+        var dh = Ui.Eyebrow(phone ? L("Definition") : L($"Definition · {Labels.LangName(result.DefLang)}"));
         Grid.SetColumn(dh, 2);
         header.Children.Add(dh);
 
@@ -616,12 +629,14 @@ public sealed partial class SetEditorScreen
                 var card = cards[index];
                 var reasons = new[] { SetEditorCopy.FlagTooltip(card.Flags), SetEditorCopy.TypoTooltip(typos.GetValueOrDefault(index) ?? []) }.Where(r => r is not null).ToList();
                 string? tooltip = reasons.Count == 0 ? null : string.Join("\n", reasons);
-                var row = new Grid { ColumnDefinitions = new ColumnDefinitions(columns), ColumnSpacing = 10, Height = PreviewRowHeight, Margin = new Thickness(10, 0) };
+                var row = phone
+                    ? new Grid { ColumnDefinitions = new ColumnDefinitions(columns), ColumnSpacing = 8, MinHeight = PreviewRowHeight, Margin = new Thickness(8, 5) }
+                    : new Grid { ColumnDefinitions = new ColumnDefinitions(columns), ColumnSpacing = 10, Height = PreviewRowHeight, Margin = new Thickness(10, 0) };
                 row.Children.Add(Ui.Text($"{index + 1}", 13, color: tooltip is null ? p.TextSecondary : p.Warning.Text));
-                var term = Cell(card.Term, result.TermLang, "Begriff fehlt", FontWeight.SemiBold);
+                var term = Cell(card.Term, result.TermLang, L("Begriff fehlt"), FontWeight.SemiBold);
                 Grid.SetColumn(term, 1);
                 row.Children.Add(term);
-                var def = Cell(card.Definition, result.DefLang, "Definition fehlt", FontWeight.Normal);
+                var def = Cell(card.Definition, result.DefLang, L("Definition fehlt"), FontWeight.Normal);
                 Grid.SetColumn(def, 2);
                 row.Children.Add(def);
                 if (tooltip is not null)
@@ -644,6 +659,12 @@ public sealed partial class SetEditorScreen
             VerticalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Auto,
             Height = PreviewRowHeight * Math.Min(cards.Count, SetEditorCopy.PreviewRows) + 2,
         };
+        if (phone)
+        {
+            // Phone: rows wrap and grow; the table takes what they need, up to about the same room.
+            scroller.Height = double.NaN;
+            scroller.MaxHeight = PreviewRowHeight * SetEditorCopy.PreviewRows * 1.6 + 2;
+        }
         var table = new Border
         {
             CornerRadius = new CornerRadius(12),
@@ -653,7 +674,7 @@ public sealed partial class SetEditorScreen
             BorderThickness = new Thickness(1),
             Child = Ui.V(0, header, new Border { Height = 1, Background = WsTheme.B(p.Hairline) }, scroller),
         };
-        AutomationProperties.SetName(table, "Vorschau der erkannten Karten");
+        AutomationProperties.SetName(table, L("Vorschau der erkannten Karten"));
         _previewHost.Child = table;
 
         static Control Cell(string text, Lang lang, string missing, FontWeight weight)
@@ -666,8 +687,16 @@ public sealed partial class SetEditorScreen
                 return t;
             }
             var cell = StudyText.InLang(text, lang, 13.5, weight);
-            cell.TextWrapping = TextWrapping.NoWrap;
-            cell.TextTrimming = TextTrimming.CharacterEllipsis;
+            if (AppDevice.IsPhone)
+            {
+                cell.TextWrapping = TextWrapping.Wrap;
+                StudyText.HyphenateToWidth(cell, text, lang);
+            }
+            else
+            {
+                cell.TextWrapping = TextWrapping.NoWrap;
+                cell.TextTrimming = TextTrimming.CharacterEllipsis;
+            }
             cell.VerticalAlignment = VerticalAlignment.Center;
             ToolTip.SetTip(cell, text);
             return cell;
@@ -724,13 +753,13 @@ public sealed partial class SetEditorScreen
             TakeOver(cards, append: false);
             return;
         }
-        var question = $"Dein Lernset enthält schon {Labels.Plural(existing, "Karte", "Karten")}. Möchtest du die {Labels.Plural(cards.Count, "neue Karte", "neuen Karten")} anhängen oder die bisherigen ersetzen?";
-        if (IsEditing) question += "\n\nBeim Ersetzen bleibt der Lernfortschritt für gleiche Begriffe erhalten.";
-        Model.Ask(new PromptRequest("Karten übernehmen", question,
+        var question = L($"Dein Lernset enthält schon {Labels.Plural(existing, "Karte", "Karten")}. Möchtest du die {Labels.Plural(cards.Count, "neue Karte", "neuen Karten")} anhängen oder die bisherigen ersetzen?");
+        if (IsEditing) question += "\n\n" + L("Beim Ersetzen bleibt der Lernfortschritt für gleiche Begriffe erhalten.");
+        Model.Ask(new PromptRequest(L("Karten übernehmen"), question,
         [
-            new PromptButton("Anhängen", () => TakeOver(cards, append: true), IsDefault: true),
-            new PromptButton("Ersetzen", () => TakeOver(cards, append: false)),
-            new PromptButton("Abbrechen", IsCancel: true),
+            new PromptButton(L("Anhängen"), () => TakeOver(cards, append: true), IsDefault: true),
+            new PromptButton(L("Ersetzen"), () => TakeOver(cards, append: false)),
+            new PromptButton(L("Abbrechen"), IsCancel: true),
         ]));
     }
 
@@ -738,7 +767,7 @@ public sealed partial class SetEditorScreen
     void TakeOver(IReadOnlyList<ParsedCard> cards, bool append)
     {
         var created = cards.Select(Draft.FromParsed).ToList();
-        Undoable("Karten übernehmen", $"{Labels.Plural(cards.Count, "Karte", "Karten")} übernommen", ToastTone.Success, includesImport: true, () =>
+        Undoable(L("Karten übernehmen"), L($"{Labels.Plural(cards.Count, "Karte", "Karten")} übernommen"), ToastTone.Success, includesImport: true, () =>
         {
             if (append) AppendRows(created);
             else SetRows(IsEditing ? WithPreservedIds(created, _drafts) : created);
@@ -800,10 +829,10 @@ public sealed partial class SetEditorScreen
     Control FindBar()
     {
         var p = WsTheme.P;
-        _findBox = Ui.Field("Suchen", "", 13, 30);
+        _findBox = Ui.Field(L("Suchen"), "", 13, 30);
         _findBox.Padding = new Thickness(10, 4);
         _findBox.CornerRadius = new CornerRadius(8);
-        AutomationProperties.SetName(_findBox, "In der Liste suchen");
+        AutomationProperties.SetName(_findBox, L("In der Liste suchen"));
         _findBox.TextChanged += (_, _) => RunFind(0);
         OnKeys(_findBox, e =>
         {
@@ -815,9 +844,9 @@ public sealed partial class SetEditorScreen
             return false;
         });
         _findCount = Ui.Text("", 12.5, color: p.TextSecondary);
-        var previous = Ui.IconButton(IconName.ChevronLeft, "Vorheriger Treffer (Shift+Enter)", () => RunFind(-1), 28, ButtonKind.Plain);
-        var next = Ui.IconButton(IconName.ChevronRight, "Nächster Treffer (Enter)", () => RunFind(1), 28, ButtonKind.Plain);
-        var done = Ui.PlainButton("Fertig", CloseFind, null, p.AccentText, 28);
+        var previous = Ui.IconButton(IconName.ChevronLeft, L("Vorheriger Treffer (Shift+Enter)"), () => RunFind(-1), 28, ButtonKind.Plain);
+        var next = Ui.IconButton(IconName.ChevronRight, L("Nächster Treffer (Enter)"), () => RunFind(1), 28, ButtonKind.Plain);
+        var done = Ui.PlainButton(L("Fertig"), CloseFind, null, p.AccentText, 28);
         var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto,Auto,Auto,Auto"), ColumnSpacing = 4, IsVisible = false };
         grid.Children.Add(_findBox);
         _findCount.Margin = new Thickness(6, 0);
@@ -879,11 +908,11 @@ public sealed partial class SetEditorScreen
         if (_findMatches.Count == 0)
         {
             _findIndex = -1;
-            _findCount.Text = query.Length == 0 ? "" : "Keine Treffer";
+            _findCount.Text = query.Length == 0 ? "" : L("Keine Treffer");
             return;
         }
         _findIndex = step == 0 ? Math.Clamp(_findIndex, 0, _findMatches.Count - 1) : ((_findIndex + step) % _findMatches.Count + _findMatches.Count) % _findMatches.Count;
-        _findCount.Text = $"{_findIndex + 1} von {_findMatches.Count}";
+        _findCount.Text = L($"{_findIndex + 1} von {_findMatches.Count}");
         int start = _findMatches[_findIndex];
         _importBox.CaretIndex = start + query.Length;
         _importBox.SelectionStart = start;
@@ -898,18 +927,18 @@ public sealed partial class SetEditorScreen
     {
         var files = await Window.StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
         {
-            Title = "Vokabelliste öffnen",
+            Title = L("Vokabelliste öffnen"),
             AllowMultiple = true,
             FileTypeFilter =
             [
                 AppDevice.ReadsPhotos
-                    ? new FilePickerFileType("Vokabellisten, PDF und Fotos")
+                    ? new FilePickerFileType(L("Vokabellisten, PDF und Fotos"))
                     {
                         Patterns = ["*.txt", "*.csv", "*.tsv", "*.text", "*.pdf", "*.png", "*.jpg", "*.jpeg", "*.heic", "*.heif", "*.webp", "*.tif", "*.tiff", "*.bmp", "*.gif"],
                         // Android's document picker filters by type, not by name.
                         MimeTypes = ["text/plain", "text/csv", "text/comma-separated-values", "text/tab-separated-values", "application/pdf", "image/*"],
                     }
-                    : new FilePickerFileType("Vokabellisten und PDF")
+                    : new FilePickerFileType(L("Vokabellisten und PDF"))
                     {
                         Patterns = ["*.txt", "*.csv", "*.tsv", "*.text", "*.pdf"],
                         MimeTypes = ["text/plain", "text/csv", "text/comma-separated-values", "text/tab-separated-values", "application/pdf"],
@@ -981,7 +1010,7 @@ public sealed partial class SetEditorScreen
             ImportSources([new ImportSource("", "image/png", Data: png.ToArray())]);
             return;
         }
-        if (!fromKey && !filesOnly) Model.ShowToast(new ToastMessage("In der Zwischenablage ist kein Text, kein Bild und keine Datei."));
+        if (!fromKey && !filesOnly) Model.ShowToast(new ToastMessage(L("In der Zwischenablage ist kein Text, kein Bild und keine Datei.")));
     }
 
     // MARK: File import (Mac: ImportPanelModel.importSources, ImportCoordinator)
@@ -1003,7 +1032,7 @@ public sealed partial class SetEditorScreen
         if (sources.Count == 0) return;
         if (_importCts is not null)
         {
-            Model.ShowToast(new ToastMessage("Bitte warte, bis der aktuelle Import fertig ist."));
+            Model.ShowToast(new ToastMessage(L("Bitte warte, bis der aktuelle Import fertig ist.")));
             return;
         }
         if (!_importOpen)
@@ -1013,7 +1042,7 @@ public sealed partial class SetEditorScreen
         }
         var cts = new CancellationTokenSource();
         _importCts = cts;
-        _progress = new ImportProgress(0, "Datei wird gelesen …");
+        _progress = new ImportProgress(0, L("Datei wird gelesen …"));
         _showProgress = false;
         UpdateStats();
         // The progress row appears only for slow imports (text files finish at once), like the Mac and the web app.
@@ -1056,7 +1085,7 @@ public sealed partial class SetEditorScreen
         _showProgress = false;
         RenderProgress();
         if (_activated && !_closed) UpdateStats();
-        if (announce) Model.ShowToast(new ToastMessage("Import abgebrochen"));
+        if (announce) Model.ShowToast(new ToastMessage(L("Import abgebrochen")));
     }
 
     /// <summary>Errors as toasts, texts below the current text, notes kept, the title suggested, a summary toast.</summary>
@@ -1071,7 +1100,7 @@ public sealed partial class SetEditorScreen
         UpdateStats();
         if (batch is null)
         {
-            Model.ShowToast(new ToastMessage("Import abgebrochen"));
+            Model.ShowToast(new ToastMessage(L("Import abgebrochen")));
             return;
         }
         foreach (var message in batch.ErrorMessages) Model.ShowToast(new ToastMessage(message, ToastTone.Danger, DurationMs: 7000));
@@ -1084,12 +1113,15 @@ public sealed partial class SetEditorScreen
         RenderDetection();
         if (batch.FirstName is { } name) SuggestTitle(name);
         int count = _parsed?.Cards.Count ?? 0;
-        var found = count > 0 ? $"{Labels.Plural(count, "Paar", "Paare")} gefunden" : "noch keine Paare gefunden";
+        var pairs = Labels.Plural(count, "Paar", "Paare");
         if (batch.Warnings.Count > 0)
             // Do not suggest completeness: part of the content could not be read.
-            Model.ShowToast(new ToastMessage($"Text teilweise erkannt – {found}. Nicht alles konnte gelesen werden, siehe Hinweis.", ToastTone.Warning, DurationMs: 7000));
-        else if (count > 0) Model.ShowToast(new ToastMessage($"Text erkannt – {found}. Prüfe die Vorschau.", ToastTone.Success));
-        else Model.ShowToast(new ToastMessage("Text eingefügt. Es wurden noch keine Paare erkannt."));
+            Model.ShowToast(new ToastMessage(count > 0
+                ? L($"Text teilweise erkannt – {pairs} gefunden. Nicht alles konnte gelesen werden, siehe Hinweis.")
+                : L("Text teilweise erkannt – noch keine Paare gefunden. Nicht alles konnte gelesen werden, siehe Hinweis."),
+                ToastTone.Warning, DurationMs: 7000));
+        else if (count > 0) Model.ShowToast(new ToastMessage(L($"Text erkannt – {pairs} gefunden. Prüfe die Vorschau."), ToastTone.Success));
+        else Model.ShowToast(new ToastMessage(L("Text eingefügt. Es wurden noch keine Paare erkannt.")));
         // The detection scrolls into view (Mac: revealToken).
         ScrollTo(_detection, center: false);
     }
@@ -1112,9 +1144,9 @@ public sealed partial class SetEditorScreen
             _progressPercent = Ui.Text("", 13, color: p.TextTertiary);
             _progressPercent.VerticalAlignment = VerticalAlignment.Center;
             _progressLine = new ProgressLine(fraction, p.Accent, double.NaN) { HorizontalAlignment = HorizontalAlignment.Stretch };
-            AutomationProperties.SetName(_progressLine, "Fortschritt der Texterkennung");
-            var cancel = Ui.Secondary("Abbrechen", CancelImport, keyHint: "Esc", height: 32);
-            ToolTip.SetTip(cancel, "Import abbrechen (Esc)");
+            AutomationProperties.SetName(_progressLine, L("Fortschritt der Texterkennung"));
+            var cancel = Ui.Secondary(L("Abbrechen"), CancelImport, keyHint: "Esc", height: 32);
+            ToolTip.SetTip(cancel, L("Import abbrechen (Esc)"));
             _progressHost.Child = new Border
             {
                 CornerRadius = new CornerRadius(12),
@@ -1130,8 +1162,8 @@ public sealed partial class SetEditorScreen
             Announcer.Announce(progress.Message);
         }
         _progressText.Text = progress.Message;
-        _progressPercent.Text = $"{(int)Math.Round(fraction * 100)} %";
-        AutomationProperties.SetHelpText(_progressLine, $"{(int)Math.Round(fraction * 100)} Prozent");
+        _progressPercent.Text = L($"{(int)Math.Round(fraction * 100)} %");
+        AutomationProperties.SetHelpText(_progressLine, L($"{(int)Math.Round(fraction * 100)} Prozent"));
     }
 
     /// <summary>Windows has no text recognizer for a set language: says once where to add it.</summary>
@@ -1140,8 +1172,8 @@ public sealed partial class SetEditorScreen
         if (!s_missingRecognizerShown.Add(lang)) return;
         // Phone: the recognizer comes from Google Play services on first use (Chinese) – a moment later it works.
         Model.ShowToast(new ToastMessage(AppDevice.IsPhone
-            ? $"Die Texterkennung für {Labels.LangName(lang)} ist auf diesem Handy nicht verfügbar. Gelesen wurde nur lateinische Schrift."
-            : $"Windows fehlt die Texterkennung für {Labels.LangName(lang)} (Einstellungen › Zeit und Sprache › Sprache).",
+            ? L($"Die Texterkennung für {Labels.LangName(lang)} ist auf diesem Handy nicht verfügbar. Gelesen wurde nur lateinische Schrift.")
+            : L($"Windows fehlt die Texterkennung für {Labels.LangName(lang)} (Einstellungen › Zeit und Sprache › Sprache)."),
             ToastTone.Warning, DurationMs: 9000));
     });
 }

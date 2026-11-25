@@ -1,6 +1,5 @@
 using Avalonia;
 using Avalonia.Controls;
-using Avalonia.Controls.Presenters;
 using Avalonia.Controls.Primitives;
 using Avalonia.Media;
 using Avalonia.Styling;
@@ -150,7 +149,60 @@ public static class AppStyles
             Setters = { new Setter(TemplatedControl.FontFamilyProperty, WsTheme.UI) },
         });
         // Phone: thin scroll bars over the content that only show while scrolling (PhoneLayout).
-        if (AppDevice.IsPhone) styles.Add(PhoneLayout.ScrollBarStyles());
+        if (AppDevice.IsPhone)
+        {
+            styles.Add(PhoneLayout.ScrollBarStyles());
+            // Phone: drop-down lists looked like Windows – the Simple theme's petrol selection, small rows, the list cut
+            // at the bottom of the screen (Joan's phone, 06.11.2026). The app's accent, finger-sized rows, a list that
+            // scrolls instead of running off the screen, menus with taller items.
+            var accent = p.Accent;
+            styles.Resources["ThemeAccentBrush"] = new SolidColorBrush(accent);
+            styles.Resources["ThemeAccentBrush2"] = new SolidColorBrush(accent, 0.8);
+            styles.Resources["ThemeAccentBrush3"] = new SolidColorBrush(accent, 0.45);
+            styles.Resources["ThemeAccentBrush4"] = new SolidColorBrush(accent, 0.22);
+            styles.Resources["ThemeControlHighlightMidBrush"] = WsTheme.B(p.AccentSoft);
+            styles.Add(new Style(x => x.OfType<ComboBoxItem>())
+            {
+                Setters =
+                {
+                    new Setter(TemplatedControl.PaddingProperty, new Thickness(16, 12)),
+                    new Setter(Layoutable.MinHeightProperty, 46.0),
+                    new Setter(TemplatedControl.FontSizeProperty, 15.0),
+                },
+            });
+            styles.Add(new Style(x => x.OfType<ComboBox>())
+            {
+                Setters =
+                {
+                    new Setter(ComboBox.MaxDropDownHeightProperty, 300.0),
+                    new Setter(Layoutable.MinHeightProperty, 44.0),
+                    new Setter(TemplatedControl.CornerRadiusProperty, new CornerRadius(12)),
+                },
+            });
+            // The open list: rounded and in the app's colours like the menus (it was an angular grey box).
+            styles.Add(new Style(x => x.OfType<ComboBox>().Template().OfType<Avalonia.Controls.Primitives.Popup>().Name("PART_Popup").Descendant().OfType<Border>())
+            {
+                Setters =
+                {
+                    new Setter(Border.CornerRadiusProperty, new CornerRadius(14)),
+                    new Setter(Border.BackgroundProperty, WsTheme.B(p.Dark ? Palette.Hex(0x2E3142) : Palette.Hex(0xFFFFFF))),
+                    new Setter(Border.BorderBrushProperty, WsTheme.B(p.Hairline)),
+                    new Setter(Border.ClipToBoundsProperty, true),
+                },
+            });
+            styles.Add(new Style(x => x.OfType<MenuItem>())
+            {
+                Setters =
+                {
+                    new Setter(TemplatedControl.PaddingProperty, new Thickness(14, 12)),
+                    new Setter(TemplatedControl.FontSizeProperty, 15.0),
+                },
+            });
+            styles.Add(new Style(x => x.OfType<ContextMenu>())
+            {
+                Setters = { new Setter(TemplatedControl.CornerRadiusProperty, new CornerRadius(14)) },
+            });
+        }
         return styles;
     }
 }

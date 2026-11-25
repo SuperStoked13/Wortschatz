@@ -131,7 +131,7 @@ test('everything known in the first round finishes at once', () => {
   let deck = F.sortCard(deckOf([card('a')]), 'know', T0);
   expect(F.deckPhase(deck)).toBe('finished');
   expect(F.finishedTitle(deck)).toBe('Super, du kennst die Karte!');
-  expect(F.finishedText(deck)).toBe('Gleich in der ersten Runde – stark. Teste dich jetzt in «Lernen», damit sie auch als gemeistert zählen.');
+  expect(F.finishedText(deck)).toBe('Gleich in der ersten Runde – stark. Teste dich jetzt in «Lernen», damit sie auch als gemeistert zählt.');
   // Nothing happens to a finished deck.
   expect(F.startNextRound(deck, { now: T0 })).toBe(deck);
   expect(deck.round).toBe(1);

@@ -1,9 +1,8 @@
-using Avalonia;
 using Avalonia.Automation;
 using Avalonia.Controls;
 using Avalonia.Layout;
-using Avalonia.Media;
 using Wortschatz.App.DesignSystem;
+using static Wortschatz.Core.CoreText;
 
 namespace Wortschatz.App;
 
@@ -14,53 +13,58 @@ namespace Wortschatz.App;
 /// </summary>
 public static class ShortcutsSheet
 {
-    /// <summary>The groups with their commands and keys (Ctrl for ⌘, Alt for ⌥, like the rest of the app).</summary>
-    public static readonly (string Group, (string Command, string Keys)[] Items)[] Groups =
+    /// <summary>
+    /// The groups with their commands and keys (Ctrl for ⌘, Alt for ⌥, like the rest of the app); Right: in the right
+    /// column. Computed, so the names follow a change of the language.
+    /// </summary>
+    public static (string Group, bool Right, (string Command, string Keys)[] Items)[] Groups =>
     [
-        ("Ablage", [
-            ("Neues Lernset", "Ctrl+N"),
-            ("Liste importieren …", "Ctrl+O"),
-            ("Einstellungen", "Ctrl+,"),
+        (L("Ablage"), false, [
+            (L("Neues Lernset"), "Ctrl+N"),
+            (L("Liste importieren …"), "Ctrl+O"),
+            (L("Einstellungen"), "Ctrl+,"),
         ]),
-        ("Bearbeiten", [
-            ("Widerrufen: Lernset löschen", "Ctrl+Z"),
-            ("Wiederholen", "Ctrl+Y"),
+        (L("Bearbeiten"), false, [
+            (L("Widerrufen: Lernset löschen"), "Ctrl+Z"),
+            (L("Wiederholen"), "Ctrl+Y"),
         ]),
-        ("Lernset", [
-            ("Lernen / Weiterlernen", "Ctrl+L"),
-            ("Schreiben", "Ctrl+Shift+L"),
-            ("Karteikarten", "Ctrl+Alt+L"),
-            ("Prüfung", "Ctrl+Alt+Shift+L"),
-            ("Bearbeiten", "Ctrl+E"),
-            ("Löschen", "Ctrl+Entf"),
+        (L("Lernset"), false, [
+            (L("Lernen / Weiterlernen"), "Ctrl+L"),
+            (L("Schreiben"), "Ctrl+Shift+L"),
+            (L("Karteikarten"), "Ctrl+Alt+L"),
+            (L("Prüfung"), "Ctrl+Alt+Shift+L"),
+            (L("Bearbeiten"), "Ctrl+E"),
+            (L("Löschen"), "Ctrl+Entf"),
         ]),
-        ("Lernen, Schreiben, Karteikarten", [
-            ("Antworten / Weiter", "Enter"),
-            ("Ich hatte recht", "Ctrl+Enter"),
-            ("Weiss ich nicht", "Alt+Enter"),
-            ("Antwort wählen", "1 – 4"),
-            ("Optionen …", "Ctrl+K"),
-            ("Vorlesen", "Ctrl+R"),
-            ("Markieren", "Ctrl+D"),
-            ("Begriff bearbeiten", "Ctrl+E"),
-            ("Neu starten", "Ctrl+Shift+R"),
-            ("Beenden", "Esc"),
+        (L("Lernen, Schreiben, Karteikarten"), true, [
+            (L("Antworten / Weiter"), "Enter"),
+            (L("Ich hatte recht"), "Ctrl+Enter"),
+            (L("Weiss ich nicht"), "Alt+Enter"),
+            (L("Antwort wählen"), "1 – 4"),
+            (L("Optionen …"), "Ctrl+K"),
+            (L("Vorlesen"), "Ctrl+R"),
+            (L("Markieren"), "Ctrl+D"),
+            (L("Begriff bearbeiten"), "Ctrl+E"),
+            (L("Neu starten"), "Ctrl+Shift+R"),
+            (L("Beenden"), "Esc"),
         ]),
-        ("Prüfung", [
-            ("Abgeben", "Ctrl+Enter"),
-            ("Neue Prüfung", "Ctrl+Shift+R"),
+        (L("Prüfung"), true, [
+            (L("Abgeben"), "Ctrl+Enter"),
+            (L("Neue Prüfung"), "Ctrl+Shift+R"),
         ]),
-        ("Darstellung", [
-            ("Seitenleiste ein/aus", "Ctrl+Alt+S"),
-            ("Vollbild", "F11"),
-            ("Tastenkürzel", "F1"),
+        // The Mac's menu «Darstellung» (View): a key of its own – in the settings «Darstellung» is the appearance.
+        (Ui.Meaning("Darstellung", L("Darstellung (Menü)")), false, [
+            (L("Seitenleiste ein/aus"), "Ctrl+Alt+S"),
+            (L("Vollbild"), "F11"),
+            (L("Tastenkürzel"), "F1"),
         ]),
     ];
 
     public static void Show(AppModel model)
     {
-        if (model.Prompt is { Title: "Tastenkürzel" }) return;
-        model.Ask(new PromptRequest("Tastenkürzel", "", [new PromptButton("Fertig", IsDefault: true, IsCancel: true)])
+        string title = L("Tastenkürzel");
+        if (model.Prompt is { } open && open.Title == title) return;
+        model.Ask(new PromptRequest(title, "", [new PromptButton(L("Fertig"), IsDefault: true, IsCancel: true)])
         {
             Width = 620,
             Content = Content(),
@@ -74,7 +78,7 @@ public static class ShortcutsSheet
         var left = Ui.V(18);
         var right = Ui.V(18);
         // Two columns of about equal height: the long study group alone on the right.
-        foreach (var (group, items) in Groups)
+        foreach (var (group, inRight, items) in Groups)
         {
             var rows = Ui.V(6);
             foreach (var (command, keys) in items)
@@ -84,7 +88,7 @@ public static class ShortcutsSheet
                 rows.Children.Add(row);
             }
             var section = Ui.V(8, Ui.Eyebrow(group), rows);
-            (group.StartsWith("Lernen,", StringComparison.Ordinal) || group == "Prüfung" ? right : left).Children.Add(section);
+            (inRight ? right : left).Children.Add(section);
         }
         columns.Children.Add(left);
         Grid.SetColumn(right, 1);
@@ -94,18 +98,19 @@ public static class ShortcutsSheet
         return scroll;
     }
 
-    /// <summary>"Ctrl+Shift+L" as key caps.</summary>
+    /// <summary>"Ctrl+Shift+L" as key caps (the German keyboard's «Entf» is «Del» in English).</summary>
     static Control Keys(string keys)
     {
         var row = Ui.H(3);
         string[] parts = keys == "Ctrl+," ? ["Ctrl", ","] : keys.Split('+');
-        foreach (var part in parts) row.Children.Add(Ui.KeyCap(part));
+        foreach (var part in parts) row.Children.Add(Ui.KeyCap(part == "Entf" ? L("Entf") : part));
         row.HorizontalAlignment = HorizontalAlignment.Right;
         return row;
     }
 
     /// <summary>The keys for screen readers ("Strg+Umschalt+L" read as words).</summary>
     public static string Spoken(string keys) => keys
-        .Replace("Ctrl", "Steuerung").Replace("Shift", "Umschalt").Replace("Entf", "Entfernen").Replace("Esc", "Escape")
+        .Replace("Ctrl", L("Steuerung")).Replace("Shift", L("Umschalt")).Replace("Entf", Ui.Meaning("Entfernen", L("Entfernen (Taste)")))
+        .Replace("Esc", "Escape")
         .Replace("+", " ");
 }

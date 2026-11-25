@@ -14,22 +14,24 @@ struct OverviewHero: View {
             hero(
                 summary: summary,
                 counts: gaugeCounts(resume, summary: summary),
-                eyebrow: resume.mode == .learn ? "Weiterlernen · Lernen" : "Weiterlernen · Schreiben",
+                eyebrow: resume.mode == .learn
+                    ? String(localized: "Weiterlernen · Lernen") : String(localized: "Weiterlernen · Schreiben"),
                 eyebrowSymbol: resume.mode == .learn ? "sparkles" : "keyboard",
                 meta: meta(resume),
                 progress: progress(resume),
-                action: resume.mode == .learn ? "Weiterlernen" : "Fortsetzen",
+                action: resume.mode == .learn ? String(localized: "Weiterlernen") : String(localized: "Fortsetzen"),
                 actionSymbol: "play.fill"
             )
         } else if let recent = model.library.sets.first {
             hero(
                 summary: recent,
                 counts: recent.counts,
-                eyebrow: recent.set.lastStudiedAt != nil ? "Zuletzt gelernt" : "Zuletzt bearbeitet",
+                eyebrow: recent.set.lastStudiedAt != nil
+                    ? String(localized: "Zuletzt gelernt") : String(localized: "Zuletzt bearbeitet"),
                 eyebrowSymbol: "clock",
                 meta: recentMeta(recent),
                 progress: nil,
-                action: "Öffnen",
+                action: String(localized: "Öffnen"),
                 actionSymbol: "arrow.right"
             )
         }
@@ -85,17 +87,19 @@ struct OverviewHero: View {
     private func meta(_ resume: ResumeItem) -> String {
         switch resume.kind {
         case let .learn(learn):
-            return StudyCopy.join([StudyCopy.subsetLabel(learn.subset, objectLabel: "Ausgewählte Begriffe"), learn.roundText, learn.masteredText])
+            return StudyCopy.join([StudyCopy.subsetLabel(learn.subset, objectLabel: String(localized: "Ausgewählte Begriffe")), learn.roundText, learn.masteredText])
         case let .write(write):
-            let correct = write.counters.total > 0 ? "\(write.counters.correct) von \(write.counters.total) richtig" : nil
+            let correct =
+                write.counters.total > 0
+                ? String(localized: "\(write.counters.correct) von \(write.counters.total) richtig") : nil
             return StudyCopy.join([write.roundText, correct])
         }
     }
 
     private func progress(_ resume: ResumeItem) -> (value: Double, label: String) {
         switch resume.kind {
-        case let .learn(learn): (learn.progressValue, "Gemeistert in dieser Lerneinheit")
-        case let .write(write): (write.progressValue, "Fortschritt dieser Schreibrunde")
+        case let .learn(learn): (learn.progressValue, String(localized: "Gemeistert in dieser Lerneinheit"))
+        case let .write(write): (write.progressValue, String(localized: "Fortschritt dieser Schreibrunde"))
         }
     }
 
@@ -104,7 +108,7 @@ struct OverviewHero: View {
         if let last = summary.set.lastStudiedAt {
             parts.append(TimeUtil.relativeTime(last, now: now.timeIntervalSince1970 * 1000, timeZone: model.store.timeZone))
         } else {
-            parts.append("noch nicht gelernt")
+            parts.append(String(localized: "noch nicht gelernt"))
         }
         return parts.joined(separator: " · ")
     }

@@ -1,4 +1,4 @@
-using System.Text;
+using static Wortschatz.Core.CoreText;
 
 namespace Wortschatz.Core;
 
@@ -12,8 +12,8 @@ namespace Wortschatz.Core;
 public sealed class LibraryStore
 {
     public const int SCHEMA_VERSION = 1;
-    public const string DEFAULT_TITLE = "Unbenanntes Lernset";
-    public const string COPY_SUFFIX = " (Kopie)";
+    /// <summary>The title of a set without one, in the app's language (it becomes the set's stored title; nothing compares it).</summary>
+    public static string DEFAULT_TITLE => L("Unbenanntes Lernset");
 
     public IStorageBackend Backend { get; }
     public bool Autosave { get; }
@@ -190,7 +190,7 @@ public sealed class LibraryStore
         var copy = set with
         {
             Id = NewSetId(_doc.Sets.Select(s => s.Id).ToHashSet(StringComparer.Ordinal)),
-            Title = set.Title + COPY_SUFFIX,
+            Title = L($"{set.Title} (Kopie)"),
             Cards = StoreSanitizer.BuildCards(set.Cards.Select(CardDraft.FromCard), false, null, _makeID),
             CreatedAt = t,
             UpdatedAt = t,
@@ -373,6 +373,21 @@ public sealed class LibraryStore
     {
         int index = RequireSet(setId);
         var merged = (_doc.Sets[index].StudyOptions ?? new StudyOptionsPatch()).Merging(patch);
+        _doc.Sets[index] = _doc.Sets[index] with { StudyOptions = merged.IsEmpty ? null : merged };
+        Written(Key.Sets);
+        return GetStudyOptions(setId);
+    });
+
+    /// <summary>
+    /// A change in a set's options (StudyChrome.OptionsBody): like UpdateStudyOptions, but an option set back to the
+    /// standard's value (Einstellungen) is no longer the set's own (issue #8, 24.11.2026). Before, «Vorlesen» on and off
+    /// again kept {audio: false}: the options said the set followed the standard, yet it stayed silent once the standard
+    /// was switched on. UpdateStudyOptions stays the web app's mergeStudy (parity with store.json).
+    /// </summary>
+    public StudyOptions UpdateOwnStudyOptions(string setId, StudyOptionsPatch patch) => Mutate(() =>
+    {
+        int index = RequireSet(setId);
+        var merged = (_doc.Sets[index].StudyOptions ?? new StudyOptionsPatch()).Merging(patch).DroppingStandard(patch.Sanitized(), _doc.Settings.Study);
         _doc.Sets[index] = _doc.Sets[index] with { StudyOptions = merged.IsEmpty ? null : merged };
         Written(Key.Sets);
         return GetStudyOptions(setId);
@@ -608,7 +623,7 @@ public sealed class LibraryStore
         catch (Exception) { return null; }
     }
 
-    static byte[] EncodeDocument(LibraryDocument doc) => Encoding.UTF8.GetBytes(doc.ToJson().ToJsonString(sortedKeys: true));
+    static byte[] EncodeDocument(LibraryDocument doc) => doc.ToJson().ToJsonBytes(sortedKeys: true);
 
     static JSONValue? ObjectState(JSONValue? value) => value is { IsObject: true } ? value : null;
 
@@ -648,14 +663,28 @@ public sealed class LibraryStore
     /// The unsaved library encoded for writing (null: nothing to save). With <see cref="WriteEncoded"/> the app writes the
     /// file off the UI thread: encoding takes a consistent snapshot here, the slow disk write runs elsewhere.
     /// </summary>
-    public (byte[] Data, int Revision)? EncodePending()
+    public (byte[] Data, int Revision)? EncodePending() => PendingSnapshot() is { } p ? (Encode(p.Doc), p.Revision) : null;
+
+    /// <summary>
+    /// The unsaved library as a copy of its own (null: nothing to save): taken under the lock (a few list and dictionary
+    /// copies), so the app encodes it with <see cref="Encode"/> and writes it with <see cref="WriteEncoded"/> off the UI
+    /// thread – encoding the whole library took long enough to stutter the next question's animation. Later changes edit
+    /// the store's own document, never the copy (records and JSON values are immutable).
+    /// </summary>
+    public (LibraryDocument Doc, int Revision)? PendingSnapshot()
     {
         lock (_lock)
         {
             if (!_dirty || _revision <= _writtenRevision) return null;
-            try { return (EncodeDocument(_doc), _revision); }
-            catch (Exception) { throw new LibraryStoreError(LibraryStoreErrorCode.Io, StoreMessages.Io); }
+            return (_doc.Clone(), _revision);
         }
+    }
+
+    /// <summary>The file's bytes of a document from <see cref="PendingSnapshot"/> (any thread).</summary>
+    public static byte[] Encode(LibraryDocument doc)
+    {
+        try { return EncodeDocument(doc); }
+        catch (Exception) { throw new LibraryStoreError(LibraryStoreErrorCode.Io, StoreMessages.Io); }
     }
 
     /// <summary>Writes what <see cref="EncodePending"/> returned (any thread); an older revision than the file's is skipped.</summary>
@@ -670,6 +699,12 @@ public sealed class LibraryStore
         }
         lock (_lock) if (_revision == revision) _dirty = false;
     }
+
+    // MARK: Revision
+
+    /// <summary>Counts every change of the library (mutations, reloads, a synced library).</summary>
+    public int Revision { get { lock (_lock) return _revision; } }
+
 
     void SaveLocked()
     {
@@ -691,6 +726,20 @@ public sealed class LibraryStore
             _writtenRevision = revision;
         }
     }
+
+    /// <summary>
+    /// Runs several write operations as one: a single change notification (and one autosave) at the end, and when one
+    /// of them throws, all of them are undone. A study step writes its answer and its session this way, so the app
+    /// reacts once per answer (Mac: LibraryStore.batch, 24.11.2026).
+    /// </summary>
+    public T Batch<T>(Func<T> body) => Mutate(body);
+
+    /// <summary>Batch without a result.</summary>
+    public void Batch(Action body) => Mutate(() =>
+    {
+        body();
+        return 0;
+    });
 
     T Mutate<T>(Func<T> body)
     {

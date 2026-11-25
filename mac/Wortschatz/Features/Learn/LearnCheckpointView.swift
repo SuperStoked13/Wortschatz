@@ -47,7 +47,7 @@ struct LearnCheckpointView: View {
             }
 
             if !rows.isEmpty {
-                LearnTermList(title: "In dieser Runde", rows: rows, termLang: termLang, defLang: defLang)
+                LearnTermList(title: String(localized: "In dieser Runde"), rows: rows, termLang: termLang, defLang: defLang)
             }
         }
         .onAppear {
@@ -164,6 +164,10 @@ struct LearnTermList: View {
     let rows: [Row]
     let termLang: Lang
     let defLang: Lang
+    /// With a set, each row ends with its ★ toggle (finish screen: mark what went wrong for later).
+    var starSetID: String? = nil
+
+    @Environment(AppModel.self) private var model
 
     var body: some View {
         VStack(alignment: .leading, spacing: Spacing.s) {
@@ -207,10 +211,22 @@ struct LearnTermList: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             trailing(row.trailing)
+            if let starSetID {
+                StarToggle(isStarred: isStarred(row.id, in: starSetID)) {
+                    model.toggleStar(setID: starSetID, cardID: row.id)
+                }
+            }
         }
         .padding(.horizontal, Spacing.l)
         .padding(.vertical, Spacing.s)
-        .accessibilityElement(children: .combine)
+        .accessibilityElement(children: rowChildren)
+    }
+
+    /// One element per row; with stars the ★ stays a button of its own.
+    private var rowChildren: AccessibilityChildBehavior { starSetID == nil ? .combine : .contain }
+
+    private func isStarred(_ cardID: String, in setID: String) -> Bool {
+        model.isStarred(setID: setID, cardID: cardID)
     }
 
     @ViewBuilder
@@ -226,11 +242,12 @@ struct LearnTermList: View {
                     }
                 }
                 .accessibilityElement(children: .ignore)
-                .accessibilityLabel("Antworten: \(results.map { $0 ? "richtig" : "falsch" }.joined(separator: ", "))")
+                .accessibilityLabel(
+                    "Antworten: \(results.map { $0 ? String(localized: "richtig") : String(localized: "falsch") }.joined(separator: ", "))")
                 StatusChip(status: status, size: .small)
             }
         case let .misses(count):
-            TintedChip(text: "\(count)× falsch", palette: Theme.failure, size: .small)
+            TintedChip(text: String(localized: "\(count)× falsch"), palette: Theme.failure, size: .small)
         }
     }
 }

@@ -1,6 +1,10 @@
 // The downloadable files. Each platform has a small manifest in the releases folder
 // (mac.json, windows.json, written by tools/release-*.sh) that names its file. The server
 // checks the file, measures it and computes its SHA-256 once per version.
+//
+// Or the file is on GitHub: then the manifest also has `url` (the file in a release of
+// DOWNLOAD_REPO, nothing else), `size` and `sha256`, the page links there, and this server
+// sends no file at all.
 
 import crypto from 'node:crypto';
 import fs from 'node:fs';
@@ -25,6 +29,8 @@ const VERSION_RE = /^[0-9A-Za-z][0-9A-Za-z.+-]{0,31}$/;
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const TEXT_RE = /^[\p{L}\p{N} .,:+()/_-]{1,80}$/u;
 const MAX_MANIFEST_BYTES = 16 * 1024;
+const SHA256_RE = /^[0-9a-f]{64}$/;
+const TAG_RE = /^[A-Za-z0-9][A-Za-z0-9._+-]{0,99}$/;
 
 const sizeFormat = new Intl.NumberFormat('de-CH', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
 const dateFormat = new Intl.DateTimeFormat('de-CH', {
@@ -52,8 +58,33 @@ function text(value, fallback = '') {
   return typeof value === 'string' && TEXT_RE.test(value.trim()) ? value.trim() : fallback;
 }
 
-/** Loads one platform's release, or null (no manifest, invalid manifest, missing file). */
-export async function loadRelease(dir, platform, log) {
+/**
+ * The address of `file` in a release of `repo` on GitHub, exactly as GitHub writes it, or ''
+ * for anything else (another host or repository, http, a query, a different file name …).
+ */
+export function githubReleaseUrl(value, repo, file) {
+  if (typeof value !== 'string' || value.length > 400) return '';
+  let url;
+  try {
+    url = new URL(value);
+  } catch {
+    return '';
+  }
+  if (url.protocol !== 'https:' || url.host !== 'github.com' || url.username || url.password || url.search || url.hash) return '';
+  if (url.href !== value) return '';
+  const parts = url.pathname.split('/');
+  // ['', owner, repo, 'releases', 'download', tag, file]
+  if (parts.length !== 7 || parts[3] !== 'releases' || parts[4] !== 'download') return '';
+  if (`${parts[1]}/${parts[2]}`.toLowerCase() !== String(repo).toLowerCase()) return '';
+  if (!TAG_RE.test(parts[5]) || parts[6] !== file) return '';
+  return url.href;
+}
+
+/**
+ * Loads one platform's release, or null (no manifest, invalid manifest, missing file). `repo`: the
+ * only GitHub repository whose release files a manifest may link to (DOWNLOAD_REPO).
+ */
+export async function loadRelease(dir, platform, log, { repo = '' } = {}) {
   const manifestPath = path.join(dir, platform.manifest);
   let manifest;
   try {
@@ -77,6 +108,46 @@ export async function loadRelease(dir, platform, log) {
     return null;
   }
 
+  const released = typeof manifest.released === 'string' && DATE_RE.test(manifest.released) ? manifest.released : '';
+  const releasedDate = released ? new Date(`${released}T00:00:00Z`) : null;
+  const details = {
+    platform: platform.id,
+    label: platform.label,
+    file,
+    version,
+    build: typeof manifest.build === 'string' && VERSION_RE.test(manifest.build) ? manifest.build : '',
+    requirement: text(manifest.requirement),
+    architecture: text(manifest.architecture),
+    released,
+    releasedLabel: releasedDate && !Number.isNaN(releasedDate.getTime()) ? dateFormat.format(releasedDate) : '',
+  };
+
+  // On GitHub: nothing here to check, so the manifest must say everything the page shows.
+  if (manifest.url !== undefined) {
+    const url = githubReleaseUrl(manifest.url, repo, file);
+    const sha = typeof manifest.sha256 === 'string' ? manifest.sha256.toLowerCase() : '';
+    const size = manifest.size;
+    let problem = '';
+    if (!url) problem = `Der Link führt nicht auf eine Datei «${file}» in einem Release von ${repo || '(DOWNLOAD_REPO fehlt)'} auf GitHub.`;
+    else if (!SHA256_RE.test(sha)) problem = 'sha256 fehlt oder ist ungültig.';
+    else if (!Number.isSafeInteger(size) || size <= 0) problem = 'size fehlt oder ist ungültig.';
+    if (problem) {
+      log.warn('release.manifest', { platform: platform.id, message: problem });
+      return null;
+    }
+    const digest = Buffer.from(sha, 'hex');
+    return Object.freeze({
+      ...details,
+      external: true,
+      url,
+      size,
+      sha256: sha,
+      sha256Base64: digest.toString('base64'),
+      fingerprint: sha.slice(0, 16),
+      sizeLabel: formatSize(size),
+    });
+  }
+
   // The file must really sit in the releases folder (no symlink pointing elsewhere).
   let filePath;
   let stat;
@@ -98,13 +169,10 @@ export async function loadRelease(dir, platform, log) {
     digestCache.set(cacheKey, digest);
   }
   const hex = digest.toString('hex');
-  const released = typeof manifest.released === 'string' && DATE_RE.test(manifest.released) ? manifest.released : '';
-  const releasedDate = released ? new Date(`${released}T00:00:00Z`) : null;
 
   return Object.freeze({
-    platform: platform.id,
-    label: platform.label,
-    file,
+    ...details,
+    external: false,
     path: filePath,
     size: stat.size,
     mtime: stat.mtime,
@@ -114,19 +182,13 @@ export async function loadRelease(dir, platform, log) {
     sha256Base64: digest.toString('base64'),
     fingerprint: hex.slice(0, 16),
     etag: `"${hex.slice(0, 32)}"`,
-    version,
-    build: typeof manifest.build === 'string' && VERSION_RE.test(manifest.build) ? manifest.build : '',
-    requirement: text(manifest.requirement),
-    architecture: text(manifest.architecture),
-    released,
-    releasedLabel: releasedDate && !Number.isNaN(releasedDate.getTime()) ? dateFormat.format(releasedDate) : '',
     sizeLabel: formatSize(stat.size),
   });
 }
 
-export async function loadReleases(dir, log) {
+export async function loadReleases(dir, log, options = {}) {
   const entries = await Promise.all(
-    Object.values(PLATFORMS).map(async (platform) => [platform.id, await loadRelease(dir, platform, log)]),
+    Object.values(PLATFORMS).map(async (platform) => [platform.id, await loadRelease(dir, platform, log, options)]),
   );
   return Object.freeze(Object.fromEntries(entries));
 }

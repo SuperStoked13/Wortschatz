@@ -29,7 +29,7 @@ enum SetEditorSnapshotScenario: String, CaseIterable {
     case new
     /// The user's 52-pair list pasted into the import box.
     case pasted
-    /// The pasted list taken over into the cards.
+    /// The pasted list with a title: its pairs are the cards.
     case applied
     /// An existing set (the 52 pairs) opened for editing.
     case edit
@@ -37,12 +37,16 @@ enum SetEditorSnapshotScenario: String, CaseIterable {
     case validation
     /// A messy list: headings, a page number, flagged pairs and skipped lines.
     case review
+    /// The pasted list after editing its first card, deleting its second, typing a card of
+    /// one's own and "Seiten tauschen": the edit stays (turned round), the deleted card stays
+    /// away, the own card stays at the end.
+    case importEdits
 
     var sizes: [CGSize] {
         switch self {
         case .new: [SetEditorSnapshots.size, SetEditorSnapshots.compactSize]
         case .pasted, .review: [SetEditorSnapshots.size, SetEditorSnapshots.tallSize]
-        case .applied, .edit, .validation: [SetEditorSnapshots.size]
+        case .applied, .edit, .validation, .importEdits: [SetEditorSnapshots.size]
         }
     }
 }
@@ -109,7 +113,7 @@ enum SetEditorSnapshotScript {
             let editor = SetEditorModel(app: app, request: EditorRequest(.new))
             editor.setTitle(SampleLibrary.mainSetTitle)
             editor.importPanel.setText(userListText, append: false)
-            editor.applyImport()
+            editor.scroll(to: .cards, anchor: .top)
             editor.toasts.dismissAll()
             return (app, editor)
         case .edit:
@@ -130,6 +134,20 @@ enum SetEditorSnapshotScript {
             let editor = SetEditorModel(app: app, request: EditorRequest(.new))
             editor.importPanel.setText(messyListText, append: false)
             editor.importPanel.showsSkippedLines = true
+            return (app, editor)
+        case .importEdits:
+            let editor = SetEditorModel(app: app, request: EditorRequest(.new))
+            editor.setTitle(SampleLibrary.mainSetTitle)
+            editor.importPanel.setText(userListText, append: false)
+            let rows = editor.rows
+            editor.setTerm(rows[0], "le monsieur (Anrede)")
+            editor.deleteRow(rows[1], focused: nil)
+            let own = editor.addRow(focus: false)
+            editor.setTerm(own, "zzz eigene Karte")
+            editor.setDefinition(own, "selbst getippt")
+            editor.importPanel.toggleSwap()
+            editor.toasts.dismissAll()
+            editor.scroll(to: .cards, anchor: .top)
             return (app, editor)
         }
     }

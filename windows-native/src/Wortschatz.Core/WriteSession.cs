@@ -446,7 +446,7 @@ public static class WriteSession
             byCard[q.CardId] = byCard.GetValueOrDefault(q.CardId) + s.Misses.GetValueOrDefault(qid);
         }
         var missedCards = cardOrder.Where(id => byCard[id] > 0).Select(id => new MissedCard(id, byCard[id])).ToList();
-        var hardest = missedCards.Select((c, i) => (c, i)).OrderByDescending(x => x.c.Misses).ThenBy(x => x.i).Take(10).Select(x => x.c).ToList();
+        var hardest = missedCards.Select((c, i) => (c, i)).OrderByDescending(x => x.c.Misses).ThenBy(x => x.i).Select(x => x.c).ToList();
         return new FinalStats(total, firstTryCorrect, total == 0 ? 0 : (double)firstTryCorrect / total, total == 0 ? 0 : s.Round, s.ElapsedMs,
             hardest, missedCards.Select(c => c.CardId).ToList());
     }

@@ -170,7 +170,9 @@ extension WriteFlow {
             case .requestOptions:
                 guard !s.isBlocked else { return }
                 openOptions()
-            case let .optionsChanged(options): s.options = options
+            case let .optionsChanged(options):
+                s.options = options
+                applyOptions()
             case let .overlayDismissed(restartRequested): closeOverlay(restartRequested: restartRequested)
             case let .promptAnswered(confirmed): answerPrompt(confirmed)
             case .restart:
@@ -309,10 +311,19 @@ extension WriteFlow {
             var session = saved
             // Time away is not study time (a finished session's clock is stopped).
             if !showResultsAgain { session.updatedAt = env.now }
+            // Direction and «Mischen» as they are set now (changed elsewhere since it was left).
+            var applied = false
+            if !showResultsAgain, let set = s.set {
+                let next = WriteSession.setOptions(
+                    session, answerWith: s.options.answerWith, shuffle: s.options.shuffle, cards: set.cards,
+                    rng: env.rng, now: env.now)
+                applied = next != session
+                session = next
+            }
             s.session = session
             let pruned = pruneSession()
             s.pending = showResultsAgain ? nil : WriteFlow.pendingFeedback(s.session, feedback)
-            if pruned { persist() }
+            if pruned || applied { persist() }
             guard let current = s.session, !current.order.isEmpty else {
                 startFresh(wanted ?? .all)
                 return
@@ -392,7 +403,7 @@ extension WriteFlow {
             else { return }
             guard WriteFlow.hasText(value) else {
                 s.rejections += 1
-                announce("Gib zuerst eine Antwort ein – oder wähle «Weiss ich nicht».")
+                announce(L("Gib zuerst eine Antwort ein – oder wähle «Weiss ich nicht»."))
                 return
             }
             let graded = grade(info, value)
@@ -444,7 +455,7 @@ extension WriteFlow {
             s.phase = .feedback(.correct)
             // "Genau!" right above a "Genau: …" correction would read oddly; a synonym shows the
             // word the card asked for.
-            let praise = fb.synonym ? "Auch richtig!" : result.exact ? pickPraise() : "Richtig!"
+            let praise = fb.synonym ? L("Auch richtig!") : result.exact ? pickPraise() : L("Richtig!")
             fb.praise = praise
             s.feedback = fb
             let ms = s.options.autoAdvance ? (result.exact ? WriteFlow.advanceMs : WriteFlow.advanceMsWithNotes) : 0
@@ -467,11 +478,24 @@ extension WriteFlow {
                 s.input = ""
                 s.inputInvalid = false
             }
-            let lead = fb.dontKnow ? "Kein Problem." : "Nicht ganz."
+            let lead = fb.dontKnow ? L("Kein Problem.") : L("Nicht ganz.")
+            let answer = L("Richtige Antwort: %@.", info.expected)
             let hint = fb.hintLabel.map { " \($0)." } ?? ""
-            let tail = fb.copy ? " Tippe die richtige Antwort ab." : ""
-            announce("\(lead) Richtige Antwort: \(info.expected).\(hint)\(tail)")
+            let tail = fb.copy ? " " + L("Tippe die richtige Antwort ab.") : ""
+            announce("\(lead) \(answer)\(hint)\(tail)")
             lock()
+        }
+
+        /// The copy typed out continues by itself after a short beat, like Return (`CopyStep`);
+        /// typing on so that it no longer is stops the countdown.
+        mutating func continueTypedOutCopy() {
+            guard !s.isBlocked, s.phase == .copy, let info = infoFor(s.question) ?? s.question else { return }
+            guard CopyStep.isTypedOut(s.input, expected: info.expected, tolerance: s.options.tolerance, lang: info.answerLang)
+            else {
+                clearAdvance()
+                return
+            }
+            if s.autoAdvance == nil { startAdvance(CopyStep.advanceMs) }
         }
 
         mutating func submitCopy(_ value: String) {
@@ -486,7 +510,7 @@ extension WriteFlow {
             } else {
                 s.inputInvalid = true
                 s.rejections += 1
-                announce("Noch nicht ganz – tippe die richtige Antwort genau ab.")
+                announce(L("Noch nicht ganz – tippe die richtige Antwort genau ab."))
             }
         }
 
@@ -549,7 +573,8 @@ extension WriteFlow {
             s.phase = .summary
             s.summary = summary
             s.results = nil
-            announce("Runde \(summary.round) geschafft: \(summary.correct) von \(summary.total) richtig.")
+            announce(
+                L("Runde %@ geschafft: %@ von %@ richtig.", "\(summary.round)", "\(summary.correct)", "\(summary.total)"))
             lock()
         }
 
@@ -584,7 +609,7 @@ extension WriteFlow {
                 stats: stats, retryCardIds: stats.missedCardIds.filter(usable), cardCount: cardIdsInSession().count,
                 bothDirections: session.setOptions.answerWith == .both)
             let percent = JSCompat.numberToString(JSCompat.round(stats.accuracy * 100))
-            announce("Geschafft! \(percent) Prozent beim ersten Versuch richtig.")
+            announce(L("Geschafft! %@ Prozent beim ersten Versuch richtig.", percent))
             lock()
         }
 
@@ -708,17 +733,27 @@ extension WriteFlow {
                 confirmRestart(resumesTimer: resumesTimer)
                 return
             }
-            let directionChanged = s.options.answerWith != before.answerWith
-            let orderChanged = directionChanged || s.options.shuffle != before.shuffle
-            let copyChanged = s.options.copyAnswer != before.copyAnswer
-            if let session = s.session, session.finishedAt == nil, orderChanged,
-                session.setOptions.answerWith != s.options.answerWith || session.setOptions.shuffle != s.options.shuffle
-            {
-                s.prompt = .restartForOptions(
-                    directionChanged: directionChanged, resumesTimer: resumesTimer, copyChanged: copyChanged)
-                return
+            // Direction and order applied when they were changed (`applyOptions`).
+            resumeAfterOverlay(resumesTimer: resumesTimer, copyChanged: s.options.copyAnswer != before.copyAnswer)
+        }
+
+        /// Direction and «Mischen» apply to the running session at once (since 25.11.2026; before,
+        /// they asked «Neu starten?» in the options and were ignored when changed elsewhere): the
+        /// open questions follow them (`WriteSession.setOptions`). The question on screen is asked
+        /// anew when it turned around or went; the round summary shows what is left.
+        mutating func applyOptions() {
+            guard let session = s.session, session.finishedAt == nil, let set = s.set else { return }
+            let next = WriteSession.setOptions(
+                session, answerWith: s.options.answerWith, shuffle: s.options.shuffle, cards: set.cards, rng: env.rng,
+                now: env.now)
+            guard next != session else { return }
+            s.session = next
+            persist()
+            switch s.phase {
+            case .question where WriteSession.current(next)?.qid != s.question?.qid: afterRoundEnds()
+            case .summary: afterRoundEnds()
+            default: break
             }
-            resumeAfterOverlay(resumesTimer: resumesTimer, copyChanged: copyChanged)
         }
 
         /// Hands the step back after a sheet or alert: restarts the auto-advance it paused and
@@ -730,6 +765,8 @@ extension WriteFlow {
                 showCorrect()
             } else if s.phase.isMiss && copyChanged {
                 showIncorrect()
+            } else if s.phase == .copy {
+                continueTypedOutCopy()
             }
         }
 
@@ -749,12 +786,6 @@ extension WriteFlow {
                     startFresh(s.session?.subset ?? .all)
                 } else {
                     resumeAfterOverlay(resumesTimer: resumesTimer, copyChanged: false)
-                }
-            case let .restartForOptions(_, resumesTimer, copyChanged):
-                if confirmed, let session = s.session {
-                    startFresh(session.subset)
-                } else {
-                    resumeAfterOverlay(resumesTimer: resumesTimer, copyChanged: copyChanged)
                 }
             case let .replaceRound(wanted, saved, feedback):
                 if confirmed {

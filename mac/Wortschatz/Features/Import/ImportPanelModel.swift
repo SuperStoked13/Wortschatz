@@ -7,7 +7,7 @@ import WortschatzImport
 /// The languages the import panel parses and recognises text with (`getLangs()` of the web
 /// editor): the pickers' values and whether the learner chose them.
 struct ImportLanguages: Equatable, Sendable {
-    var termLang: Lang = .fr
+    var termLang: Lang = .other
     var defLang: Lang = .de
     var termTouched = false
     var defTouched = false
@@ -15,11 +15,11 @@ struct ImportLanguages: Equatable, Sendable {
 
 /// State of the editor's smart import panel (port of src/screens/editor-import.js): the paste
 /// box, file imports (text, PDF, images with OCR) through `ImportCoordinator`, live parsing
-/// with `VocabParser` (debounced, off the main actor), the separator controls and the pending
-/// pairs. The editor reads `result` and takes the cards over with `pendingCards()`.
+/// with `VocabParser` (debounced, off the main actor) and the separator controls. Every parse
+/// goes to the editor (`onResult`), whose card list shows the pairs right away.
 @Observable
 final class ImportPanelModel {
-    /// Everything needed to put the panel back (undo of "Karten übernehmen").
+    /// Everything needed to put the panel back (undo).
     struct Snapshot: Equatable {
         var text: String
         var separator: ImportSeparator
@@ -29,14 +29,16 @@ final class ImportPanelModel {
         var isExpanded: Bool
     }
 
-    static let placeholder = "Füge deine Vokabelliste hier ein – z. B. aus Word, einer PDF oder Quizlet. Begriff und Übersetzung werden automatisch erkannt."
-    static let hint = "Tipp: Funktioniert mit abwechselnden Zeilen, Tabellen (Tab, Komma, Strichpunkt, Bindestrich) und Quizlet-Exporten."
+    static let placeholder = String(
+        localized:
+            "Füge deine Vokabelliste hier ein – z. B. aus Word, einer PDF oder Quizlet. Begriff und Übersetzung werden automatisch erkannt."
+    )
+    static let hint = String(
+        localized: "Tipp: Funktioniert mit abwechselnden Zeilen, Tabellen (Tab, Komma, Strichpunkt, Bindestrich) und Quizlet-Exporten.")
     /// Typing pauses this long before the text is parsed (`PARSE_DELAY`).
     static let parseDelay: Duration = .milliseconds(250)
     /// Delay after typing a custom separator.
     static let customSeparatorDelay: Duration = .milliseconds(150)
-    /// Rows the preview shows before it scrolls (`PREVIEW_ROWS`).
-    static let previewRows = 8
 
     /// The text in the paste box.
     private(set) var text = ""
@@ -47,7 +49,7 @@ final class ImportPanelModel {
     /// The latest recognition; nil while the box is empty.
     private(set) var result: ParseResult?
     /// Problems of the last file imports that did not stop them (e.g. unreadable scanned
-    /// pages); shown with the parser's warnings until the text is cleared or taken over.
+    /// pages); shown with the parser's warnings until the text is cleared.
     private(set) var fileNotes: [String] = []
     var isExpanded: Bool
     var showsSkippedLines = false
@@ -57,9 +59,6 @@ final class ImportPanelModel {
     private(set) var focusToken = 0
     /// Incremented when the detection should scroll into view (after a file import).
     private(set) var revealToken = 0
-    /// Probable typos per recognised card (index in `result.cards`), filled in small portions
-    /// after each parse so long lists never stall the UI.
-    private(set) var typos: [Int: [SpellingIssue]] = [:]
 
     let importer: ImportCoordinator
 
@@ -67,6 +66,8 @@ final class ImportPanelModel {
     @ObservationIgnored var languages: () -> ImportLanguages = { ImportLanguages() }
     /// Called after every parse that found cards (fills untouched language pickers).
     @ObservationIgnored var onDetected: (ParseResult) -> Void = { _ in }
+    /// Called after every parse, nil for an empty box: the editor's cards follow it.
+    @ObservationIgnored var onResult: (ParseResult?) -> Void = { _ in }
     /// Called with the first file name of a successful file import (title suggestion).
     @ObservationIgnored var onFileName: (String) -> Void = { _ in }
 
@@ -75,7 +76,6 @@ final class ImportPanelModel {
     @ObservationIgnored private var parseGeneration = 0
     @ObservationIgnored private var announcedCount: Int?
     @ObservationIgnored private var importTask: Task<Void, Never>?
-    @ObservationIgnored private var typoTask: Task<Void, Never>?
 
     init(isExpanded: Bool, toasts: ToastCenter, importer: ImportCoordinator = ImportCoordinator()) {
         self.isExpanded = isExpanded
@@ -94,38 +94,12 @@ final class ImportPanelModel {
     /// "Eigenes…" is chosen but nothing typed yet.
     var needsCustomSeparator: Bool { separator == .custom && customSeparator.isEmpty }
 
-    /// The warnings to show: file notes, then the parser's (the "übersprungen" warning is
-    /// covered by the skipped-lines disclosure).
+    /// The warnings to show: file notes, then the parser's (the skipped-lines warning is covered
+    /// by the skipped-lines disclosure; compared as a whole, so it works in every language).
     var warnings: [String] {
         guard let result else { return fileNotes }
-        let skipped = !result.skipped.isEmpty
-        return fileNotes + result.warnings.filter { !(skipped && $0.contains("übersprungen")) }
-    }
-
-    /// The spell checker accepts other words now (`SetEditorModel.ignoreSpelling`).
-    func spellingDidChange() {
-        checkTypos()
-    }
-
-    private func checkTypos() {
-        typoTask?.cancel()
-        guard let result, !result.cards.isEmpty else {
-            typoTask = nil
-            if !typos.isEmpty { typos = [:] }
-            return
-        }
-        typoTask = Task { [weak self] in
-            var found: [Int: [SpellingIssue]] = [:]
-            for (index, card) in result.cards.enumerated() {
-                guard !Task.isCancelled else { return }
-                let issues = VocabSpellChecker.shared.issues(in: card.term, lang: result.termLang)
-                    + VocabSpellChecker.shared.issues(in: card.definition, lang: result.defLang)
-                if !issues.isEmpty { found[index] = issues }
-                if index % 20 == 19 { await Task.yield() }
-            }
-            guard !Task.isCancelled, let self else { return }
-            if self.typos != found { self.typos = found }
-        }
+        let skippedWarning = VocabParser.skippedLinesWarning(result.skipped.filter { $0.reason != .unpaired }.count)
+        return fileNotes + result.warnings.filter { $0 != skippedWarning }
     }
 
     // MARK: Text
@@ -175,6 +149,13 @@ final class ImportPanelModel {
         scheduleParse(after: Self.customSeparatorDelay)
     }
 
+    /// "Seiten tauschen" set back (undo in the editor).
+    func setSwapsSides(_ value: Bool) {
+        guard value != swapsSides else { return }
+        swapsSides = value
+        parseNow()
+    }
+
     /// "Seiten tauschen".
     func toggleSwap() {
         swapsSides.toggle()
@@ -204,19 +185,6 @@ final class ImportPanelModel {
             return
         }
         apply(VocabParser.parseVocab(text, options: parseOptions()))
-    }
-
-    /// The pairs still waiting in the box (0 when it is empty).
-    func pendingCount() -> Int {
-        flushParse()
-        guard hasText else { return 0 }
-        return result?.cards.count ?? 0
-    }
-
-    /// The recognised cards, after any pending parse.
-    func pendingCards() -> [ParsedCard] {
-        flushParse()
-        return result?.cards ?? []
     }
 
     private func parseOptions() -> ParseOptions {
@@ -254,13 +222,13 @@ final class ImportPanelModel {
 
     private func apply(_ newResult: ParseResult?) {
         result = newResult
-        checkTypos()
         let count = newResult?.cards.count
         if count != announcedCount {
             announcedCount = count
             if let count { Announcer.announce(SetEditorCopy.pairsDetected(count)) }
         }
         if let newResult, !newResult.cards.isEmpty { onDetected(newResult) }
+        onResult(newResult)
     }
 
     // MARK: State
@@ -283,11 +251,6 @@ final class ImportPanelModel {
         fileNotes = snapshot.fileNotes
     }
 
-    /// Empties the panel (after its cards were taken over).
-    func reset() {
-        restore(Snapshot(text: "", separator: .auto, customSeparator: "", swapsSides: false, fileNotes: [], isExpanded: isExpanded))
-    }
-
     // MARK: Files
 
     /// Reads files or pasted images (drop, "Datei wählen…", ⌘V) and appends their text.
@@ -301,7 +264,9 @@ final class ImportPanelModel {
         let langs = languages()
         importTask = Task { [weak self] in
             guard let importer = self?.importer else { return }
-            let outcome = await importer.run(sources, termLang: langs.termLang, defLang: langs.defLang)
+            // "Automatisch" (`.other`): the text recognition guesses the language itself.
+            let outcome = await importer.run(
+                sources, termLang: langs.termLang == .other ? nil : langs.termLang, defLang: langs.defLang)
             self?.finishImport(outcome)
         }
     }
@@ -324,7 +289,7 @@ final class ImportPanelModel {
     func importFromPasteboard() {
         let sources = PasteboardImage.importSources()
         guard !sources.isEmpty else {
-            toasts.show("In der Zwischenablage ist kein Bild und keine Datei.", systemImage: "doc.on.clipboard")
+            toasts.show(String(localized: "In der Zwischenablage ist kein Bild und keine Datei."), systemImage: "doc.on.clipboard")
             return
         }
         importSources(sources)
@@ -376,16 +341,23 @@ final class ImportPanelModel {
             fileNotes = notes
             if let name = batch.firstName { onFileName(name) }
             let count = result?.cards.count ?? 0
-            let found = count > 0 ? "\(Labels.plural(count, "Paar", "Paare")) gefunden" : "noch keine Paare gefunden"
+            let pairs = Labels.plural(count, "Paar", "Paare")
             if !batch.warnings.isEmpty {
                 // Do not suggest completeness: part of the content could not be read.
                 toasts.show(
-                    "Text teilweise erkannt – \(found). Nicht alles konnte gelesen werden, siehe Hinweis.",
+                    count > 0
+                        ? String(
+                            localized:
+                                "Text teilweise erkannt – \(pairs) gefunden. Nicht alles konnte gelesen werden, siehe Hinweis.")
+                        : String(
+                            localized:
+                                "Text teilweise erkannt – noch keine Paare gefunden. Nicht alles konnte gelesen werden, siehe Hinweis."
+                        ),
                     tone: .warning, duration: .seconds(7))
             } else if count > 0 {
-                toasts.show("Text erkannt – \(found). Prüfe die Vorschau.", tone: .success)
+                toasts.show(String(localized: "Text erkannt – \(pairs) gefunden. Prüfe die Karten."), tone: .success)
             } else {
-                toasts.show("Text eingefügt. Es wurden noch keine Paare erkannt.")
+                toasts.show(String(localized: "Text eingefügt. Es wurden noch keine Paare erkannt."))
             }
             revealToken += 1
         }

@@ -1,3 +1,5 @@
+using static Wortschatz.Core.CoreText;
+
 namespace Wortschatz.Core;
 
 /// <summary>
@@ -44,13 +46,14 @@ public sealed record BackupImportPreview(string FileName, JSONValue Payload, IRe
     /// <summary>"3 Lernsets · 120 Begriffe · vom 12.10.2026".</summary>
     public string Meta(TimeZoneInfo? timeZone = null)
     {
-        var parts = new List<string> { Labels.Plural(Sets.Count, "Lernset", "Lernsets"), Labels.Plural(CardCount, "Begriff", "Begriffe") };
+        var setsText = Labels.Plural(Sets.Count, "Lernset", "Lernsets");
+        var cardsText = Labels.Plural(CardCount, "Begriff", "Begriffe");
         if (ExportedAt is { } at)
         {
             var date = TimeUtil.FormatDate(at, timeZone);
-            if (date.Length > 0) parts.Add($"vom {date}");
+            if (date.Length > 0) return L($"{setsText} · {cardsText} · vom {date}");
         }
-        return string.Join(" · ", parts);
+        return $"{setsText} · {cardsText}";
     }
 
     public string MergeDetail
@@ -59,25 +62,31 @@ public sealed record BackupImportPreview(string FileName, JSONValue Payload, IRe
         {
             var parts = new List<string>();
             if (Additions > 0) parts.Add(Labels.Plural(Additions, "neues Lernset", "neue Lernsets"));
-            if (Updates > 0) parts.Add($"{Updates} {(Updates == 1 ? "wird" : "werden")} durch die Backup-Version ersetzt");
-            return parts.Count == 0 ? "Keine Änderungen" : string.Join(" · ", parts);
+            if (Updates > 0)
+                parts.Add(Updates == 1 ? L("1 wird durch die Backup-Version ersetzt") : L($"{Updates} werden durch die Backup-Version ersetzt"));
+            return parts.Count == 0 ? L("Keine Änderungen") : string.Join(" · ", parts);
         }
     }
 
     public string ReplaceDetail => Lost switch
     {
-        0 => "Alle deine Lernsets sind im Backup enthalten.",
-        1 => "1 Lernset, das nicht im Backup ist, geht verloren.",
-        _ => $"{Lost} Lernsets, die nicht im Backup sind, gehen verloren.",
+        0 => L("Alle deine Lernsets sind im Backup enthalten."),
+        1 => L("1 Lernset, das nicht im Backup ist, geht verloren."),
+        _ => L($"{Lost} Lernsets, die nicht im Backup sind, gehen verloren."),
     };
 
     /// <summary>The toast after the import (Mac: performBackupImport).</summary>
     public static string ResultMessage(ImportSummary result, ImportMode mode)
     {
-        if (mode == ImportMode.Replace) return $"Backup wiederhergestellt: {Labels.Plural(result.SetsAdded + result.SetsUpdated, "Lernset", "Lernsets")}";
-        var parts = new List<string>();
-        if (result.SetsAdded > 0) parts.Add(Labels.Plural(result.SetsAdded, "neues Lernset", "neue Lernsets"));
-        if (result.SetsUpdated > 0) parts.Add($"{result.SetsUpdated} aktualisiert");
-        return parts.Count == 0 ? "Backup importiert – keine Änderungen" : $"Backup importiert: {string.Join(", ", parts)}";
+        if (mode == ImportMode.Replace) return L($"Backup wiederhergestellt: {Labels.Plural(result.SetsAdded + result.SetsUpdated, "Lernset", "Lernsets")}");
+        int updated = result.SetsUpdated;
+        // One whole sentence per case (Mac: performBackupImport).
+        return (result.SetsAdded > 0, updated > 0) switch
+        {
+            (true, true) => L($"Backup importiert: {Labels.Plural(result.SetsAdded, "neues Lernset", "neue Lernsets")}, {updated} aktualisiert"),
+            (true, false) => L($"Backup importiert: {Labels.Plural(result.SetsAdded, "neues Lernset", "neue Lernsets")}"),
+            (false, true) => L($"Backup importiert: {updated} aktualisiert"),
+            _ => L("Backup importiert – keine Änderungen"),
+        };
     }
 }

@@ -8,7 +8,7 @@ using Wortschatz.Core;
 
 // Renders the app's screens to PNG with Avalonia headless (Skia) – the Windows app's design checks without
 // Windows (Mac: the snapshot harness, DebugSnapshot.swift). Usage:
-//   dotnet run --project tools/Wortschatz.Snapshots -- <out-dir> [phone] [dark] [reduce] [contrast] [solid] [--only=learn|write|flashcards|editor|exam|settings|shell]
+//   dotnet run --project tools/Wortschatz.Snapshots -- <out-dir> [phone] [dark] [en] [big|huge] [reduce] [contrast] [solid] [--only=learn|write|flashcards|editor|exam|settings|shell|recheck|updates]
 var outDir = args.Length > 0 ? args[0] : "snapshots";
 bool dark = args.Contains("dark");
 // "reduce": as with Windows' animation effects switched off (Mac: Reduce Motion).
@@ -19,6 +19,8 @@ Directory.CreateDirectory(outDir);
 // A clock that moves on by a second per reading: the flows' input locks (280 ms) never block the scripted steps.
 double fakeNow = 1_762_100_000_000;
 TimeUtil.Clock = () => fakeNow += 1000;
+// The same questions every run (the study engines' random choices): two runs draw the same pictures.
+Rand.Fixed = Rand.Mulberry32(20261125u);
 // The animation clock only moves when a step says so: Advance renders the frames in between (60 per second), Shot
 // first lets every running animation finish unless it is asked for a frozen moment.
 double motionNow = 0;
@@ -33,6 +35,8 @@ AppBuilder.Configure<App>()
 // "phone": the Android app's layout on a phone screen (390 × 844 like a common Android phone, without the system bars).
 bool phone = args.Contains("phone");
 AppDevice.IsPhone = phone;
+// "en": the app in English (Einstellungen › Allgemein › Sprache); without it German, whatever this computer's language.
+Wortschatz.App.Services.AppLanguage.SystemLanguageOverride = args.Contains("en") ? "en" : "de";
 var model = Samples.Model(dark);
 Avalonia.Controls.Window host;
 MainView window;
@@ -43,7 +47,9 @@ if (phone)
 }
 else
 {
-    var main = new MainWindow(model) { Width = 1280, Height = 800 };
+    // big: a large monitor (2560 × 1440), huge: 8K at 100 % (7680 × 4320) – the study screens grow (MainView.StudyScale).
+    var main = args.Contains("huge") ? new MainWindow(model) { Width = 7680, Height = 4320 }
+        : args.Contains("big") ? new MainWindow(model) { Width = 2560, Height = 1440 } : new MainWindow(model) { Width = 1280, Height = 800 };
     host = main;
     window = main.View;
 }
@@ -59,9 +65,14 @@ void Advance(double seconds)
     }
 }
 
+var timing = Environment.GetEnvironmentVariable("SNAP_TIMING") is not null;
+var stepClock = System.Diagnostics.Stopwatch.StartNew();
+
 void Shot(string name, bool settle = true)
 {
+    long before = stepClock.ElapsedMilliseconds;
     if (settle) Advance(3);
+    long settled = stepClock.ElapsedMilliseconds;
     for (int i = 0; i < 3; i++)
     {
         Dispatcher.UIThread.RunJobs();
@@ -77,6 +88,8 @@ void Shot(string name, bool settle = true)
     var path = Path.Combine(outDir, name + ".png");
     frame?.Save(path);
     Console.WriteLine(path);
+    if (timing) Console.WriteLine($"  time {name}: before {before / 1000.0:0.0} s, settle {(settled - before) / 1000.0:0.0} s, capture {(stepClock.ElapsedMilliseconds - settled) / 1000.0:0.0} s");
+    stepClock.Restart();
 }
 
 
@@ -95,6 +108,15 @@ foreach (var t in model.Toasts.ToList()) model.DismissToast(t.Id);
 var only = args.FirstOrDefault(a => a.StartsWith("--only="))?[7..];
 foreach (var step in Samples.Steps(model, window, host, set.Id, only))
 {
+    // "!skip": after fast-forwarding many steps, every animation they started jumps to its end in one frame (else
+    // the next shot plays thousands of them frame by frame: 15–20 s instead of under 1 s).
+    if (step == Samples.SkipAnimations)
+    {
+        motionNow += 30;
+        Motion.RunFrame();
+        Dispatcher.UIThread.RunJobs();
+        continue;
+    }
     // "name@0.25": a frozen moment, 0.25 s after the step's action (no settling).
     var parts = step.Split('@');
     if (parts.Length == 2)
@@ -109,9 +131,18 @@ static class Samples
 {
     const double Day = 86_400_000;
 
-    public static AppModel Model(bool dark)
+    /// <summary>A step that finishes every running animation at once (after a loop of many study steps).</summary>
+    public const string SkipAnimations = "!skip";
+
+    /// <summary>Opens the Learn options.</summary>
+    static void OpenStudyOptions(Wortschatz.App.Features.Learn.LearnController c)
     {
-        var store = new LibraryStore(new MemoryBackend());
+        c.Send(new LearnFlow.Event.OverlayPresented(LearnFlow.Overlay.Options));
+    }
+
+    public static AppModel Model(bool dark, string? folder = null)
+    {
+        var store = new LibraryStore(folder is null ? new MemoryBackend() : new FileBackend(Path.Combine(folder, "library.json")));
         store.UpdateSettings(new SettingsPatch(dark ? ThemeSetting.Dark : ThemeSetting.Light));
         var lines = File.ReadAllLines(FindFixture("user-example.txt")).Select(l => l.Trim()).Where(l => l.Length > 0).ToList();
         var pairs = new List<CardDraft>();
@@ -160,6 +191,11 @@ static class Samples
             foreach (var step in SettingsSteps(model, window, setId)) yield return step;
             yield break;
         }
+        if (only == "updates")
+        {
+            foreach (var step in UpdateSteps(model, window)) yield return step;
+            yield break;
+        }
         if (only == "shell")
         {
             // The window's own sheets and actions: delete with undo, Tastenkürzel, text export, backup import, sidebar.
@@ -200,6 +236,163 @@ static class Samples
                 editor.SnapshotValidate();
                 yield return "08e-editor-errors";
             }
+            yield break;
+        }
+        if (only == "recheck")
+        {
+            // A long set (rechecks only above 60 cards): the first card is missed once, everything else is right, until
+            // its Nachkontrolle comes – marked on the card, the session's first one with the hint and "Optionen".
+            var big = model.Store.CreateSet("Grosses Lernset", "", Lang.Fr, Lang.De,
+                Enumerable.Range(1, 70).Select(i => new CardDraft($"le mot {i}", $"das Wort {i}")).ToList());
+            void Check(bool ok, string what)
+            {
+                if (!ok) throw new InvalidOperationException("recheck/sound check failed: " + what);
+                Console.WriteLine("ok: " + what);
+            }
+            model.Study(big.Id, StudyMode.Learn);
+            if (window.CurrentScreen is not Wortschatz.App.Features.Learn.LearnScreen screen) yield break;
+            var c = screen.Controller;
+            // The screen lets its toasts out after its entrance (a real-time timer the headless run does not wait for).
+            c.ReleaseToasts();
+            bool missed = false;
+            screen.WithoutRendering(() =>
+            {
+            for (int i = 0; i < 3000 && !(c.State.Phase.IsQuestion && c.State.Question!.IsRecheck); i++)
+            {
+                var ph = c.State.Phase;
+                if (ph == LearnFlow.Phase.Mc)
+                {
+                    var qq = c.State.Question!;
+                    int index = qq.Choices.ToList().FindIndex(x => missed ? x.CardId == qq.CardId : x.CardId != qq.CardId);
+                    missed = true;
+                    c.Send(new LearnFlow.Event.Choose(index));
+                }
+                else if (ph == LearnFlow.Phase.Written) c.Send(new LearnFlow.Event.Submit(c.State.Question!.Expected));
+                else if (c.State.AutoAdvanceToken is { } t) c.Send(new LearnFlow.Event.AutoAdvanceFired(t));
+                else c.Send(new LearnFlow.Event.Proceed());
+            }
+            });
+            Check(c.State.Question?.IsRecheck == true, "a recheck is on screen");
+            var hints = model.Toasts.Where(x => x.Text == LearnFlow.RECHECK_HINT).ToList();
+            Check(hints.Count == 1 && hints[0].DurationMs == LearnFlow.RECHECK_HINT_MS && hints[0].ActionLabel == CoreText.L("Optionen"), "one hint, 10 s, with Optionen");
+            // Headless, the toasts' timers run ahead of real time: the hint is checked before skipping.
+            yield return SkipAnimations;
+            // A shot of this screen takes longer than the hint's 10 s in real time: the picture shows a copy that stays.
+            model.DismissToast(hints[0].Id);
+            model.ShowToast(hints[0] with { DurationMs = 600_000 });
+            yield return "03r-learn-recheck";
+            // "Optionen" in the hint opens the options.
+            hints[0].Action!();
+            Check(c.State.Overlay == LearnFlow.Overlay.Options, "Optionen opens the options");
+            yield return "03s-learn-options";
+            c.Send(new LearnFlow.Event.OverlayDismissed());
+            foreach (var x in model.Toasts.ToList()) model.DismissToast(x.Id);
+
+            // Sounds: on by default; the set's switch mutes only this set, the switch in Einstellungen every set.
+            Check(model.Sounds.IsEnabled, "sounds on in the set");
+            model.Preferences.SaveSetSoundEffects(big.Id, false);
+            Check(!model.Sounds.IsEnabled && !model.Preferences.SetSoundEffects(big.Id), "the set's switch mutes it");
+            Check(model.Preferences.SoundEffectsFor(setId) && model.Preferences.SoundEffectsFor(null), "other sets and no set keep their sounds");
+            OpenStudyOptions(c);
+            screen.RevealOption(Wortschatz.App.Features.Study.StudyChrome.SoundOptionClass);
+            yield return "03t-learn-options-sound-off";
+            c.Send(new LearnFlow.Event.OverlayDismissed());
+            model.Preferences.SaveSetSoundEffects(big.Id, true);
+            Check(model.Sounds.IsEnabled, "switched on again");
+            model.Preferences.SoundEffects = false;
+            Check(!model.Sounds.IsEnabled && !model.Preferences.SoundEffectsFor(setId), "Einstellungen mutes every set");
+            OpenStudyOptions(c);
+            screen.RevealOption(Wortschatz.App.Features.Study.StudyChrome.SoundOptionClass);
+            yield return "03u-learn-options-sound-off-everywhere";
+            c.Send(new LearnFlow.Event.OverlayDismissed());
+            model.Preferences.SoundEffects = true;
+
+            // Synonyms outside the set: the set's switch (Toleranz) turns them off for this set only, the switch in
+            // Einstellungen for every set (Mac: SetExtendedSynonymsToggle).
+            Check(model.Preferences.ExtendedSynonymsFor(big.Id), "synonyms on in the set");
+            model.Preferences.SaveSetExtendedSynonyms(big.Id, false);
+            Check(!model.Preferences.ExtendedSynonymsFor(big.Id) && model.Preferences.ExtendedSynonymsFor(setId), "the set's switch turns off only this set");
+            OpenStudyOptions(c);
+            screen.RevealOption(Wortschatz.App.Features.Study.StudyChrome.SynonymOptionClass);
+            yield return "03u1-learn-options-synonyms-off";
+            c.Send(new LearnFlow.Event.OverlayDismissed());
+            model.Preferences.SaveSetExtendedSynonyms(big.Id, true);
+            model.Preferences.ExtendedSynonyms = false;
+            Check(!model.Preferences.ExtendedSynonymsFor(big.Id) && !model.Preferences.ExtendedSynonymsFor(setId), "Einstellungen turns off every set");
+            OpenStudyOptions(c);
+            screen.RevealOption(Wortschatz.App.Features.Study.StudyChrome.SynonymOptionClass);
+            yield return "03u2-learn-options-synonyms-off-everywhere";
+            c.Send(new LearnFlow.Event.OverlayDismissed());
+            model.Preferences.ExtendedSynonyms = true;
+
+            // «Nachkontrolle nach Fehlern» switched off in the options applies at once (Mac 1.6.2, issue #9): the recheck on
+            // screen makes way for the next question, and closing the options asks nothing.
+            OpenStudyOptions(c);
+            screen.RevealOption(Wortschatz.App.Features.Study.StudyChrome.RecheckOptionClass);
+            model.Preferences.LearnRecheck = false;
+            c.SwitchesMayHaveChanged();
+            Check(c.State.Session?.Recheck is null && c.State.Question?.IsRecheck != true, "Nachkontrolle off: the recheck on screen makes way");
+            yield return "03u3-learn-options-recheck-off";
+            c.Send(new LearnFlow.Event.OverlayDismissed());
+            Check(c.State.Prompt is null, "no «Neu starten?» for the switch");
+            model.Preferences.LearnRecheck = true;
+            c.SwitchesMayHaveChanged();
+            Check(c.State.Session?.Recheck is not null, "Nachkontrolle on again");
+
+            // The set's options changed outside the session (issue #7): «Neu starten?»; «Später» keeps the session, and its
+            // options say what it still runs with. Set back to the standard, the option is no longer the set's own (#8).
+            model.Store.UpdateOwnStudyOptions(big.Id, new StudyOptionsPatch(AnswerWith: AnswerWith.Definition));
+            c.StoreDidChange();
+            Check(c.State.Prompt is LearnFlow.Prompt.RestartForOptions, "a direction changed outside asks «Neu starten?»");
+            yield return "03u4-learn-restart-for-options";
+            c.Send(new LearnFlow.Event.PromptAnswered(false));
+            Check(model.Preferences.KeptOptionsOf("learn", big.Id) is not null, "«Später» is kept for the set");
+            OpenStudyOptions(c);
+            Check(LearnFlow.RunningSettingsNote(c.State) is not null, "the options say the session runs in the old direction");
+            yield return "03u5-learn-options-running-note";
+            c.Send(new LearnFlow.Event.OverlayDismissed());
+            Check(c.State.Prompt is null, "closing the options without a change asks nothing after «Später»");
+            model.Store.UpdateOwnStudyOptions(big.Id, new StudyOptionsPatch(AnswerWith: AnswerWith.Term));
+            c.StoreDidChange();
+            Check(model.Store.GetSet(big.Id)?.StudyOptions is null, "set back to the standard: no own option left");
+            Check(c.State.Prompt is null && LearnFlow.RunningSettingsNote(c.State) is null, "back as the session runs: nothing to say");
+
+            // A second session: the hint comes again at its first recheck, but only once.
+            model.Store.ResetProgress(big.Id);
+            c.Send(new LearnFlow.Event.Restart());
+            if (c.State.Prompt is not null) c.Send(new LearnFlow.Event.PromptAnswered(true));
+            Check(c.State.Session?.Recheck is not null, "the second session has rechecks");
+            missed = false;
+            int recheckQuestions = 0;
+            string? lastQid = null;
+            screen.WithoutRendering(() =>
+            {
+            for (int i = 0; i < 4000 && c.State.Phase != LearnFlow.Phase.Finished; i++)
+            {
+                var ph = c.State.Phase;
+                if (c.State.Question is { IsRecheck: true } rq && ph.IsQuestion && rq.Qid != lastQid) { recheckQuestions++; lastQid = rq.Qid; }
+                if (ph == LearnFlow.Phase.Mc)
+                {
+                    var qq = c.State.Question!;
+                    // Three cards missed: three rechecks in this session.
+                    int index = qq.Choices.ToList().FindIndex(x => missed || c.State.Session!.Answered > 2 ? x.CardId == qq.CardId : x.CardId != qq.CardId);
+                    c.Send(new LearnFlow.Event.Choose(index));
+                }
+                else if (ph == LearnFlow.Phase.Written) c.Send(new LearnFlow.Event.Submit(c.State.Question!.Expected));
+                else if (c.State.AutoAdvanceToken is { } t) c.Send(new LearnFlow.Event.AutoAdvanceFired(t));
+                else c.Send(new LearnFlow.Event.Proceed());
+            }
+            });
+            Check(recheckQuestions >= 2, $"several rechecks in the second session ({recheckQuestions})");
+            Check(model.Toasts.Count(x => x.Text == LearnFlow.RECHECK_HINT) == 1, "the hint once in the second session");
+            yield return SkipAnimations;
+            yield return "03v-learn-finished-after-rechecks";
+
+            // The set page's options: the same switch.
+            model.OpenSet(big.Id);
+            yield return "03w0-set";
+            Wortschatz.App.Features.Study.StudyChrome.ShowSetOptions(model, big.Id);
+            yield return "03w-set-options";
             yield break;
         }
         if (Wants("learn")) model.Study(setId, StudyMode.Learn);
@@ -243,8 +436,50 @@ static class Samples
             for (int i = 0; i < 80 && c.State.Phase != LearnFlow.Phase.Checkpoint; i++) Step();
             yield return "04c0-learn-checkpoint-growing@0.35";
             yield return "04c-learn-checkpoint";
-            for (int i = 0; i < 600 && c.State.Phase != LearnFlow.Phase.Finished; i++) Step();
+            learn.WithoutRendering(() =>
+            {
+                for (int i = 0; i < 600 && c.State.Phase != LearnFlow.Phase.Finished; i++) Step();
+            });
+            yield return SkipAnimations;
             if (c.State.Phase == LearnFlow.Phase.Finished) yield return "04d-learn-finished";
+
+            // Abtippen (retype on): the right answer typed into the real copy field, as shown, continues without
+            // Enter and the screen follows (23.11.2026). Not a picture of the set: the option goes back off.
+            model.Store.ResetProgress(setId);
+            model.Store.UpdateStudyOptions(setId, new StudyOptionsPatch(Learn: new LearnOptionsPatch(Retype: true)));
+            model.Study(setId, StudyMode.Learn, forceNew: true);
+            if (window.CurrentScreen is Wortschatz.App.Features.Learn.LearnScreen retype)
+            {
+                var r = retype.Controller;
+                for (int i = 0; i < 40 && r.State.Phase != LearnFlow.Phase.Written; i++)
+                {
+                    var ph = r.State.Phase;
+                    if (ph == LearnFlow.Phase.Mc) { var qq = r.State.Question!; r.Send(new LearnFlow.Event.Choose(qq.Choices.ToList().FindIndex(x => x.CardId == qq.CardId))); }
+                    else if (r.State.AutoAdvanceToken is { } t) r.Send(new LearnFlow.Event.AutoAdvanceFired(t));
+                    else r.Send(new LearnFlow.Event.Proceed());
+                }
+                yield return SkipAnimations;
+                if (r.State.Phase == LearnFlow.Phase.Written)
+                {
+                    r.Send(new LearnFlow.Event.Submit("la fausse réponse"));
+                    yield return "04e-learn-copy";
+                    if (r.State.Phase != LearnFlow.Phase.Copy) throw new InvalidOperationException("copy check failed: no copy step");
+                    var asked = r.State.Question!;
+                    // The copy field itself (the answer field stays on screen above it since 24.11.2026).
+                    var field = Avalonia.VisualTree.VisualExtensions.GetVisualDescendants(retype.View).OfType<Avalonia.Controls.TextBox>()
+                        .First(b => b.IsEffectivelyVisible && b.IsEffectivelyEnabled
+                            && (b.PlaceholderText == CoreText.L("Richtige Antwort abtippen") || b.PlaceholderText == CoreText.L("Antwort abtippen")));
+                    field.Text = asked.Expected;
+                    yield return "04f-learn-copy-typed-out";
+                    // Since 24.11.2026 it continues after a short pause (CopyStep.AdvanceMs, a normal advance timer that
+                    // this tool's frozen time does not run): the pause has started, fire it.
+                    if (r.State.Phase == LearnFlow.Phase.Copy && r.State.AutoAdvanceToken is { } copyToken) r.Send(new LearnFlow.Event.AutoAdvanceFired(copyToken));
+                    if (r.State.Phase == LearnFlow.Phase.Copy || r.State.Question?.Qid == asked.Qid)
+                        throw new InvalidOperationException("copy check failed: typed out but still " + r.State.Phase.Kind);
+                    Console.WriteLine("ok: learn copy typed out continues, phase " + r.State.Phase.Kind);
+                }
+            }
+            model.Store.UpdateStudyOptions(setId, new StudyOptionsPatch(Learn: new LearnOptionsPatch(Retype: false)));
         }
         if (Wants("write")) model.Study(setId, StudyMode.Write);
         if (Wants("write")) yield return "05-write";
@@ -257,6 +492,27 @@ static class Samples
             w.Send(new WriteFlow.Event.Submit("la fame"));
             yield return "05c0-write-wrong-moving@0.12";
             yield return "05c-write-wrong";
+            // The copy typed into the real field, as shown: continues without Enter and the screen follows (23.11.2026).
+            if (w.State.Phase == WriteFlow.Phase.Copy)
+            {
+                var asked = w.State.Question!;
+                var field = Avalonia.VisualTree.VisualExtensions.GetVisualDescendants(write.View).OfType<Avalonia.Controls.TextBox>()
+                    .First(b => b.IsEffectivelyVisible && b.IsEffectivelyEnabled);
+                field.Text = asked.Expected[..^1];
+                if (w.State.Phase != WriteFlow.Phase.Copy) throw new InvalidOperationException("copy check failed: moved on before the last letter");
+                field.Text = asked.Expected;
+                yield return "05c1-write-copy-typed-out";
+                // Since 24.11.2026 it continues after a short pause (CopyStep.AdvanceMs, a normal advance timer that this
+                // tool's frozen time does not run): the pause has started, fire it.
+                if (w.State.Phase == WriteFlow.Phase.Copy && w.State.AutoAdvance is { } copyAdvance) w.Send(new WriteFlow.Event.AutoAdvanceFired(copyAdvance.Token));
+                if (w.State.Phase != WriteFlow.Phase.Question || w.State.Question?.CardId == asked.CardId)
+                    throw new InvalidOperationException("copy check failed: typed out but still " + w.State.Phase.Kind);
+                Console.WriteLine("ok: copy typed out continues, phase " + w.State.Phase.Kind);
+                yield return "05c2-write-copy-next-field";
+                if (field.Text is { Length: > 0 } || w.State.Input.Length > 0)
+                    throw new InvalidOperationException($"copy check failed: the copied text stayed ('{field.Text}', input '{w.State.Input}')");
+                Console.WriteLine("ok: the next question's field is empty");
+            }
             void WStep()
             {
                 var st = w.State;
@@ -278,6 +534,107 @@ static class Samples
             yield return "05e-write-summary";
             for (int i = 0; i < 800 && w.State.Phase != WriteFlow.Phase.Results; i++) WStep();
             yield return "05f-write-results";
+            // "Am häufigsten falsch" lists every missed card, not only 10, each with its ★ (issue #3).
+            model.Study(setId, StudyMode.Write, forceNew: true);
+            if (window.CurrentScreen is Wortschatz.App.Features.Write.WriteScreen many)
+            {
+                var m = many.Controller;
+                int wrong = 0;
+                for (int i = 0; i < 3000 && m.State.Phase != WriteFlow.Phase.Results; i++)
+                {
+                    var st = m.State;
+                    if (st.Phase == WriteFlow.Phase.Question)
+                        m.Send(new WriteFlow.Event.Submit(wrong++ < 14 ? "xyz" : st.Question!.Expected));
+                    else if (st.Phase == WriteFlow.Phase.Copy) m.Send(new WriteFlow.Event.Submit(st.Question!.Expected));
+                    else if (st.AutoAdvance is { } a) m.Send(new WriteFlow.Event.AutoAdvanceFired(a.Token));
+                    else m.Send(new WriteFlow.Event.Proceed());
+                }
+                yield return SkipAnimations;
+                Dispatcher.UIThread.RunJobs();
+                var rows = WriteFlow.HardestRows(m.State);
+                Console.Error.WriteLine($"#3: {rows.Count} Begriffe in «Am häufigsten falsch»: erster {rows[0].Term}, letzter {rows[^1].Term}; schon markiert: {string.Join(", ", model.Set(setId)!.Cards.Where(c => c.Starred).Select(c => c.Term))}");
+                void ScrollDown()
+                {
+                    host.UpdateLayout();
+                    if (window.CurrentScreen?.View is { } view)
+                        foreach (var scroller in Avalonia.VisualTree.VisualExtensions.GetVisualDescendants(view).OfType<Avalonia.Controls.ScrollViewer>()) scroller.ScrollToEnd();
+                    host.UpdateLayout();
+                }
+                ScrollDown();
+                yield return "05g-write-results-many";
+                if (rows.Count > 0 && window.CurrentScreen?.View is { } view2)
+                {
+                    bool before = model.Set(setId)!.Cards.Single(c => c.Id == rows[0].CardId).Starred;
+                    var stars = Avalonia.VisualTree.VisualExtensions.GetVisualDescendants(view2).OfType<WsButton>()
+                        .Where(b => Avalonia.Automation.AutomationProperties.GetName(b) is string star && (star == CoreText.L("Markieren") || star == CoreText.L("Markierung entfernen"))).ToList();
+                    stars[0].RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Avalonia.Controls.Button.ClickEvent));
+                    Dispatcher.UIThread.RunJobs();
+                    bool after = model.Set(setId)!.Cards.Single(c => c.Id == rows[0].CardId).Starred;
+                    Console.Error.WriteLine($"#3: {stars.Count} Sterne, erster Stern {before} -> {after} ({(before != after ? "OK" : "FEHLER")}), Name jetzt «{Avalonia.Automation.AutomationProperties.GetName(stars[0])}»");
+                    ScrollDown();
+                    yield return "05h-write-results-starred";
+                }
+            }
+            // "Weitere Synonyme erkennen" (issue #4): a synonym from the thesaurus that is not in the set counts.
+            model.Study(setId, StudyMode.Write, forceNew: true);
+            if (window.CurrentScreen is Wortschatz.App.Features.Write.WriteScreen syn)
+            {
+                var s2 = syn.Controller;
+                string? used = null;
+                for (int i = 0; i < 200 && used is null && s2.State.Phase != WriteFlow.Phase.Results; i++)
+                {
+                    var st = s2.State;
+                    if (st.Phase == WriteFlow.Phase.Question && st.Question is { } q)
+                    {
+                        var extra = model.ExtraAnswers(s2.SetId)(new SynonymQuery(q.Prompt, q.Expected, q.PromptLang, q.AnswerLang));
+                        if (extra.Count > 0)
+                        {
+                            used = $"{q.Expected} → {extra[0]}";
+                            s2.Send(new WriteFlow.Event.Submit(extra[0]));
+                        }
+                        else s2.Send(new WriteFlow.Event.Submit(q.Expected));
+                    }
+                    else if (st.Phase == WriteFlow.Phase.Copy) s2.Send(new WriteFlow.Event.Submit(st.Question!.Expected));
+                    else if (st.AutoAdvance is { } a) s2.Send(new WriteFlow.Event.AutoAdvanceFired(a.Token));
+                    else s2.Send(new WriteFlow.Event.Proceed());
+                }
+                Console.Error.WriteLine($"#4: {used ?? "keine Frage mit Synonym gefunden"}");
+                if (used is not null) yield return "05i-write-synonym";
+            }
+            // Two cards for the same word (Joan 10.11.2026): «to kidnap sb» written for «etw. entführen» asks what it counts as.
+            var same = model.CreateSet("Unit 14 – Entführen", Lang.En, Lang.De,
+                [new CardDraft(null, "to hijack sth", "etw. entführen"), new CardDraft(null, "to kidnap sb", "jmdn. entführen"), new CardDraft(null, "to spark sth", "etw. entfachen")]);
+            model.Store.UpdateStudyOptions(same.Id, new StudyOptionsPatch(AnswerWith: AnswerWith.Term));
+            model.Study(same.Id, StudyMode.Write, forceNew: true);
+            if (window.CurrentScreen is Wortschatz.App.Features.Write.WriteScreen sameScreen)
+            {
+                var c3 = sameScreen.Controller;
+                for (int i = 0; i < 20 && c3.State.Question?.Prompt != "etw. entführen"; i++)
+                {
+                    var q = c3.State;
+                    if (q.Phase == WriteFlow.Phase.Question) c3.Send(new WriteFlow.Event.Submit(q.Question!.Expected));
+                    else if (q.AutoAdvance is { } a) c3.Send(new WriteFlow.Event.AutoAdvanceFired(a.Token));
+                    else c3.Send(new WriteFlow.Event.Proceed());
+                }
+                if (c3.State.Question?.Prompt == "etw. entführen" && c3.State.Phase == WriteFlow.Phase.Question)
+                {
+                    c3.Send(new WriteFlow.Event.Submit("to kidnap sb"));
+                    Dispatcher.UIThread.RunJobs();
+                    Console.Error.WriteLine($"Gleicher Begriff: Fenster «{model.Prompt?.Title ?? "KEINS"}», Knöpfe: {string.Join(" / ", model.Prompt?.Buttons.Select(b => b.Label) ?? [])}");
+                    yield return "05j-write-same-term";
+                    if (model.Prompt?.Buttons.FirstOrDefault(b => b.Label == CoreText.L("Für die andere Karte zählen")) is { } forOther)
+                    {
+                        var kidnap = model.Set(same.Id)!.Cards.Single(c => c.Term == "to kidnap sb");
+                        var before = model.Store.GetProgress(same.Id).GetValueOrDefault(kidnap.Id);
+                        model.Answer(forOther);
+                        Dispatcher.UIThread.RunJobs();
+                        var after = model.Store.GetProgress(same.Id).GetValueOrDefault(kidnap.Id);
+                        Console.Error.WriteLine($"Für die andere Karte: vorher {before?.Correct ?? 0} richtig, nachher {after?.Correct ?? 0}; gefragte Karte bleibt falsch: {!c3.State.Feedback!.IsCorrect}");
+                        yield return "05k-write-same-term-counted";
+                    }
+                }
+                else Console.Error.WriteLine("Gleicher Begriff: Frage nicht erreicht");
+            }
         }
         if (Wants("flashcards")) model.Study(setId, StudyMode.Flashcards);
         if (Wants("flashcards")) yield return "07-flashcards";
@@ -359,6 +716,56 @@ static class Samples
         yield return "09-settings";
     }
 
+
+    /// <summary>
+    /// Updates (--only=updates; the Windows app's AppUpdater, shown without network): «Aktualisiert auf …» in the sidebar
+    /// with several changes and with one, all changes in the sheet, Einstellungen › Daten › Updates with a version ready
+    /// and never looked, and the question after «Jetzt suchen».
+    /// </summary>
+    static IEnumerable<string> UpdateSteps(AppModel model, MainView window)
+    {
+        var updater = Wortschatz.App.Services.AppUpdater.Shared;
+        string[] de =
+        [
+            "Neu: Wortschatz aktualisiert sich selbst: Neue Versionen lädt die App im Hintergrund und installiert sie, wenn du sie beendest.",
+            "Verbessert: Tippen beim Lernen und in der Prüfung läuft flüssiger.",
+            "Behoben: Karteikarten merken sich die Reihenfolge wieder.",
+        ];
+        string[] en =
+        [
+            "New: Wortschatz now updates itself: the app downloads new versions in the background and installs them when you quit it.",
+            "Improved: Typing in Learn and the exam runs more smoothly.",
+            "Fixed: Flashcards remember their order again.",
+        ];
+        var now = TimeUtil.NowMs();
+        model.ShowOverview();
+        updater.Preview(model.Preferences, new UpdateNotice("1.8", de, en, now));
+        yield return "u1-sidebar-notice";
+        Wortschatz.App.Features.UpdateNoticeCard.ShowChanges(model, updater.Notice!);
+        yield return "u2-changes";
+        model.ClosePrompt();
+        updater.Preview(model.Preferences, new UpdateNotice("1.8", [de[2]], [en[2]], now));
+        yield return "u3-sidebar-notice-one";
+        updater.Preview(model.Preferences, new UpdateNotice("1.8", [], [], now));
+        yield return "u4-sidebar-notice-none";
+        model.Preferences.SettingsTab = 4;
+        model.Navigate(new Route.Settings());
+        updater.Preview(model.Preferences, null, new PendingUpdate("1.8", "Wortschatz-1.8-Windows.exe", 1, new string('a', 64)), now - 5 * 60_000);
+        window.CurrentScreen?.Refresh();
+        yield return "u5-settings-ready";
+        var version = "1.8";
+        model.Ask(new PromptRequest(CoreText.L($"Version {version} ist bereit"), CoreText.L("Wird installiert, wenn du Wortschatz beendest."),
+            [new PromptButton(CoreText.L("Jetzt neu starten"), IsDefault: true), new PromptButton(CoreText.L("Später"), IsCancel: true)])
+        {
+            Content = Wortschatz.App.Features.UpdateNoticeCard.ChangeList(CoreText.Table is null ? de : en),
+        });
+        yield return "u6-ready-question";
+        model.ClosePrompt();
+        updater.Preview(model.Preferences, null);
+        window.CurrentScreen?.Refresh();
+        yield return "u7-settings-never";
+    }
+
     /// <summary>Einstellungen and the set page's sheets (--only=settings): every tab, backup import, wipe, text export.</summary>
     static IEnumerable<string> SettingsSteps(AppModel model, MainView window, string setId)
     {
@@ -388,7 +795,7 @@ static class Samples
         model.ClosePrompt();
         Wortschatz.App.Features.Settings.SettingsWipeSheet.Show(model, window);
         yield return "12e-wipe";
-        if (model.Prompt?.Buttons.FirstOrDefault(b => b.Label == "Weiter") is { } next) model.Answer(next);
+        if (model.Prompt?.Buttons.FirstOrDefault(b => b.Label == CoreText.L("Weiter")) is { } next) model.Answer(next);
         yield return "12f-wipe-confirm";
         model.ClosePrompt();
     }

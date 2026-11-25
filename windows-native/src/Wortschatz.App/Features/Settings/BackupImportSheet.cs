@@ -7,6 +7,7 @@ using Avalonia.Media;
 using Avalonia.Platform.Storage;
 using Wortschatz.App.DesignSystem;
 using Wortschatz.Core;
+using static Wortschatz.Core.CoreText;
 
 namespace Wortschatz.App.Features.Settings;
 
@@ -27,9 +28,9 @@ public static class BackupImportSheet
         {
             files = await window.StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
             {
-                Title = "Backup importieren",
+                Title = L("Backup importieren"),
                 AllowMultiple = false,
-                FileTypeFilter = [new FilePickerFileType("Wortschatz-Backup (JSON)") { Patterns = ["*.json"] }],
+                FileTypeFilter = [new FilePickerFileType(L("Wortschatz-Backup (JSON)")) { Patterns = ["*.json"] }],
             });
         }
         catch (Exception)
@@ -46,7 +47,7 @@ public static class BackupImportSheet
     {
         if (!file.Name.EndsWith(".json", StringComparison.OrdinalIgnoreCase))
         {
-            ShowError(model, "Bitte wähle eine Backup-Datei im JSON-Format.");
+            ShowError(model, L("Bitte wähle eine Backup-Datei im JSON-Format."));
             return;
         }
         byte[] data;
@@ -80,7 +81,7 @@ public static class BackupImportSheet
         }
         catch (Exception)
         {
-            ShowError(model, "Diese Datei ist kein gültiges Wortschatz-Backup.");
+            ShowError(model, L("Diese Datei ist kein gültiges Wortschatz-Backup."));
             return;
         }
         Show(model, window, preview);
@@ -88,7 +89,7 @@ public static class BackupImportSheet
 
     /// <summary>"Backup kann nicht importiert werden" with the reason (Mac: the alert of SettingsDataTab).</summary>
     public static void ShowError(AppModel model, string message) =>
-        model.Ask(new PromptRequest("Backup kann nicht importiert werden", message, [new PromptButton("OK", IsDefault: true, IsCancel: true)]));
+        model.Ask(new PromptRequest(L("Backup kann nicht importiert werden"), message, [new PromptButton("OK", IsDefault: true, IsCancel: true)]));
 
     /// <summary>The sheet for a preview; mode null = the default (replace for an empty library, else merge).</summary>
     public static void Show(AppModel model, MainView window, BackupImportPreview preview, ImportMode? mode = null)
@@ -98,7 +99,7 @@ public static class BackupImportSheet
         var p = WsTheme.P;
         var content = Ui.V(16, FileInfo(model, preview));
         if (preview.LibraryIsEmpty)
-            content.Children.Add(Ui.Text("Das Backup wird vollständig wiederhergestellt – mit Lernfortschritt, Statistik und Einstellungen.",
+            content.Children.Add(Ui.Text(L("Das Backup wird vollständig wiederhergestellt – mit Lernfortschritt, Statistik und Einstellungen."),
                 14.5, color: p.TextSecondary, wrap: TextWrapping.Wrap));
         else
         {
@@ -107,16 +108,16 @@ public static class BackupImportSheet
                 if (m != chosen) Show(model, window, preview, m);
             }
             content.Children.Add(Ui.V(8,
-                Ui.Text("Wie möchtest du importieren?", 15, FontWeight.SemiBold),
-                Choice("Zusammenführen", "Lernsets aus dem Backup kommen dazu. Deine übrigen Lernsets und Einstellungen bleiben erhalten.",
+                Ui.Text(L("Wie möchtest du importieren?"), 15, FontWeight.SemiBold),
+                Choice(L("Zusammenführen"), L("Lernsets aus dem Backup kommen dazu. Deine übrigen Lernsets und Einstellungen bleiben erhalten."),
                     preview.MergeDetail, false, chosen == ImportMode.Merge, () => Choose(ImportMode.Merge)),
-                Choice("Alles ersetzen", "Alle aktuellen Lernsets, der Fortschritt und die Einstellungen werden durch das Backup ersetzt.",
+                Choice(L("Alles ersetzen"), L("Alle aktuellen Lernsets, der Fortschritt und die Einstellungen werden durch das Backup ersetzt."),
                     preview.ReplaceDetail, true, chosen == ImportMode.Replace, () => Choose(ImportMode.Replace))));
         }
-        model.Ask(new PromptRequest("Backup importieren", "",
+        model.Ask(new PromptRequest(L("Backup importieren"), "",
         [
-            new PromptButton("Abbrechen", IsCancel: true),
-            new PromptButton(destructive ? "Alles ersetzen" : "Importieren", () => Perform(model, window, preview, chosen), IsDefault: true, IsDestructive: destructive),
+            new PromptButton(L("Abbrechen"), IsCancel: true),
+            new PromptButton(destructive ? L("Alles ersetzen") : L("Importieren"), () => Perform(model, window, preview, chosen), IsDefault: true, IsDestructive: destructive),
         ])
         {
             Content = content,
@@ -186,7 +187,7 @@ public static class BackupImportSheet
         Grid.SetColumn(body, 1);
         row.Children.Add(body);
         var b = Ui.Clickable(row, choose, $"{title}: {text} {detail}", 14, selected ? p.AccentSoft : null, padding: new Thickness(12, 10));
-        AutomationProperties.SetItemStatus(b, selected ? "ausgewählt" : "nicht ausgewählt");
+        AutomationProperties.SetItemStatus(b, selected ? L("ausgewählt") : L("nicht ausgewählt"));
         return b;
     }
 
@@ -207,7 +208,7 @@ public static class BackupImportSheet
         }
         catch (Exception)
         {
-            model.ShowToast(new ToastMessage("Das Backup konnte nicht importiert werden.", ToastTone.Danger, DurationMs: 6000));
+            model.ShowToast(new ToastMessage(L("Das Backup konnte nicht importiert werden."), ToastTone.Danger, DurationMs: 6000));
             return;
         }
         // A restored backup can bring another appearance.

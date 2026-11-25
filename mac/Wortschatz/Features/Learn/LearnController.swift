@@ -12,7 +12,16 @@ import WortschatzCore
 @Observable
 final class LearnController {
     let setID: String
-    private(set) var state: LearnFlow.State
+    /// The flow state. A change of the answer field's text alone notifies only `draft`: a typed
+    /// letter then updates the field instead of rebuilding the whole screen, which reads `state`
+    /// everywhere.
+    var state: LearnFlow.State {
+        access(keyPath: \.state)
+        return flowState
+    }
+    @ObservationIgnored private var flowState: LearnFlow.State
+    /// The answer (or copy) field's text, `state.draft`, observed on its own (the field reads it).
+    private(set) var draft: String
     private(set) var countdown: StudyCountdown?
     /// Correct answers in a row while this screen is open (the flame in the action bar).
     private(set) var streak = AnswerStreak()
@@ -24,6 +33,9 @@ final class LearnController {
 
     /// Whether the window is active (the study clock only runs then).
     @ObservationIgnored private var isWindowActive = true
+    /// Study clock, as in Schreiben: the last input, and idle since then (`WriteFlow.clockIdleMs`).
+    @ObservationIgnored private var lastActivity: Double
+    @ObservationIgnored private var isIdle = false
 
     @ObservationIgnored private let model: AppModel
     @ObservationIgnored private let requestID: UUID
@@ -40,6 +52,16 @@ final class LearnController {
     @ObservationIgnored private var synonymCheck: UUID?
     /// The written question whose prompt translations were requested.
     @ObservationIgnored private var prefetchedQid: String?
+    /// The session (its `startedAt`) whose first recheck showed the hint: once per session.
+    @ObservationIgnored private var recheckHintSession: Double?
+    /// "Optionen" in the recheck hint: the screen opens the options when this changes.
+    private(set) var optionsRequest = 0
+    /// The options opened from the recheck hint scroll to "Nachkontrolle nach Fehlern".
+    @ObservationIgnored private var revealsRecheck = false
+    /// The recheck hint waits for `releaseToasts()` like the flow's toasts.
+    @ObservationIgnored private var holdsRecheckHint = false
+    /// The Learn switches as last seen here (`switchesChanged`).
+    @ObservationIgnored private var switches = LearnSwitches.current
 
     /// How often the study clock is saved while studying (the web app's 15 s tick).
     static let clockInterval: Duration = .seconds(15)
@@ -70,6 +92,7 @@ final class LearnController {
         requestID = request.id
         setID = request.setID
         speech = model.speech
+        lastActivity = clock()
         let store = model.store
         let set = store.getSet(request.setID) ?? VocabSet(id: request.setID, title: "", createdAt: 0)
         let saved = store.getLearnJSON(request.setID).flatMap(LearnFlow.SavedLearn.init(json:))
@@ -78,7 +101,8 @@ final class LearnController {
             saved: saved, subset: request.subset, forceNew: request.forceNew,
             review: request.reviewMastered || UserDefaults.standard.bool(forKey: Self.reviewKey),
             recheck: Self.recheckIsOn, rng: rng, now: clock())
-        self.state = state
+        flowState = state
+        draft = state.draft
         pendingStartEffects = effects
     }
 
@@ -93,6 +117,7 @@ final class LearnController {
         pendingStartEffects = []
         if holdingToasts { heldToasts = [] }
         perform(effects)
+        hintRecheck()
         model.studySessionStarted(requestID: requestID)
         if isLive { SoundEffects.shared.prepare() }
         prefetchSynonyms()
@@ -103,35 +128,52 @@ final class LearnController {
         let toasts = heldToasts ?? []
         heldToasts = nil
         for toast in toasts { showToast(toast.text, tone: toast.tone) }
+        if holdsRecheckHint {
+            holdsRecheckHint = false
+            showRecheckHint()
+        }
     }
 
     /// The screen went away (back button, another route): keeps the study time and stops
     /// timers and speech.
     func deactivate() {
         heldToasts = nil
+        holdsRecheckHint = false
         synonymCheck = nil
         isCheckingSynonym = false
-        // The last tick, also when the screen is no longer the current one.
-        if state.isStudying { reduce(.tick) }
+        // The last tick, also when the screen is no longer the current one (idle: the clock was
+        // saved when it stopped, the time since is not study time).
+        if state.isStudying && !isIdle { reduce(.tick) }
         for timer in timers.values { timer.cancel() }
         timers = [:]
         countdown = nil
         speech.stop()
     }
 
-    /// Saves the study clock every `clockInterval` while studying in the active window.
+    /// Saves the study clock every `clockInterval` while studying in the active window; after
+    /// `WriteFlow.clockIdleMs` without input the clock pauses until the next input (as in
+    /// Schreiben). Before 2026-11-24 it ticked on forever: a Lernen left open in front saved the
+    /// library 4 times a minute and counted the time away as study time.
     func runClock() async {
         guard isLive else { return }
         while !Task.isCancelled {
             try? await Task.sleep(for: Self.clockInterval)
             guard !Task.isCancelled else { return }
-            if isWindowActive && state.isStudying { send(.tick) }
+            guard isWindowActive, !isIdle else { continue }
+            if state.isStudying { send(.tick) }
+            if clock() - lastActivity > WriteFlow.clockIdleMs { isIdle = true }
         }
     }
 
     /// The window became active or inactive: time away is not study time.
     func windowActivityChanged(_ active: Bool) {
         isWindowActive = active
+        if active {
+            lastActivity = clock()
+            isIdle = false
+        } else if isIdle {
+            return
+        }
         guard state.isStudying else { return }
         send(active ? .resume : .tick)
     }
@@ -143,21 +185,89 @@ final class LearnController {
     /// after Lernen was left (`isCurrent`) takes no more events: no keys, clicks, auto-advances.
     func send(_ event: LearnFlow.Event) {
         guard isCurrent else { return }
+        if event.isUserActivity { markActive() }
         if holdsForSynonymCheck(event) { return }
         reduce(event)
     }
 
+    /// Input keeps the study clock running; the first input after a pause starts it again
+    /// without counting the pause.
+    private func markActive() {
+        lastActivity = clock()
+        guard isIdle else { return }
+        isIdle = false
+        send(.resume)
+    }
+
     private func reduce(_ event: LearnFlow.Event) {
         let query = state.question?.synonymQuery
-        let extras = isLive && Self.mayGrade(event) ? query.map(synonyms.extraAnswers(for:)) ?? [] : []
+        let extras = isLive && Self.mayGrade(event) && synonymsOn ? query.map(synonyms.extraAnswers(for:)) ?? [] : []
         let env = LearnFlow.Env(
             rng: rng, now: clock(), progress: store.getProgress(setID), extraAnswers: { $0 == query ? extras : [] })
         let previousPhase = state.phase
         let (next, effects) = LearnFlow.reduce(state, event, env: env)
-        if next != state { state = next }
+        update(to: next)
         perform(effects)
+        hintRecheck()
+        askIfSameTerm()
         if isLive { playSound(for: effects, after: previousPhase) }
         prefetchSynonyms()
+    }
+
+    /// Takes the reducer's next state (see `state`).
+    private func update(to next: LearnFlow.State) {
+        guard next != flowState else { return }
+        if next.differsOnlyInDraft(from: flowState) {
+            flowState = next
+        } else {
+            withMutation(keyPath: \.state) { flowState = next }
+        }
+        if draft != next.draft { draft = next.draft }
+    }
+
+    // MARK: Same word, other card
+
+    /// The open "Andere Karte mit dem gleichen Begriff" sheet (`SameTermSheet`), if any.
+    private(set) var sameTerm: SameTermQuestion?
+    @ObservationIgnored private var sameTermAsked: LearnFlow.Feedback?
+
+    /// A wrong written answer that is the answer of another card with the same word: asks what it
+    /// counts as, once per answer (Joan 10.11.2026; Windows: LearnController.AskIfSameTerm).
+    private func askIfSameTerm() {
+        guard let feedback = state.feedback else {
+            sameTermAsked = nil
+            return
+        }
+        guard isLive, feedback.kind == .wrong, feedback.canOverride, feedback != sameTermAsked,
+            let question = state.question, question.type == .written,
+            let card = state.cards.first(where: { $0.id == question.cardId })
+        else { return }
+        sameTermAsked = feedback
+        guard
+            let other = SameTermCards.answerOfOtherCard(
+                feedback.given, card: card, cards: state.cards, ask: question.ask, tolerance: state.options.tolerance,
+                promptLang: question.promptLang, answerLang: question.answerLang)
+        else { return }
+        sameTerm = SameTermQuestion(
+            asked: card, other: other, ask: question.ask, promptLang: question.promptLang,
+            answerLang: question.answerLang, given: feedback.given)
+    }
+
+    /// The learner's choice in `SameTermSheet`.
+    func answerSameTerm(_ choice: SameTermChoice) {
+        guard let question = sameTerm else { return }
+        sameTerm = nil
+        switch choice {
+        case .right:
+            send(.override)
+        case .forOtherCard:
+            guard (try? store.recordAnswer(setID, question.other.id, correct: true)) != nil else { return }
+            model.toasts.show(
+                SameTermCards.countedForOther(askedPrompt: question.askedPrompt, otherPrompt: question.otherPrompt),
+                tone: .success, duration: .seconds(5))
+        case .wrong:
+            break
+        }
     }
 
     /// The sound of a step (`SoundEffects.playStudyStep`).
@@ -244,6 +354,10 @@ final class LearnController {
 
     private var synonyms: SynonymAssistant { .shared }
 
+    /// Synonyms outside the set are on for this set (Einstellungen, Apple Intelligence and the
+    /// set's own switch in its options), read at every answer so a change applies at once.
+    private var synonymsOn: Bool { synonyms.isActive(forSet: setID) }
+
     /// Events that may grade a written answer (the others need no synonyms).
     private static func mayGrade(_ event: LearnFlow.Event) -> Bool {
         switch event {
@@ -265,7 +379,7 @@ final class LearnController {
         }
         guard case .question(.written) = state.phase else { return false }
         if isCheckingSynonym { return true }
-        guard isLive, isCurrent, synonyms.isActive, state.prompt == nil, state.overlay == nil,
+        guard isLive, isCurrent, synonymsOn, state.prompt == nil, state.overlay == nil,
             clock() >= state.inputLockedUntil, let question = state.question
         else { return false }
         let query = question.synonymQuery
@@ -299,8 +413,9 @@ final class LearnController {
     /// A written question is on screen: its prompt's translations are looked up in the
     /// background, so an answer among them counts at once.
     private func prefetchSynonyms() {
+        // The cheap checks first: this runs after every key.
         guard isLive, case .question(.written) = state.phase, let question = state.question,
-            question.qid != prefetchedQid
+            question.qid != prefetchedQid, synonymsOn
         else { return }
         prefetchedQid = question.qid
         synonyms.prefetch(question.synonymQuery)
@@ -343,34 +458,46 @@ final class LearnController {
         }
     }
 
-    /// Writes an options change (popover) and applies it to the running session.
+    /// Writes an options change (popover) and applies it to the running session. An option set
+    /// back to the standard is no longer the set's own (`LibraryStore.updateOwnStudyOptions`).
     func updateOptions(_ patch: StudyOptionsPatch) {
         do {
-            let options = try store.updateStudyOptions(setID, patch)
+            let options = try store.updateOwnStudyOptions(setID, patch)
             send(.optionsChanged(options))
         } catch {
-            model.report(error, fallback: "Die Option konnte nicht gespeichert werden.")
+            model.report(error, fallback: String(localized: "Die Option konnte nicht gespeichert werden."))
         }
     }
 
-    /// "Wiederholungsfragen" (Optionen): kept for every set. A running session asks to restart
-    /// when the popover closes, like the other options that shape a session.
+    /// "Wiederholungsfragen" (Optionen): kept for every set. It applies to the running session at
+    /// once (and to every stored one, `AppModel.learnSwitches`).
     func setReview(_ review: Bool) {
+        switches.review = review
         UserDefaults.standard.set(review, forKey: Self.reviewKey)
         send(.reviewChanged(review))
     }
 
     /// "Nachkontrolle nach Fehlern" (Optionen): kept for every set, like `setReview`.
     func setRecheck(_ recheck: Bool) {
+        switches.recheck = recheck
         UserDefaults.standard.set(recheck, forKey: Self.recheckKey)
         send(.recheckChanged(recheck))
+    }
+
+    /// A Learn switch was switched elsewhere (Einstellungen › Lernen): it applies to this session
+    /// at once.
+    func switchesChanged(_ new: LearnSwitches) {
+        let old = switches
+        switches = new
+        if new.review != old.review { send(.reviewChanged(new.review)) }
+        if new.recheck != old.recheck { send(.recheckChanged(new.recheck)) }
     }
 
     /// The standard of every set (Einstellungen), for the note at the top of the options.
     var standardOptions: StudyOptions { model.settings.study }
 
-    /// "Auf Standard zurücksetzen" (Optionen): this set follows the standard again; a running
-    /// session asks to restart when the popover closes, like after any other change.
+    /// "Auf Standard zurücksetzen" (Optionen): this set follows the standard again, the running
+    /// session too, like after any other change.
     func resetOptionsToStandard() {
         if let options = model.resetStudyOptions(setID: setID) { send(.optionsChanged(options)) }
     }
@@ -398,26 +525,20 @@ final class LearnController {
     // MARK: Effects
 
     private func perform(_ effects: [LearnFlow.Effect]) {
+        // The step's store writes first, as one change: the app rebuilds its derived data (every
+        // set's summary) once per answer, not once for the answer and once more for the session.
+        let writes = effects.filter(\.writesStore)
+        if !writes.isEmpty {
+            write { store in try store.batch { for effect in writes { try apply(effect, to: store) } } }
+        }
         for effect in effects {
             switch effect {
-            case let .recordAnswer(cardId, correct, at):
+            case let .recordAnswer(_, correct, _):
                 streak.record(correct: correct)
-                write { _ = try $0.recordAnswer(setID, cardId, correct: correct, at: at) }
-            case let .overrideLastAnswer(cardId):
+            case .overrideLastAnswer:
                 streak.overrideMiss()
-                write { _ = try $0.overrideLastAnswer(setID, cardId) }
-            case let .resetProgress(cardIds):
-                write { store in
-                    if let cardIds {
-                        _ = try store.resetCardProgress(setID, cardIds)
-                    } else {
-                        try store.resetProgress(setID)
-                    }
-                }
-            case let .saveLearn(session, feedback):
-                write { try $0.saveLearnJSON(setID, LearnFlow.SavedLearn(state: session, feedback: feedback).json()) }
-            case .clearLearn:
-                write { try $0.clearLearn(setID) }
+            case .resetProgress, .saveLearn, .clearLearn, .updateCard, .toggleStar:
+                break
             case let .speak(text, lang):
                 if isLive { speech.speak(text, lang: lang) }
             case let .haptic(kind):
@@ -432,16 +553,36 @@ final class LearnController {
                 } else if isLive {
                     showToast(text, tone: tone)
                 }
-            case let .updateCard(card):
-                write { _ = try $0.updateCard(setID, card.id, CardChanges(term: card.term, definition: card.definition)) }
-            case let .toggleStar(cardId):
-                write { store in
-                    let starred = try store.toggleStar(setID, cardId)
-                    if isLive { Announcer.announce(starred ? "Markiert" : "Markierung entfernt") }
-                }
             case let .navigate(destination):
                 navigate(destination)
             }
+        }
+    }
+
+    /// Applies one store effect (`LearnFlow.Effect.writesStore`).
+    private func apply(_ effect: LearnFlow.Effect, to store: LibraryStore) throws {
+        switch effect {
+        case let .recordAnswer(cardId, correct, at):
+            _ = try store.recordAnswer(setID, cardId, correct: correct, at: at)
+        case let .overrideLastAnswer(cardId):
+            _ = try store.overrideLastAnswer(setID, cardId)
+        case let .resetProgress(cardIds):
+            if let cardIds {
+                _ = try store.resetCardProgress(setID, cardIds)
+            } else {
+                try store.resetProgress(setID)
+            }
+        case let .saveLearn(session, feedback):
+            try store.saveLearnJSON(setID, LearnFlow.SavedLearn(state: session, feedback: feedback).json())
+        case .clearLearn:
+            try store.clearLearn(setID)
+        case let .updateCard(card):
+            _ = try store.updateCard(setID, card.id, CardChanges(term: card.term, definition: card.definition))
+        case let .toggleStar(cardId):
+            let starred = try store.toggleStar(setID, cardId)
+            if isLive { Announcer.announce(starred ? String(localized: "Markiert") : String(localized: "Markierung entfernt")) }
+        default:
+            break
         }
     }
 
@@ -464,6 +605,42 @@ final class LearnController {
             // A stale token (answered by key in the meantime, overlay opened) is ignored.
             send(.autoAdvanceFired(token: token))
         }
+    }
+
+    /// The first recheck of a session on screen: a quiet hint that the Nachkontrolle can be
+    /// switched off, with "Optionen" (Windows: LearnController.HintRecheck). Once per session.
+    private func hintRecheck() {
+        guard case .question = state.phase, state.question?.isRecheck == true, let session = state.session,
+            recheckHintSession != session.startedAt
+        else { return }
+        recheckHintSession = session.startedAt
+        if heldToasts != nil {
+            // Shown with the screen's other toasts (`releaseToasts`).
+            holdsRecheckHint = true
+        } else {
+            showRecheckHint()
+        }
+    }
+
+    private func showRecheckHint() {
+        guard isLive else { return }
+        model.toasts.show(
+            LearnFlow.RECHECK_HINT, systemImage: "info.circle",
+            action: .init(String(localized: "Optionen")) { [weak self] in self?.requestRecheckOptions() },
+            duration: .milliseconds(LearnFlow.RECHECK_HINT_MS))
+    }
+
+    /// "Optionen" in the recheck hint: the options, scrolled to "Nachkontrolle nach Fehlern".
+    private func requestRecheckOptions() {
+        guard isCurrent, canShowOptions, state.overlay == nil else { return }
+        revealsRecheck = true
+        optionsRequest += 1
+    }
+
+    /// Whether the options just opened should scroll to the recheck switch (asked once).
+    func takeRecheckReveal() -> Bool {
+        defer { revealsRecheck = false }
+        return revealsRecheck
     }
 
     private func showToast(_ text: String, tone: LearnFlow.Tone) {
@@ -493,5 +670,31 @@ final class LearnController {
     private static var currentKeyIsRepeat: Bool {
         guard let event = NSApp.currentEvent, event.type == .keyDown else { return false }
         return event.isARepeat
+    }
+}
+
+private extension LearnFlow.Effect {
+    /// Effects that write to the library store (`LearnController.apply`).
+    var writesStore: Bool {
+        switch self {
+        case .recordAnswer, .overrideLastAnswer, .resetProgress, .saveLearn, .clearLearn, .updateCard, .toggleStar:
+            true
+        default:
+            false
+        }
+    }
+}
+
+private extension LearnFlow.Event {
+    /// Events that come from the learner (they keep the study clock running). The pointer
+    /// passing over an option is not: options also move under a resting pointer.
+    var isUserActivity: Bool {
+        switch self {
+        case .highlight, .optionsChanged, .reviewChanged, .recheckChanged, .setChanged, .cardsChanged,
+            .progressChanged, .autoAdvanceFired, .tick, .resume:
+            false
+        default:
+            true
+        }
     }
 }

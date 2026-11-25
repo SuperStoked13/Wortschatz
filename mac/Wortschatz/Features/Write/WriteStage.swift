@@ -5,6 +5,7 @@ import WortschatzCore
 /// the results in a scrolling column with the floating action bar at the bottom; the message
 /// screens (nothing to practise, set gone) on their own.
 struct WriteStage: View {
+    @Environment(\.studyScale) private var studyScale
     let controller: WriteController
     var focus: FocusState<WriteKeyRouter.Focus?>.Binding
     @Binding var selection: TextSelection?
@@ -24,7 +25,7 @@ struct WriteStage: View {
             case .question, .feedback, .copy, .summary, .results:
                 ScrollView {
                     column
-                        .frame(maxWidth: LayoutMetrics.studyColumnWidth)
+                        .frame(maxWidth: LayoutMetrics.studyColumnWidth * StudyScale.widthFactor(studyScale))
                         .padding(.horizontal, Spacing.xxl)
                         .padding(.top, topInset)
                         .padding(.bottom, Spacing.xl)
@@ -63,7 +64,9 @@ struct WriteStage: View {
             }
         case .results:
             if let results = state.results {
-                WriteResultsView(results: results, hardest: WriteFlow.hardestRows(state), setCounts: controller.setCounts)
+                WriteResultsView(
+                    results: results, hardest: WriteFlow.hardestRows(state), setCounts: controller.setCounts,
+                    setID: controller.setID)
                     .transition(.opacity)
             }
         case .starting, .empty, .missing:
@@ -96,6 +99,7 @@ private struct WriteRoundNote: View {
 /// primary button is the Return action ("Alle Begriffe üben", "Begriffe hinzufügen",
 /// "Zur Übersicht").
 struct WriteMessageView: View {
+    @Environment(\.studyScale) private var studyScale
     let state: WriteFlow.State
     let send: (WriteFlow.Event) -> Void
 
@@ -115,7 +119,7 @@ struct WriteMessageView: View {
                     .accessibilityIdentifier("write-primary")
                 }
             }
-            .frame(maxWidth: LayoutMetrics.studyColumnWidth)
+            .frame(maxWidth: LayoutMetrics.studyColumnWidth * StudyScale.widthFactor(studyScale))
         }
     }
 }

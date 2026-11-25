@@ -188,6 +188,43 @@ public class LearnSpacingTests
     }
 
     [Fact]
+    public void TheRecheckIsMarkedAsSuchOnScreen()
+    {
+        // The study card shows "Nachkontrolle" (and the first one a hint): the question says what it is.
+        var cards = MakeCards(80);
+        var s = Create(cards, mc: false, recheck: true);
+        var missed = s.Queue[0].CardId;
+        double t = T0;
+        var rng = Rand.Mulberry32(7);
+        LearnEngine.Question? recheck = null;
+        var learning = new List<LearnEngine.Question>();
+        for (int guard = 0; recheck is null && !LearnEngine.IsFinished(s); guard++)
+        {
+            Assert.True(guard < 5000, "no recheck came");
+            if (s.Queue.Count == 0)
+            {
+                s = LearnEngine.NextRound(s, cards, rng, t += 1000);
+                continue;
+            }
+            var q = LearnEngine.Current(s)!;
+            if (q.IsRecheck) recheck = q;
+            else learning.Add(q);
+            s = LearnEngine.Answer(s, s.Answered > 0, t += 1000);
+        }
+        Assert.NotNull(recheck);
+        Assert.Equal(missed, recheck.CardId);
+        Assert.False(recheck.IsReview);
+        Assert.All(learning, q => Assert.False(q.IsRecheck));
+
+        var card = cards.First(c => c.Id == recheck.CardId);
+        var info = LearnFlow.QuestionInfoOf(recheck, card, cards, Lang.Fr, Lang.De);
+        Assert.True(info.IsRecheck);
+        Assert.False(info.IsReview);
+        var first = learning[0];
+        Assert.False(LearnFlow.QuestionInfoOf(first, cards.First(c => c.Id == first.CardId), cards, Lang.Fr, Lang.De).IsRecheck);
+    }
+
+    [Fact]
     public void AWrongRecheckLearnsTheCardAgainAndChecksItOnceMore()
     {
         var cards = MakeCards(80);

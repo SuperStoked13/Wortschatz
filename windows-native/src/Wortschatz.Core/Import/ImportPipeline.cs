@@ -1,3 +1,5 @@
+using static Wortschatz.Core.CoreText;
+
 namespace Wortschatz.Core;
 
 /// <summary>
@@ -6,7 +8,7 @@ namespace Wortschatz.Core;
 /// text files are decoded, PDFs go through the <see cref="IPdfReader"/>, photos and screenshots through
 /// the <see cref="IImageDecoder"/> and the <see cref="ITextRecognizer"/>.
 ///
-/// A missing component makes the files that need it fail with a German message: no PDF reader →
+/// A missing component makes the files that need it fail with a message for the learner: no PDF reader →
 /// pdfFailed («Die PDF-Datei konnte nicht gelesen werden.»), no image decoder → decode («Das Bild konnte
 /// nicht geöffnet werden.»), no recognizer → ocrFailed (for scanned pages of a text PDF: a warning).
 /// The work runs on the calling thread up to the first await of the recognizer; a UI calls it via Task.Run.
@@ -27,7 +29,7 @@ public sealed class ImportPipeline
 
     /// <summary>
     /// Reads one file. Text recognition uses the set's languages (<see cref="RecognitionLanguages.ForSet"/>).
-    /// Throws ImportError with a German message: unsupported, empty, tooLarge, read, noText, decode,
+    /// Throws ImportError with a message for the learner: unsupported, empty, tooLarge, read, noText, decode,
     /// ocrFailed, pdf…, or aborted when <paramref name="ct"/> is cancelled.
     /// </summary>
     public Task<ImportedFile> ReadAsync(ImportSource source, Lang? termLang = Lang.Fr, Lang? defLang = Lang.De,
@@ -50,8 +52,8 @@ public sealed class ImportPipeline
         {
             ImportError.CheckCancellation(ct);
             var source = sources[i];
-            string prefix = sources.Count > 1 ? $"Datei {i + 1} von {sources.Count}: " : "";
-            string label = source.Name.Length == 0 ? "" : $"«{source.Name}»: ";
+            string prefix = sources.Count > 1 ? L($"Datei {i + 1} von {sources.Count}") + ": " : "";
+            string label = source.Name.Length == 0 ? "" : L($"«{source.Name}»: ");
             var fileReport = report.Slice(i / count, 1 / count, prefix);
             try
             {

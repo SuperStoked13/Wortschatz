@@ -6,7 +6,7 @@ namespace Wortschatz.Core.Tests;
 // Port of LearnEngineParityTests.swift: replays Fixtures/learn.json (mac/Parity/gen-learn.js), scripted
 // Learn sessions compared with src/core/learn.js snapshot by snapshot (state, current, counts,
 // checkpoint, isRoundOver, isFinished, finalStats and matchesProgress after creation and after every
-// action), plus buildChoices and stageFromProgress.
+// action), plus buildChoices, stageFromProgress and solvedFromProgress.
 public class LearnEngineParityTests
 {
     const double T0 = 1_760_000_000_000;
@@ -17,6 +17,7 @@ public class LearnEngineParityTests
         "restore" => Restore(c),
         "buildChoices" => BuildChoices(c),
         "stageFromProgress" => LearnEngine.StageFromProgress(CardProgress.FromJson(c.Arg(0))),
+        "solvedFromProgress" => JSONValue.Bool(LearnEngine.SolvedFromProgress(CardProgress.FromJson(c.Arg(0)))),
         _ => null,
     };
 
@@ -68,7 +69,7 @@ public class LearnEngineParityTests
                 ops[op] = ops.GetValueOrDefault(op) + 1;
             }
         }
-        Assert.Equal(new[] { "buildChoices", "restore", "scenario", "stageFromProgress" }, byFn.Keys.Order(StringComparer.Ordinal));
+        Assert.Equal(new[] { "buildChoices", "restore", "scenario", "solvedFromProgress", "stageFromProgress" }, byFn.Keys.Order(StringComparer.Ordinal));
         Assert.True(byFn["scenario"] > 400);
         Assert.True(byFn["restore"] > 150);
         Assert.True(byFn["buildChoices"] > 400);

@@ -1,6 +1,7 @@
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Media;
+using static Wortschatz.Core.CoreText;
 
 namespace Wortschatz.App.DesignSystem;
 
@@ -12,7 +13,7 @@ namespace Wortschatz.App.DesignSystem;
 public sealed class ProgressLine : Control
 {
     readonly AnimatedValue _value;
-    Color _tint;
+    readonly Color _tint;
 
     public ProgressLine(double value, Color tint, double width, double height = 6)
     {
@@ -26,12 +27,6 @@ public sealed class ProgressLine : Control
 
     /// <summary>Glides to <paramref name="value"/> (Mac: Motion.gentle).</summary>
     public void SetValue(double value, Curve? curve = null) => _value.Set(Motion.Clamp01(value), Motion.Animation(curve ?? Motion.Gentle));
-
-    public void SetTint(Color tint)
-    {
-        _tint = tint;
-        InvalidateVisual();
-    }
 
     public override void Render(DrawingContext context)
     {
@@ -188,7 +183,7 @@ public sealed class ProgressCapsuleView : StackPanel
         _bar = new AnimatedStatusBar(mastered, learning, fresh, 120, 7) { VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center };
         Children.Add(_bar);
         var legend = _legend = new StackPanel { Orientation = Avalonia.Layout.Orientation.Horizontal, Spacing = 12, VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center };
-        var items = new[] { (p.New.Fill, "Neu"), (p.Learning.Fill, "Am Lernen"), (p.Mastered.Fill, "Gemeistert") };
+        var items = new[] { (p.New.Fill, L("Neu")), (p.Learning.Fill, L("Am Lernen")), (p.Mastered.Fill, L("Gemeistert")) };
         for (int i = 0; i < 3; i++)
         {
             _counts[i] = Ui.Text("", 13.5, FontWeight.Bold);
@@ -227,8 +222,8 @@ public sealed class ProgressCapsuleView : StackPanel
             _values[i] = values[i];
         }
         if (animated) _bar.SetCounts(mastered, learning, fresh);
-        Avalonia.Automation.AutomationProperties.SetName(this, $"Lernfortschritt: {mastered} gemeistert, {learning} am Lernen, {fresh} neu");
-        ToolTip.SetTip(this, $"{fresh} Neu · {learning} Am Lernen · {mastered} Gemeistert");
+        Avalonia.Automation.AutomationProperties.SetName(this, L($"Lernfortschritt: {mastered} gemeistert, {learning} am Lernen, {fresh} neu"));
+        ToolTip.SetTip(this, L($"{fresh} Neu · {learning} Am Lernen · {mastered} Gemeistert"));
     }
 }
 
@@ -249,7 +244,7 @@ public sealed class RatioRing : Grid
         _arc = new RingArc(this);
         Children.Add(_arc);
         var p = WsTheme.P;
-        var center = Ui.V(0, Ui.Text(percentText, 24, FontWeight.Bold, font: WsTheme.Prompt), Ui.Text("richtig", 12, color: p.TextSecondary));
+        var center = Ui.V(0, Ui.Text(percentText, 24, FontWeight.Bold, font: WsTheme.Prompt), Ui.Text(L("richtig"), 12, color: p.TextSecondary));
         foreach (var c in center.Children) c.HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Center;
         center.HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Center;
         center.VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center;

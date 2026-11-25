@@ -5,6 +5,90 @@ Native Windows-Version der App «Wortschatz», gebaut als Port der **Mac-App** (
 WebView2, bis 1.1), die nicht mehr ausgeliefert wird. Entstanden auf dem Branch `native-windows-app`. Design: Richtung
 **A · Glas** (so nah wie möglich an der Mac-App), von Joan am 2.11.2026 gewählt.
 
+## Updates wie die Mac-App (25.11.2026, nach Windows 1.7.1)
+
+Joan: «schaue an, wie Mac das Auto-Update macht … und baue dann dasselbe Prinzip für Windows». Wie Anthonys Sparkle-Updates
+(`mac/Wortschatz/Services/README.md` › «Updates»), nur ohne Sparkle: Etwa einmal am Tag fragt die App GitHub nach dem
+neuesten **veröffentlichten** Release des öffentlichen Repos mit einem `windows-update.json` (Entwürfe, Vorabversionen
+und Mac-Releases zählen nicht), lädt die exe desselben Releases im Hintergrund und setzt sie an die Stelle der laufenden,
+wenn das Fenster zugeht. Beim nächsten Start steht in der Seitenleiste «Aktualisiert auf …» mit der ersten Neuigkeit.
+Einstellungen › Daten › Updates: «Automatisch aktualisieren» (aus: nichts lädt oder installiert sich ungefragt), «Jetzt
+suchen» (fragt bei einem Fund «Jetzt neu starten» oder «Später»). Release-Seite: `VEROEFFENTLICHEN.md` › «Updates (Windows)».
+- **Kern** (läuft und ist getestet überall, `UpdateFeedTests`, `UpdateDownloadTests`): `UpdateFeed.cs` (Release finden,
+  Manifest prüfen, `UpdateNoticeStore` wie auf dem Mac), `UpdateDownload.cs` (`UpdateCheck`: Liste → Manifest → exe,
+  `UpdateInstaller`: ersetzen, aufräumen; `PendingUpdate`). Das Netz kommt von der App (`IUpdateTransport`).
+- **Signatur:** `windows-update.json` = `{"format": 1, "manifest": "<JSON-Text>", "signature": "<base64>"}`, ECDSA
+  P-256/SHA-256 über die UTF-8-Bytes des Manifest-Texts (eingebaut in .NET, kein Paket); das Manifest nennt Version,
+  Dateiname (nur der Name: immer die Datei desselben Releases), Grösse, SHA-256, Prozessor und die Neuigkeiten (Deutsch und
+  Englisch). Die App nimmt nur Schlüssel aus `AppUpdater.PublicKeys`; der private liegt bei dem, der Windows
+  veröffentlicht. Vor dem Ersetzen prüft sie die exe nochmals (SHA-256 und die Versionsangabe in der exe).
+- **Ersetzen:** Windows lässt eine laufende exe umbenennen, nicht überschreiben. Beim Schliessen (`MainWindow.Shutdown`,
+  nach dem Speichern): die laufende exe → `<Name>.old` (versteckt), die neue an ihren Namen und Ort – Verknüpfungen,
+  Taskleiste und Startmenü öffnen die neue Version. Sie hat keine Download-Markierung, also keine SmartScreen-Frage. Der
+  nächste Start löscht die `.old`. Der Dateiname behält die alte Nummer (`Wortschatz-1.7.1-Windows.exe` enthält dann 1.8);
+  `OlderVersions` erkennt Versionen an der Versionsangabe in der exe, nicht am Namen. Liegt die exe in einem Ordner ohne
+  Schreibrecht (Programme), sagt Einstellungen › Daten, dass neue Versionen von der Downloadseite kommen.
+- **Gedeckelt:** Misslingt das Ersetzen dreimal (`PendingUpdate.MaxFailures`), gibt die App diese Version auf (lädt sie
+  nicht mehr, Hinweis in den Einstellungen); eine neuere fängt neu an. Eine geladene Version, deren Release inzwischen
+  gelöscht oder Vorabversion ist, verwirft die nächste Suche (wie Anthonys Mac-Gegenprüfung 8ac465f). Fehler stehen englisch in `preferences.json`
+  (`update.error`). Getestet mit simuliertem Fehlschlag (`UpdateDownloadTests`).
+- **Nur die App der Downloadseite:** Netz und Ersetzen nur im Windows-Build (`#if WINDOWS`), nicht in Debug-Builds; das
+  Bild-Werkzeug zeigt Hinweis und Einstellungen mit `--only=updates` (`AppUpdater.Preview`).
+- **Datenschutz:** GitHub sieht die IP und `User-Agent: Wortschatz/<Version> (Windows)`. Die Downloadseite sagt es ab der
+  ersten Windows-Version nach 1.7.1 (`windowsUpdates`/`appUpdates` in `Downloadseite/server/lib/app.mjs`).
+- **Ausprobieren ohne Release:** `tools/update-test.sh` baut zwei Testkopien (9.0 → 9.1) mit Wegwerf-Schlüssel
+  (`-p:UpdateTestKey=…`, nie in `build.sh`), die ihre «Releases» aus dem Ordner `update-test` daneben lesen und ihre
+  eigene Bibliothek dort haben → `dist/update-test/` auf einen Windows-PC kopieren, `ANLEITUNG.txt` folgen.
+  Auf einem echten Windows-11-Laptop durchgespielt (25.11.2026): Suche nach etwa 20 s von selbst, «Version 9.1 ist
+  bereit», nach dem Schliessen ist die exe 9.1 (alte als versteckte `.old`), beim nächsten Start «Aktualisiert auf
+  9.1» mit «+1 weitere» und die `.old` ist weg; «Jetzt neu starten» startet 9.1 sofort. Die echte App fragt GitHub
+  (öffentliches Repo ohne Release → «Wortschatz ist aktuell»).
+
+## Optimierung: flüssiger, weniger Speicher, toter Code weg (25.11.2026, Windows 1.7.1)
+
+Joan: «optimize and remove leftovers … run as smooth and efficiently as possible», aussen soll alles gleich aussehen.
+Drei Helfer haben den Code gelesen (Lern-Bildschirme, Hülle und Seiten, Kern), umgesetzt wurde, was nichts am Bild
+ändert. Live mit Windows 1.7.1 (25.11.2026, Release `v1.7.1-windows`).
+- **Build** (`build.sh`): ReadyToRun pro Assembly statt eines Sammelblocks (`PublishReadyToRunComposite=false`). Der
+  Sammelblock enthielt die ganze .NET-Laufzeit vorkompiliert (132 MB entpackt) und wurde bei jedem Start ganz entpackt.
+  exe 75 statt 89 MB. Laptop (Kopie von Joans Daten, Median): vorher Fenster 0,90 s, bedienbereit 1,13 s, 375 MB
+  Arbeitsspeicher (330 MB privat; 6 Starts); nur Build-Änderung 0,87 s / 1,13 s / 330 MB (248 privat; 5 Starts); alles
+  zusammen 0,76 s / 0,76 s / 319 MB (248 privat) – nur 1 Start, danach lief der Laptop auf Akku und die Messaufgabe
+  startete nicht mehr. Leerlauf bei allen unter 1 % eines Kerns (der bewegte Hintergrund kostet fast nichts).
+- **Nach jeder Antwort:** Die Bibliothek wurde 300 ms nach der Antwort auf dem UI-Thread kodiert (Joans 1129 Karten:
+  19 ms, mitten in der Animation der nächsten Frage). Jetzt nur noch eine Kopie (`LibraryStore.PendingSnapshot`,
+  0,02 ms), Kodieren und Schreiben im Hintergrund (`LibraryStore.Encode`, `JSONValue.ToJsonBytes` ohne Umweg über
+  einen String, gleiche Bytes). Falsche Antwort: die Suche nach der anderen Karte mit demselben Begriff
+  (`SameTermCards.TermKeys`, gemerkt pro Text; `ExtendedSynonyms.ArticlePrefixes` pro Sprache) 32 → 0,2 ms.
+- **preferences.json** (jede sortierte Karteikarte speichert ihren Stapel): gesammelt nach 300 ms und im Hintergrund
+  geschrieben; `AppPreferences.Flush` beim Schliessen (`MainWindow.Shutdown`) und in `AppModel.Flush`.
+- **Start:** Die Vorlese-Stimmen (SAPI, COM, Registry) kommen erst beim ersten Vorlesen bzw. in den Einstellungen
+  (`SapiSpeech.EnsureReady`); die App-Stile wurden doppelt gebaut.
+- **Lernen starten:** Öffnet man ein Lernset, berechnet der Hintergrund die Wortarten der Karten vor
+  (`LearnEngine.PrepareChoices`, rein, ohne Zufallszahlen): grösstes Set (541 Karten) erste Runde ~170 → ~80 ms.
+- **Animationen:** `AnimatedValue.Set` ohne Bewegung (Wert schon am Ziel) startet keinen Frame-Takt mehr (vorher bei
+  jedem Neuzeichnen eines Lernbildschirms und jeder Taste in der Prüfung eine halbe Sekunde lang). Symbole werden
+  einmal geparst (`Icons.Parsed`), Konfetti und der Kartenstapel bauen ihre Formen nicht mehr in jedem Bild neu.
+- **Kleineres:** Schreiben stoppt veraltete Weiter-Timer (`WriteController.StopStaleTimers`, wie Lernen; vorher
+  zeichneten sie grundlos neu und schnitten Animationen ab), Prüfung aktualisiert pro Taste nur die eigene Zeile,
+  Übersicht baut sich nur noch neu, wenn Gruss oder Datum wechseln (nicht jede Minute), Rechtsklick-Menüs der
+  Seitenleiste und Übersichtskarten entstehen erst beim Öffnen (`SetActions.AttachMenu`, gleiche Position), Stern
+  speichert wie eine Antwort, «Alle markieren» in einem Schritt (ein Speicherfehler beendete vorher die App).
+  Bewusst gelassen: Der Wechsel hell/dunkel baut zweimal – der zweite Durchgang holt die Palette von «System» aus der
+  neuen Theme-Variante (eine Sperre dagegen gab beim Wechsel Dunkel → System die falsche Palette; Prüfung 25.11.).
+- **Toter Code entfernt** (~230 Zeilen): ungenutzte Bausteine in `StudyChrome`, `Ui`, `StudyText`, `Icons.Ring`,
+  `Motion`-Kurven, der Sprachmodell-Teil aus `ExtendedSynonyms.swift` (Windows nimmt die Synonymwörterbücher),
+  `SubsetWhat`/`ScopeText`/`SubsetDescription`/`SegmentFills` (ersetzt durch ganze Sätze), unbenutzte Felder und usings.
+  Nur von Tests benutzte Kern-Funktionen (Ports) bleiben, ebenso `LanguageDetection.SetLang` (wird auf einem
+  anderen Branch gebraucht, Kommentar dort).
+- **Bewusst nicht** (Option für später, ändert sonst eventuell Animationen): Multiple Choice zeichnet bei jeder Taste
+  und beim Überfahren einer Kachel den ganzen Bildschirm neu (`LearnScreen.Render`); ein Teilumbau nur der Kacheln
+  spart einige ms pro Taste. Trimmen der exe (kleiner, schnellerer Start) braucht Tests auf Windows (COM, WinRT).
+- **Bild-Werkzeug fest:** `Rand.Fixed` (gesetzt im Werkzeug) gibt allen Lern-Engines denselben Zufall, zwei Läufe
+  zeichnen fast dieselben Bilder. Weiter wackeln nur, was in Echtzeit läuft: Hinweis-Meldungen (z. B. «Lernserie»
+  nach 580 ms), Weiter-Timer, Textcursor, die angezeigte Lernzeit. Vergleich vor/nach: jedes Bild gleich einem von zwei
+  Referenzläufen, sonst von Auge prüfen.
+
 ## Ältere Downloads räumen sich weg (nach 1.4, auf main, kommt mit 1.5)
 
 Joan: eine neu heruntergeladene Version soll die alte ersetzen. `Services/OlderVersions.cs` (Regeln:
@@ -32,6 +116,109 @@ Joans zwei offene Punkte, gleich in JS-Referenz, Mac und Windows:
   (`StudyChrome.OptionsBody`/`StandardNote`, `LearnOptionsCopy.Deviations`), und öffnen sich auch auf der Lernset-Seite
   (`StudyChrome.ShowSetOptions`).
 
+## Englisch (25.11.2026)
+
+Wie Anthonys Mac-App (0545050, 4462868): Alle Texte sind weiter deutsch geschrieben (Quelle, Schweizer «ss») und gehen
+durch `L()` (`Wortschatz.Core/CoreText.cs`); ohne Tabelle bleibt alles deutsch, Wort für Wort – so sehen es die
+Paritäts- und alle anderen Tests.
+- **Schreiben:** `L("Neu starten?")`, `L($"Runde {n} geschafft")` (Schlüssel = der Text mit `%@` je Wert, wie die
+  Mac-Schlüssel: «Runde %@ geschafft»), `L("vor %@ Tagen", n.ToString())`; `Labels.Plural(n, "Karte", "Karten")`
+  übersetzt über «%@ Karte»/«%@ Karten». Ganze Sätze, keine zusammengesetzten Satzteile; Text, der zur Laufzeit
+  wechseln soll, nicht in `static readonly` (sondern berechnet). `using static Wortschatz.Core.CoreText;`
+- **Englisch:** `Strings/en-mac.json` ist die Abschrift des Mac-Katalogs
+  (`mac/Wortschatz/Resources/Localizable.xcstrings`, Mac-«%lld» als «%@», ohne Texte, die die öffentliche
+  App nicht enthalten darf) – neu schreiben mit `python3 tools/strings.py sync`, wenn Anthony Texte ändert (ein
+  Test meldet, wenn die Abschrift veraltet ist). Texte, die nur Windows/Android hat oder anders sagt («Ctrl+E», «Windows»,
+  «Explorer», Windows-Einstellungen), stehen in `Strings/en.json` (gewinnt; Mehrzahl als `{"one", "other"}`).
+- **Prüfen:** `python3 tools/strings.py check` (Texte ohne Englisch mit Datei:Zeile), `find TEXT` (Mac-Wortlaut
+  suchen), `keys DATEI`. Der Test `TranslationCoverageTests.EveryTextHasEnglish` schlägt fehl, solange ein Text kein
+  Englisch hat.
+- **Sprache wählen:** Einstellungen › Allgemein › Sprache (System, Deutsch, English; Einstellung `app.language` dieses
+  Geräts). System = Anzeigesprache von Windows bzw. des Handys: Englisch → Englisch, sonst Deutsch (wie der Mac). Anders
+  als auf dem Mac gilt die Wahl sofort: `AppLanguage.Install` und das Fenster wird neu gebaut (`MainView.Rebuild`).
+  Daten und Zahlen in der Sprache der App: `AppLanguage.FormattingCulture`.
+- **Bilder:** Bild-Werkzeug mit `en` (ohne: immer Deutsch, egal welche Sprache der Rechner hat).
+
+## Anthonys Issues #7, #8 und #9 (24.11.2026)
+
+Anthony fand sie bei der Durchsicht der Einstellungen auf dem Mac (GitHub-Issues #7 bis #9):
+- **#9 Wiederholungsfragen und Nachkontrolle gelten sofort** (Port von Mac 1.6.2, 99c6f42 und 83edec5):
+  `LearnEngine.SetReview`/`SetRecheck` (geben ihre Eingabe zurück, wenn sich nichts ändert – Swift vergleicht Werte, C#
+  prüft mit `ReferenceEquals`), `LearnFlow.SavedLearn.Switching`, im Reducer `ApplySwitches` (sofort, auch bei offenen
+  Optionen; kein «Neu starten?» mehr für die beiden) und `Boot` (folgt der Nachkontrolle; wird die Sitzung dadurch fertig,
+  wird sie als fertig gespeichert). App: `AppModel` › «Learn switches» stellt beim Start und bei jedem Umschalten alle
+  gespeicherten Sitzungen um (`AppPreferences.LearnSwitchesChanged`, auch für importierte Einstellungen); ein offenes
+  Lernen folgt über `LearnController.SwitchesMayHaveChanged`. «Standard wiederherstellen» im Lernen-Tab setzt die beiden
+  mit zurück. Tests: `LearnSwitchesTests`, `LearnSessionSimulationTests` (Ports), `LearnReviewTests` angepasst.
+- **#7 Optionen ausserhalb der Sitzung geändert** (Windows zuerst, Mac offen): Richtung, Fragetypen und Rundengrösse
+  (Lernen) bzw. Richtung und «Mischen» (Schreiben) gelten weiter erst nach einem Neustart. Neu fragt eine fortgesetzte
+  Sitzung mit Antworten «Neu starten?», wenn sie anders läuft, als die Optionen jetzt sind (`AskForChangedOptions` in
+  `LearnFlowReducer`/`WriteFlowMachine`, auch bei einer Änderung von aussen, während sie offen ist); ohne Antworten
+  beginnt sie still neu. «Später» merkt sich das Gerät pro Lernset (`KeptOptions`, Einstellung
+  `keptOptions.learn|write.<Set>`): keine Frage mehr, bis sich die Optionen wieder ändern. Die Optionen in der Sitzung
+  sagen dann, womit sie noch läuft (`RunningSettingsNote`). Tests: `OptionsChangedElsewhereTests`.
+- **#8 Eigene Option zurück auf den Standard** (Windows zuerst, Mac offen): Die Optionen eines Lernsets speichern über
+  `LibraryStore.UpdateOwnStudyOptions`. Eine geänderte Option, die danach dem Standard entspricht, ist keine eigene mehr
+  (`StudyOptionsPatch.DroppingStandard`; nur die geänderten Schlüssel, die wirksamen Werte bleiben gleich).
+  `UpdateStudyOptions` bleibt `mergeStudy` der Web-App (Parität mit `store.json`). Tests: `OptionsChangedElsewhereTests`.
+- Bilder: `--only=recheck`, 03u3 (Nachkontrolle aus) bis 03u5 (Hinweis in den Optionen). Nicht auf echtem Windows getestet.
+
+## Anthonys Mac-Änderungen vom 24.11.2026 übernommen
+
+Aus 8caea20, c157bfc und c678393 (und dem älteren a0d7483), mit den Mac-Tests nach C# gezogen:
+- **Abtippen wie beim Antworten** (`CopyStep`): weiter geht es, sobald die Abschrift so akzeptiert würde wie eine Antwort
+  («le collègue» für «le/la collègue»), ausser sie ist nur der Anfang der angezeigten Antwort («le cerveau» von «le cerveau,
+  les cerveaux»: Enter). Nach einer kurzen Pause (`CopyStep.AdvanceMs` = 400 ms, ein normaler Weiter-Timer ohne
+  Countdown-Strich); Enter überspringt sie, Weitertippen bricht sie ab, offene Optionen halten sie an. Tests:
+  `CopyStepTests`, `LearnFlowTests`, `WriteFlowTests`. Anthony: ohne Eintrag in den Neuigkeiten.
+- **Lernuhr in Lernen** pausiert wie beim Schreiben nach `WriteFlow.ClockIdleMs` (2 min) ohne Eingabe: dieselbe
+  `WriteClock`, dazu `WriteClock.IsUserActivity(LearnFlow.Event)`; die erste Eingabe danach schickt `Resume`.
+- **Eine Speicheränderung pro Antwort:** `LibraryStore.Batch` (Mac `batch`); Lernen und Schreiben schreiben Antwort und
+  Sitzung darin (eine Meldung an die App statt zwei). Die übrigen Teile von c678393 (Mac-`library` unter dem
+  Lernbildschirm, Backup-Grösse) braucht Windows nicht: die Übersicht wird hier nur bei Bedarf neu gebaut, und
+  Einstellungen und Lernen sind nie gleichzeitig offen.
+- **Seitenleiste** höchstens 360 breit (statt halbes Fenster), Start bleibt 262. Kapsel-Knöpfe hatte Windows schon
+  (`WsButton`: Radius = halbe Höhe); die Begriffsliste rollt hier nie seitwärts.
+- **Synonyme ausserhalb des Sets pro Lernset** (Mac a0d7483, 18.11.): Schalter unter «Toleranz» in den Optionen eines
+  Lernsets (`StudyChrome.SynonymSwitch`, Einstellung dieses Geräts `extendedSynonyms.<Set>` wie die Soundeffekte);
+  «Weitere Synonyme erkennen» in den Einstellungen sperrt ihn. `AppModel.ExtraAnswers(setId)` fragt bei jeder Antwort
+  nach. Bilder: `--only=recheck`, 03u1/03u2.
+- Nur Mac, nichts zu tun: ca0cd7b (Ton auf eigener Queue), ba1049b (Glas-Reste der Leiste), fe8428f.
+
+## Multiple Choice nur einmal pro Begriff (24.11.2026)
+
+Anthony: Jeder Begriff kommt beim Lernen nur einmal als Multiple Choice (ausser man hat sie falsch), danach nur noch
+schriftlich. Gleich in der JS-Referenz (`learn.js`), auf dem Mac (`LearnEngine.swift`) und hier (`LearnEngine.cs`):
+- Neu `LearnState.Solved` (JSON `solved`): Karten, die je richtig beantwortet wurden – aus dem Fortschritt
+  (`SolvedFromProgress`: `Correct > 0` oder eine Serie) und bei jeder richtigen Antwort bzw. «Ich hatte recht».
+  Multiple Choice nur noch bei Stufe 0 **und** nicht gelöst (`McStage`); eine falsche schriftliche Antwort setzt die
+  Stufe zurück, bleibt aber schriftlich. Gespeicherte Sitzungen ohne `solved`: Karten ab Stufe 1 gelten als gelöst,
+  der Rest kommt mit dem nächsten Vergleich mit dem Fortschritt (`MatchesProgress` prüft jetzt auch `Solved`).
+- Tests: Parität gegen die neuen Fixtures (`learn.json`, `store.json`, neue Funktion `solvedFromProgress`),
+  `LearnReviewTests` und `LearnFlowTests` angepasst. Auf dem Mac nicht gebaut (kein .NET-SDK dort); unter Linux
+  am 24.11.2026 gebaut, alle C#-Tests grün.
+
+## Ganz getippte Antwort geht ohne Enter weiter (Port von Anthonys Mac-Änderung, 23.11.2026)
+
+Wie auf dem Mac (Commit 1fcd631): Multiple Choice wählt eine Antwort, sobald sie (oder eine ihrer Formen) ganz getippt ist
+und nur noch sie passt (`LearnFlow.TypeAhead.IsTypedOut`; nicht vor einer Klammer, nicht wenn eine längere noch passt).
+Abtippen in Lernen und Schreiben geht weiter, sobald die Antwort genau wie angezeigt dasteht (`CopyStep.IsTypedOut`); nur
+mit Toleranz akzeptiert wartet es auf Enter (seit 24.11. anders, siehe oben). Windows-eigen: Die Controller zeichnen nach Tipp-Ereignissen sonst nicht neu
+– wechselt die Phase dadurch, kommt das Neuzeichnen nachgeschoben; beim Schreiben (ein Feld für Antwort und Abtippen)
+leert `WriteScreen` das Feld sofort, sonst landete der abgetippte Text in der nächsten Frage. Geprüft im Bild-Werkzeug
+(`--only=write`, `--only=learn`: Text ins echte Feld, Szenen 05c1/05c2, 04e/04f).
+
+## Multiple Choice: ähnliche falsche Antworten (23.11.2026)
+
+Joan: «mache die Multiple Choice schwerer: möglichst ähnliche Wörter (zumindest gleiche Wortart)». Gleich in JS-Referenz
+(`src/core/wordclass.js`), Mac (`WordClass.swift`) und hier (`WordClass.cs`):
+- Wortart einer Karte aus beiden Seiten: Artikel, «to», «se»/«sich», Geschlechtsangaben («, f.», «(in)»), französische
+  weibliche Formen («amusant, amusante»), Satzzeichen, Zahlen; schwächer deutsche Gross-/Kleinschreibung und Endungen.
+  Die Sprache jeder Seite kommt aus `LangDetect.DetectColumn` über die ganze Liste.
+- `LearnEngine.RankedDistractors`: zuerst Karten derselben Wortart, dann die ähnlichsten (nahe im Set, gleicher Artikel,
+  gleich viele Wörter, ähnliche Länge, gleicher Anfang/gleiches Ende), dazu 0–2 Zufallspunkte, damit fast gleich ähnliche
+  abwechseln. Tests: Parität `WordClassParityTests` (Fixture `wordclass`) und `LearnEngineParityTests`.
+
 ## Abgleich mit der Mac-App umgesetzt (1.3, 3.11.2026)
 
 Joan: «gehe jeden Code-Abschnitt der Mac-App durch» → sechs Helfer-Agenten haben den ganzen Mac-Code mit der Windows-App
@@ -49,7 +236,10 @@ Neu dabei u. a.: Kern `SetEditorCopy` (Editor-Texte, Trennungen, `UndoHistory`),
 Editor als partielle Klasse (`SetEditorCardList.cs`, `ImportPanel.cs`). `PromptRequest` kann `Content`, `Width`,
 `KeyHandler` (Blätter). Snapshot-Werkzeug: `--only=learn|write|flashcards|editor|exam|settings|shell`, `contrast`, `solid`.
 
-Bewusst nicht: Synonyme ausserhalb des Sets (Apple-Sprachmodell), Haptik, Menüleiste (dafür F1 und Rechtsklick),
+Synonyme ausserhalb des Sets («Weitere Synonyme erkennen»): statt des Apple-Sprachmodells eingebaute einsprachige
+Synonymwörterbücher (de, en, fr, es, it; 2,6 MB), siehe `src/Wortschatz.Core/SynonymData/README.md`.
+
+Bewusst nicht: Haptik, Menüleiste (dafür F1 und Rechtsklick),
 Blätter über dem Lernbildschirm (Ctrl+N verlässt ihn; Prüfung fragt vorher). Ungetestet auf echtem Windows: Pinyin-
 Eingabe, Touchpad-Nachlauf, SAPI-Stimmenwahl, Kontrastdesign, bewegter Hintergrund (CPU/GPU beobachten).
 

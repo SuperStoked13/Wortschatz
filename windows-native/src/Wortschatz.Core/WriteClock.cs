@@ -1,11 +1,12 @@
 namespace Wortschatz.Core;
 
 /// <summary>
-/// The study clock of Schreiben (Mac: WriteController.runClock / markActive / windowActivityChanged; web:
-/// write-clock.js): the time counts only while the window is active and the learner did something in the last
-/// <see cref="WriteFlow.ClockIdleMs"/>. The controller asks it on every periodic tick whether to send
-/// <see cref="WriteFlow.Event.ClockTick"/>, reports every event of the learner (<see cref="Activity"/>: a paused clock
-/// resumes with <see cref="WriteFlow.Event.ClockResumed"/>) and the window's activity.
+/// The study clock of Schreiben and, since 24.11.2026, of Lernen (Mac: WriteController/LearnController.runClock /
+/// markActive / windowActivityChanged; web: write-clock.js): the time counts only while the window is active and the
+/// learner did something in the last <see cref="WriteFlow.ClockIdleMs"/>. The controller asks it on every periodic tick
+/// whether to send <see cref="WriteFlow.Event.ClockTick"/> (Lernen: <see cref="LearnFlow.Event.Tick"/>), reports every
+/// event of the learner (<see cref="Activity"/>: a paused clock resumes with <see cref="WriteFlow.Event.ClockResumed"/>,
+/// Lernen: <see cref="LearnFlow.Event.Resume"/>) and the window's activity.
 /// </summary>
 public sealed class WriteClock
 {
@@ -51,6 +52,14 @@ public sealed class WriteClock
     public static bool IsUserActivity(WriteFlow.Event e) => e is not (WriteFlow.Event.AutoAdvanceFired or WriteFlow.Event.SetChanged
         or WriteFlow.Event.CardsChanged or WriteFlow.Event.SetDeleted or WriteFlow.Event.ClockTick or WriteFlow.Event.ClockResumed
         or WriteFlow.Event.OptionsChanged);
+
+    /// <summary>
+    /// Events of Lernen that come from the learner (Mac: LearnFlow.Event.isUserActivity in LearnController.swift). The
+    /// pointer passing over an option is not: options also move under a resting pointer.
+    /// </summary>
+    public static bool IsUserActivity(LearnFlow.Event e) => e is not (LearnFlow.Event.Highlight or LearnFlow.Event.OptionsChanged
+        or LearnFlow.Event.ReviewChanged or LearnFlow.Event.RecheckChanged or LearnFlow.Event.SetChanged or LearnFlow.Event.CardsChanged
+        or LearnFlow.Event.ProgressChanged or LearnFlow.Event.AutoAdvanceFired or LearnFlow.Event.Tick or LearnFlow.Event.Resume);
 }
 
 /// <summary>Key handling shared by the study screens (Mac: LearnKeyRouter.swift, the parts without AppKit).</summary>

@@ -23,8 +23,8 @@ struct SetDetailScreen: View {
                 CenteredScrollView {
                     EmptyStateView(
                         systemImage: "questionmark.folder",
-                        title: "Lernset nicht gefunden",
-                        message: "Dieses Lernset gibt es nicht mehr – vielleicht wurde es gelöscht."
+                        title: String(localized: "Lernset nicht gefunden"),
+                        message: String(localized: "Dieses Lernset gibt es nicht mehr – vielleicht wurde es gelöscht.")
                     ) {
                         PrimaryActionButton("Zur Übersicht", systemImage: "chevron.left") { model.showOverview() }
                     }
@@ -59,8 +59,8 @@ struct SetDetailScreen: View {
                 CenteredScrollView {
                     EmptyStateView(
                         systemImage: "rectangle.stack.badge.plus",
-                        title: "Noch keine Begriffe",
-                        message: "Tippe Begriffe ein oder importiere eine Vokabelliste."
+                        title: String(localized: "Noch keine Begriffe"),
+                        message: String(localized: "Tippe Begriffe ein oder importiere eine Vokabelliste.")
                     ) {
                         PrimaryActionButton("Begriffe hinzufügen", systemImage: "plus") {
                             model.openEditor(.edit(setID: summary.id))
@@ -212,30 +212,36 @@ private struct SetStudyActions: View {
     @State private var isShowingOptions = false
 
     var body: some View {
+        // Once per body: the three button rows below each ask for it twice.
+        let deck = model.runningFlashcardDeck(for: summary.id)
         VStack(alignment: .leading, spacing: Spacing.s) {
             // One row of large buttons when it fits, else regular ones, else wrapped.
             ViewThatFits(in: .horizontal) {
                 GlassEffectContainer(spacing: Spacing.s) {
-                    HStack(spacing: Spacing.s) { buttons(.large) }
+                    HStack(spacing: Spacing.s) { buttons(.large, deck: deck) }
                 }
                 GlassEffectContainer(spacing: Spacing.xs) {
-                    HStack(spacing: Spacing.xs) { buttons(.regular) }
+                    HStack(spacing: Spacing.xs) { buttons(.regular, deck: deck) }
                 }
                 GlassEffectContainer(spacing: Spacing.xs) {
-                    FlowLayout(spacing: Spacing.xs, lineSpacing: Spacing.xs) { buttons(.regular) }
+                    FlowLayout(spacing: Spacing.xs, lineSpacing: Spacing.xs) { buttons(.regular, deck: deck) }
                 }
             }
 
             VStack(alignment: .leading, spacing: Spacing.xxs) {
                 if let learn = summary.learn {
-                    RunningLine(symbol: "sparkles", text: "Lernen läuft: \(learn.detail)", progress: learn.progressValue)
+                    RunningLine(
+                        symbol: "sparkles", text: String(localized: "Lernen läuft: \(learn.detail)"), progress: learn.progressValue)
                 }
                 if let write = summary.write {
-                    RunningLine(symbol: "keyboard", text: "Schreiben läuft: \(write.detail)", progress: write.progressValue)
-                }
-                if let deck = model.runningFlashcardDeck(for: summary.id) {
                     RunningLine(
-                        symbol: FlashcardsSymbols.mode, text: "Karteikarten: \(FlashcardCopy.runningDetail(deck))",
+                        symbol: "keyboard", text: String(localized: "Schreiben läuft: \(write.detail)"),
+                        progress: write.progressValue)
+                }
+                if let deck {
+                    RunningLine(
+                        symbol: FlashcardsSymbols.mode,
+                        text: String(localized: "Karteikarten: \(FlashcardCopy.runningDetail(deck))"),
                         progress: deck.knownShare)
                 }
                 if !layout.isShort {
@@ -268,7 +274,7 @@ private struct SetStudyActions: View {
     }
 
     @ViewBuilder
-    private func buttons(_ size: ControlSize) -> some View {
+    private func buttons(_ size: ControlSize, deck: FlashcardDeck?) -> some View {
         let id = summary.id
         PrimaryActionButton(
             summary.learn != nil ? "Weiterlernen" : "Lernen",
@@ -282,12 +288,19 @@ private struct SetStudyActions: View {
         SecondaryButton(summary.write != nil ? "Schreiben fortsetzen" : "Schreiben", systemImage: "keyboard", controlSize: size) {
             model.continueWrite(setID: id)
         }
-        .help(summary.write.map(\.detail) ?? "Jede Karte schriftlich · \(SetDetailCopy.writeAnswerLabel(summary.set, options: summary.options)) (⇧⌘L)")
+        .help(
+            summary.write.map(\.detail)
+                ?? String(
+                    localized:
+                        "Jede Karte schriftlich · \(SetDetailCopy.writeAnswerLabel(summary.set, options: summary.options)) (⇧⌘L)"
+                ))
 
         SecondaryButton("Karteikarten", systemImage: FlashcardsSymbols.mode, controlSize: size) {
             model.continueFlashcards(setID: id)
         }
-        .help(model.runningFlashcardDeck(for: id).map(FlashcardCopy.runningDetail) ?? "Karten umdrehen und sortieren: Weiss ich oder Lerne ich noch (⌥⌘L)")
+        .help(
+            deck.map(FlashcardCopy.runningDetail)
+                ?? String(localized: "Karten umdrehen und sortieren: Weiss ich oder Lerne ich noch (⌥⌘L)"))
 
         SecondaryButton("Prüfung", systemImage: ExamSymbols.mode, controlSize: size) {
             model.startExam(setID: id)
@@ -295,13 +308,18 @@ private struct SetStudyActions: View {
         .help("Alle Fragen auf einer Seite, mit Zeitlimit und einer Note wie in der Schule (⌃⌘L)")
 
         if summary.starred > 0 {
-            SecondaryButton(verbatim: "Nur markierte (\(summary.starred))", systemImage: "star.fill", controlSize: size) {
+            SecondaryButton(
+                verbatim: String(localized: "Nur markierte (\(summary.starred))"), systemImage: "star.fill", controlSize: size
+            ) {
                 model.startLearn(setID: id, subset: .starred)
             }
             .help("Nur die markierten Begriffe lernen")
         }
         if !summary.difficultCardIDs.isEmpty {
-            SecondaryButton(verbatim: "Nur schwierige (\(summary.difficultCardIDs.count))", systemImage: "flame", controlSize: size) {
+            SecondaryButton(
+                verbatim: String(localized: "Nur schwierige (\(summary.difficultCardIDs.count))"), systemImage: "flame",
+                controlSize: size
+            ) {
                 model.startLearn(setID: id, subset: .cardIds(summary.difficultCardIDs))
             }
             .help("Nur die Begriffe lernen, die du mindestens \(SetSummary.difficultMistakes)× falsch beantwortet hast")
@@ -316,7 +334,7 @@ private struct SetStudyActions: View {
         }
         .help("Abfrage, Fragetypen und Toleranz für dieses Lernset")
 
-        MoreMenu(summary: summary, controlSize: size)
+        MoreMenu(summary: summary, hasFlashcards: deck != nil, controlSize: size)
     }
 }
 
@@ -343,6 +361,8 @@ private struct RunningLine: View {
 /// The "…" menu: restarts, Schreiben subsets, then the set's other actions.
 private struct MoreMenu: View {
     let summary: SetSummary
+    /// A Karteikarten deck is under way (`AppModel.runningFlashcardDeck(for:)`).
+    let hasFlashcards: Bool
     var controlSize: ControlSize = .large
 
     @Environment(AppModel.self) private var model
@@ -381,12 +401,9 @@ private struct MoreMenu: View {
         }
         .menuIndicator(.hidden)
         .buttonStyle(.glass)
+        .buttonBorderShape(.capsule)
         .controlSize(controlSize)
         .fixedSize()
         .help("Weitere Aktionen")
-    }
-
-    private var hasFlashcards: Bool {
-        model.runningFlashcardDeck(for: summary.id) != nil
     }
 }

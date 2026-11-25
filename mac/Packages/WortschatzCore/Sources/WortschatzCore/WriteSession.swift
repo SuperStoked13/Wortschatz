@@ -577,7 +577,6 @@ public enum WriteSession {
             .sorted { x, y in
                 x.element.misses != y.element.misses ? x.element.misses > y.element.misses : x.offset < y.offset
             }
-            .prefix(10)
             .map(\.element)
 
         return FinalStats(
@@ -631,6 +630,143 @@ public enum WriteSession {
         }
         markFinished(&s, now)
         return s
+    }
+
+    /// Direction (`answerWith`) and «Mischen» (`shuffle`) as they are set now (since 25.11.2026;
+    /// before, a session kept them from its start and asked «Neu starten?»). What was answered
+    /// right stays done and counts. The open questions follow the new direction: with the other
+    /// direction instead of one, a card's question turns around (and keeps its answers so far); a
+    /// direction added brings a question per card, asked in this round after the others; a
+    /// direction dropped takes its open questions out. «Mischen» on shuffles the questions still to
+    /// come in this round, off puts them (and later rounds) in the set's order. The first queued
+    /// question (asked now) stays first, turned around if its side went, unless it goes. `cards`:
+    /// the set's cards, for the set's order. A finished session is left as it is.
+    public static func setOptions(
+        _ state: SessionState, answerWith: AnswerWith, shuffle: Bool, cards: [Card], rng: RNG = systemRNG(),
+        now: Double = TimeUtil.nowMs()
+    ) -> SessionState {
+        var s = copyState(state)
+        let before = s.setOptions
+        guard s.finishedAt == nil, before.answerWith != answerWith || before.shuffle != shuffle else { return s }
+        s.setOptions = SessionSetOptions(answerWith: answerWith, shuffle: shuffle)
+        var head = s.queue.first
+        var added: [String] = []
+        if before.answerWith != answerWith {
+            let turned = turnQuestions(&s, to: sides(answerWith))
+            added = turned.added
+            head = head.map { turned.renamed[$0] ?? $0 }
+        }
+
+        // The set's order: every term question first, then every definition question (as a new
+        // session without «Mischen» asks them); questions of cards no longer in the set last.
+        var cardRank: [String: Int] = [:]
+        for (i, card) in cards.enumerated() where cardRank[card.id] == nil { cardRank[card.id] = i }
+        func setOrder(_ qids: [String]) -> [String] {
+            func rank(_ qid: String) -> (Int, Int) {
+                guard let q = s.questions[qid] else { return (2, .max) }
+                return (q.ask == .term ? 0 : 1, cardRank[q.cardId] ?? .max)
+            }
+            return qids.enumerated().sorted { x, y in
+                let rx = rank(x.element)
+                let ry = rank(y.element)
+                return rx != ry ? rx < ry : x.offset < y.offset
+            }.map(\.element)
+        }
+
+        let roundRuns = !s.queue.isEmpty
+        if roundRuns { s.queue += added }
+        s.order += added
+        if !shuffle { s.order = setOrder(s.order) }
+        if roundRuns && (added.count > 0 || before.shuffle != shuffle) {
+            // The question asked now keeps its place (turned around when its side went).
+            let keepsHead = head != nil && s.queue.first == head
+            let rest = Array(s.queue.dropFirst(keepsHead ? 1 : 0))
+            var arranged = shuffle ? separateSiblings(shuffled(rest, rng), s.questions) : setOrder(rest)
+            // Never the same card twice in a row.
+            func card(_ qid: String?) -> String? { qid.flatMap { s.questions[$0]?.cardId } }
+            if shuffle, keepsHead, let first = card(head), card(arranged.first) == first,
+                let j = arranged.indices.first(where: { card(arranged[$0]) != first })
+            {
+                arranged.swapAt(0, j)
+            }
+            s.queue = (keepsHead ? [head!] : []) + arranged
+        }
+        advanceClock(&s, now)
+        markFinished(&s, now)
+        return s
+    }
+
+    /// The sides a direction asks, term first.
+    private static func sides(_ answerWith: AnswerWith) -> [AskSide] {
+        switch answerWith {
+        case .both: [.term, .definition]
+        case .term: [.term]
+        case .definition: [.definition]
+        }
+    }
+
+    /// Gives every card of the session a question on each of `wanted` (`setOptions`): a question
+    /// on another side turns around (same place, same answers, done when it was), else a new one
+    /// comes (returned, in the session's order of the cards). Of the questions on other sides left
+    /// over, the open ones go and those answered right stay.
+    private static func turnQuestions(_ s: inout SessionState, to wanted: [AskSide])
+        -> (added: [String], renamed: [String: String])
+    {
+        let done = Set(s.done)
+        var cardIds: [String] = []
+        var byCard: [String: [String]] = [:]
+        for qid in s.order {
+            guard let cardId = s.questions[qid]?.cardId else { continue }
+            if byCard[cardId] == nil { cardIds.append(cardId) }
+            byCard[cardId, default: []].append(qid)
+        }
+        var renamed: [String: String] = [:]
+        var gone = Set<String>()
+        var added: [String] = []
+        for cardId in cardIds {
+            let qids = byCard[cardId] ?? []
+            let present = Set(qids.compactMap { s.questions[$0]?.ask })
+            var spare = qids.filter { qid in
+                guard let ask = s.questions[qid]?.ask else { return false }
+                return !wanted.contains(ask)
+            }
+            for ask in wanted where !present.contains(ask) {
+                let id = qid(cardId: cardId, ask: ask)
+                if !spare.isEmpty {
+                    renamed[spare.removeFirst()] = id
+                } else {
+                    added.append(id)
+                }
+                s.questions[id] = SessionQuestion(qid: id, cardId: cardId, ask: ask)
+            }
+            gone.formUnion(spare.filter { !done.contains($0) })
+        }
+        for qid in renamed.keys { s.questions[qid] = nil }
+        for qid in gone { s.questions[qid] = nil }
+        func rename(_ qid: String) -> String { renamed[qid] ?? qid }
+        func move<V>(_ map: [String: V]) -> [String: V] {
+            var out: [String: V] = [:]
+            for (qid, value) in map { out[rename(qid)] = value }
+            return out
+        }
+        s.order = s.order.map(rename)
+        s.queue = s.queue.map(rename)
+        s.done = s.done.map(rename)
+        s.roundAnswered = s.roundAnswered.map { SessionAnswer(qid: rename($0.qid), correct: $0.correct) }
+        s.rounds = s.rounds.map {
+            SessionRound(
+                round: $0.round, total: $0.total, correct: $0.correct, incorrectQids: $0.incorrectQids.map(rename))
+        }
+        s.attempts = move(s.attempts)
+        s.misses = move(s.misses)
+        s.firstTry = move(s.firstTry)
+        for qid in added {
+            s.attempts[qid] = 0
+            s.misses[qid] = 0
+        }
+        // References to the questions that went (copyState drops them).
+        s = copyState(s)
+        return (added, renamed)
     }
 
     /// Advances the active-time clock.

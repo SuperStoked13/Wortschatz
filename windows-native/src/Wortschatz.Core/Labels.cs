@@ -1,9 +1,17 @@
+using static Wortschatz.Core.CoreText;
+
 namespace Wortschatz.Core;
 
-/// <summary>Display data of a language (<c>LANGS</c> entry of src/lib/labels.js).</summary>
+/// <summary>
+/// Display data of a language (<c>LANGS</c> entry of src/lib/labels.js). <c>Name</c> is the German raw data; for display
+/// use <see cref="Labels.LangName"/>, which translates it.
+/// </summary>
 public sealed record LangInfo(string Name, string Short, string Bcp47);
 
-/// <summary>Port of Labels.swift (src/lib/labels.js): shared German UI labels (Swiss spelling, "ss").</summary>
+/// <summary>
+/// Port of Labels.swift (src/lib/labels.js): shared UI labels, German (Swiss spelling, "ss") through <see cref="CoreText.L(string)"/>.
+/// The label tables are computed, so they follow the app's language.
+/// </summary>
 public static class Labels
 {
     public static readonly IReadOnlyDictionary<Lang, LangInfo> LANGS = new Dictionary<Lang, LangInfo>
@@ -21,48 +29,62 @@ public static class Labels
     /// <summary>Display order for language pickers.</summary>
     public static readonly Lang[] LANG_ORDER = [Lang.Fr, Lang.En, Lang.Es, Lang.It, Lang.Ar, Lang.Zh, Lang.De, Lang.Other];
 
-    public static readonly IReadOnlyDictionary<CardStatus, string> STATUS = new Dictionary<CardStatus, string>
+    public static IReadOnlyDictionary<CardStatus, string> STATUS => new Dictionary<CardStatus, string>
     {
-        [CardStatus.New] = "Neu",
-        [CardStatus.Learning] = "Am Lernen",
-        [CardStatus.Mastered] = "Gemeistert",
+        [CardStatus.New] = L("Neu"),
+        [CardStatus.Learning] = L("Am Lernen"),
+        [CardStatus.Mastered] = L("Gemeistert"),
     };
 
-    public static readonly IReadOnlyDictionary<GradeNote, string> NOTE_LABELS = new Dictionary<GradeNote, string>
+    public static IReadOnlyDictionary<GradeNote, string> NOTE_LABELS => new Dictionary<GradeNote, string>
     {
-        [GradeNote.Article] = "Artikel fehlte",
-        [GradeNote.Pronoun] = "Pronomen fehlte",
-        [GradeNote.Abbreviation] = "Abkürzung",
-        [GradeNote.Partial] = "Teilantwort",
-        [GradeNote.Parentheses] = "Klammerinhalt weggelassen",
-        [GradeNote.Pinyin] = "Nur Pinyin",
-        [GradeNote.LetterCase] = "Gross-/Kleinschreibung",
-        [GradeNote.Accents] = "Akzente",
-        [GradeNote.Tones] = "Töne",
-        [GradeNote.Variant] = "Schreibvariante",
-        [GradeNote.Typo] = "Tippfehler",
-        [GradeNote.Order] = "Reihenfolge",
-        [GradeNote.Synonym] = "Anderes Wort mit gleicher Bedeutung",
-        [GradeNote.ExtendedSynonym] = "Synonym – nicht im Set",
+        [GradeNote.Article] = L("Artikel fehlte"),
+        [GradeNote.Pronoun] = L("Pronomen fehlte"),
+        [GradeNote.Abbreviation] = L("Abkürzung"),
+        [GradeNote.Partial] = L("Teilantwort"),
+        [GradeNote.Parentheses] = L("Klammerinhalt weggelassen"),
+        [GradeNote.Pinyin] = L("Nur Pinyin"),
+        [GradeNote.LetterCase] = L("Gross-/Kleinschreibung"),
+        [GradeNote.Accents] = L("Akzente"),
+        [GradeNote.Tones] = L("Töne"),
+        [GradeNote.Variant] = L("Schreibvariante"),
+        [GradeNote.Typo] = L("Tippfehler"),
+        [GradeNote.Order] = L("Reihenfolge"),
+        [GradeNote.Synonym] = L("Anderes Wort mit gleicher Bedeutung"),
+        [GradeNote.ExtendedSynonym] = L("Synonym – nicht im Set"),
     };
 
-    public static readonly IReadOnlyDictionary<GradeHint, string> HINT_LABELS = new Dictionary<GradeHint, string>
+    public static IReadOnlyDictionary<GradeHint, string> HINT_LABELS => new Dictionary<GradeHint, string>
     {
-        [GradeHint.WrongArticle] = "Falscher Artikel",
-        [GradeHint.MissingArticle] = "Artikel fehlt",
-        [GradeHint.AccentsOnly] = "Nur die Akzente stimmen nicht",
-        [GradeHint.TonesOnly] = "Nur die Töne fehlen",
-        [GradeHint.CaseOnly] = "Nur Gross-/Kleinschreibung falsch",
-        [GradeHint.Typo] = "Fast – ein kleiner Tippfehler",
-        [GradeHint.Almost] = "Knapp daneben",
+        [GradeHint.WrongArticle] = L("Falscher Artikel"),
+        [GradeHint.MissingArticle] = L("Artikel fehlt"),
+        [GradeHint.AccentsOnly] = L("Nur die Akzente stimmen nicht"),
+        [GradeHint.TonesOnly] = L("Nur die Töne fehlen"),
+        [GradeHint.CaseOnly] = L("Nur Gross-/Kleinschreibung falsch"),
+        [GradeHint.Typo] = L("Fast – ein kleiner Tippfehler"),
+        [GradeHint.Almost] = L("Knapp daneben"),
     };
 
-    /// <summary><c>Plural(3, "Begriff", "Begriffe")</c> → "3 Begriffe".</summary>
-    public static string Plural(int n, string one, string other) => $"{n} {(n == 1 ? one : other)}";
+    /// <summary>
+    /// <c>Plural(3, "Begriff", "Begriffe")</c> → "3 Begriffe". Translated as «%@ Begriff» / «%@ Begriffe» (Mac: the same
+    /// keys, so a counter's word can differ from the same word as a heading); callers pass literals.
+    /// </summary>
+    public static string Plural(int n, string one, string other) => L("%@ " + (n == 1 ? one : other), n.ToString());
 
     public static LangInfo Info(Lang? code) => LANGS[code ?? Lang.Other];
     public static LangInfo Info(string? code) => Info(LangExtensions.ParseLang(code));
-    public static string LangName(Lang? code) => Info(code).Name;
+    /// <summary>The language's name in the app's language (display only: nothing parses it back).</summary>
+    public static string LangName(Lang? code) => (code ?? Lang.Other) switch
+    {
+        Lang.Fr => L("Französisch"),
+        Lang.En => L("Englisch"),
+        Lang.Es => L("Spanisch"),
+        Lang.It => L("Italienisch"),
+        Lang.Ar => L("Arabisch"),
+        Lang.Zh => L("Chinesisch"),
+        Lang.De => L("Deutsch"),
+        _ => L("Andere"),
+    };
     public static string LangShort(Lang? code) => Info(code).Short;
 
     /// <summary>"FR → DE"</summary>

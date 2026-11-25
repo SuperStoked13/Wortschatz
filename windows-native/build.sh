@@ -14,9 +14,13 @@ for a in "$@"; do
   esac
 done
 out="dist/publish-$arch"
+# ReadyToRun per assembly, not one composite image: by default a single file with ReadyToRun precompiles the whole .NET
+# runtime with the app into one block (132 MB unpacked) that the exe unpacks into memory at every start, also the many
+# parts the app never uses. Per assembly only what is loaded gets unpacked: the same start time on Joan's laptop,
+# about 90 MB less memory, a 15 MB smaller exe (25.11.2026).
 dotnet publish src/Wortschatz.App -c Release -f net10.0-windows10.0.19041.0 -r "win-$arch" --self-contained true \
   -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:EnableCompressionInSingleFile=true \
-  -p:DebugType=none -p:PublishReadyToRun=true -o "$out"
+  -p:DebugType=none -p:PublishReadyToRun=true -p:PublishReadyToRunComposite=false -o "$out"
 name="Wortschatz.exe"
 [ "$arch" = "arm64" ] && name="Wortschatz-arm64.exe"
 mkdir -p dist

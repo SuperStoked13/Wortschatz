@@ -11,11 +11,16 @@
     <RootNamespace>Wortschatz.App</RootNamespace>
     <AssemblyName>Wortschatz</AssemblyName>
     <Product>Wortschatz</Product>
-    <Version>1.4.0</Version>
+    <Version>1.7.1</Version>
     <ApplicationIcon Condition="Exists('Assets\app.ico')">Assets\app.ico</ApplicationIcon>
     <BuiltInComInteropSupport>true</BuiltInComInteropSupport>
     <ApplicationManifest Condition="Exists('app.manifest')">app.manifest</ApplicationManifest>
   </PropertyGroup>
+  <!-- An update test (tools/update-test.sh): a copy that trusts only this throwaway key and reads its releases from the
+       folder update-test next to it (Services/AppUpdater.cs › TestKey). build.sh never sets it. -->
+  <ItemGroup Condition="'$(UpdateTestKey)' != ''">
+    <AssemblyMetadata Include="WortschatzUpdateTestKey" Value="$(UpdateTestKey)" />
+  </ItemGroup>
   <ItemGroup>
     <AvaloniaResource Include="Assets\**" />
   </ItemGroup>

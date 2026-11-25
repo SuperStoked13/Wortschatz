@@ -37,6 +37,12 @@ fi
 grep -E "^/.*/mac/(Wortschatz|WortschatzUITests|Packages)/.*: warning:" "$LOG" | sort -u || true
 echo "build-for-testing OK"
 
+echo "== English texts (String Catalog)"
+# Adds texts the build found to Localizable.xcstrings and lists those without English
+# (Wortschatz/Resources/README.md › «Sprachen»). A warning, not a failure.
+python3 "$MAC_DIR/scripts/strings.py" sync "$DERIVED"
+python3 "$MAC_DIR/scripts/strings.py" check || echo "WARNING: texts without English (see above)."
+
 echo "== xcodebuild test-without-building (WortschatzTests: app unit tests)"
 UNIT_LOG="$CACHE/logs/xcodebuild-unittest.log"
 if ! xcodebuild \

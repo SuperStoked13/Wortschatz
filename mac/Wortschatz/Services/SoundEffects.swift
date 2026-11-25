@@ -7,8 +7,11 @@ import Foundation
 /// when a card is sorted and a breath of air when it comes back (turning a card over is silent). The tones are
 /// synthesized once, in the background right after launch (soft bell timbre and filtered noise,
 /// 20–240 KB of audio each), and played with `AVAudioPlayer`, so there are no audio files to ship.
+/// The players live on a queue of their own (`Playback`): a key press only queues its sound.
 ///
-/// The switch is Settings › Allgemein › "Soundeffekte" (`defaultsKey`, on by default).
+/// The switch is Settings › Allgemein › "Soundeffekte" (`defaultsKey`, on by default). A set's
+/// options can mute that set on this Mac too (`setKey(_:)`, say while listening to music): its
+/// sounds stay off while the set is on screen (`currentSetID`).
 @MainActor
 final class SoundEffects {
     static let shared = SoundEffects()
@@ -16,7 +19,7 @@ final class SoundEffects {
     /// `UserDefaults` key of the on/off switch (read with `@AppStorage` in Settings).
     static let defaultsKey = "soundEffects"
 
-    enum Sound: CaseIterable {
+    nonisolated enum Sound: CaseIterable, Sendable {
         /// A correct answer.
         case correct
         /// A wrong answer.
@@ -37,12 +40,31 @@ final class SoundEffects {
         case undo
     }
 
+    /// The set on screen (the app model's route), whose own switch may mute it.
+    var currentSetID: @MainActor () -> String? = { nil }
+
     var isEnabled: Bool {
-        UserDefaults.standard.object(forKey: Self.defaultsKey) as? Bool ?? true
+        Self.isOnEverywhere && (currentSetID().map(Self.isOn(forSet:)) ?? true)
     }
 
-    /// Two players per sound, so a quick second answer does not cut the first chime off.
-    private var players: [Sound: [AVAudioPlayer]] = [:]
+    /// The switch in Settings (all sets).
+    static var isOnEverywhere: Bool {
+        UserDefaults.standard.object(forKey: defaultsKey) as? Bool ?? true
+    }
+
+    /// `UserDefaults` key of a set's own switch ("Soundeffekte" in its options; false = muted on
+    /// this Mac). Windows: preferences.json, the same key.
+    static func setKey(_ setID: String) -> String { "\(defaultsKey).\(setID)" }
+
+    /// Whether the set's own switch is on (it is unless switched off).
+    static func isOn(forSet setID: String) -> Bool {
+        UserDefaults.standard.object(forKey: setKey(setID)) as? Bool ?? true
+    }
+
+    /// The players (on their own queue).
+    private let playback = Playback()
+    /// Sounds whose players were requested from `playback`.
+    private var loaded: Set<Sound> = []
     /// The tones as WAV files, synthesized off the main thread by `synthesizeAhead()`.
     private var waves: [Sound: Data] = [:]
 
@@ -67,9 +89,7 @@ final class SoundEffects {
     /// so the first chime is not late.
     func prepare() {
         guard isEnabled else { return }
-        for sound in Sound.allCases where players[sound] == nil {
-            players[sound] = makePlayers(for: sound)
-        }
+        for sound in Sound.allCases { load(sound) }
     }
 
     /// What a study step recorded, for its sound.
@@ -95,21 +115,18 @@ final class SoundEffects {
 
     func play(_ sound: Sound) {
         guard isEnabled else { return }
-        if players[sound] == nil { players[sound] = makePlayers(for: sound) }
-        guard let pool = players[sound], let player = pool.first(where: { !$0.isPlaying }) ?? pool.first else { return }
-        player.stop()
-        player.currentTime = 0
-        player.play()
+        load(sound)
+        playback.play(sound)
     }
 
-    private func makePlayers(for sound: Sound) -> [AVAudioPlayer] {
-        let data = waves[sound] ?? Synth.wav(Self.notes(for: sound), swishes: Self.swishes(for: sound))
-        return (0..<2).compactMap { _ in
-            guard let player = try? AVAudioPlayer(data: data, fileTypeHint: AVFileType.wav.rawValue) else { return nil }
-            player.volume = 0.55
-            player.prepareToPlay()
-            return player
-        }
+    /// Has `playback` build the players of `sound` (once), from the tone synthesized ahead or,
+    /// if that is not ready yet, synthesized on the playback queue.
+    private func load(_ sound: Sound) {
+        guard loaded.insert(sound).inserted else { return }
+        let wave = waves[sound]
+        let notes = Self.notes(for: sound)
+        let swishes = Self.swishes(for: sound)
+        playback.load(sound) { wave ?? Synth.wav(notes, swishes: swishes) }
     }
 
     // MARK: Tones
@@ -173,6 +190,39 @@ final class SoundEffects {
         case .stillLearning: [.init(from: 1500, to: 800, at: 0.02, duration: 0.22, gain: 0.14)]
         case .undo: [.init(from: 2200, to: 700, at: 0, duration: 0.2, gain: 0.13)]
         case .correct, .wrong, .streak, .roundDone, .finished, .dailyStreak: []
+        }
+    }
+}
+
+/// The players of `SoundEffects`, on a serial queue of their own. `AVAudioPlayer.play()` waits
+/// for the output device's next I/O cycle: after a few quiet seconds that took 10–90 ms (AirPods,
+/// measured 23.11.2026), and on the main thread it held back the frame that shows the answer to
+/// the key just pressed.
+private nonisolated final class Playback: @unchecked Sendable {
+    private let queue = DispatchQueue(label: "app.wortschatz.sound-effects", qos: .userInitiated)
+    /// Two players per sound, so a quick second answer does not cut the first chime off. Only
+    /// used on `queue`.
+    private var players: [SoundEffects.Sound: [AVAudioPlayer]] = [:]
+
+    func load(_ sound: SoundEffects.Sound, wave: @escaping @Sendable () -> Data) {
+        queue.async { [self] in
+            guard players[sound] == nil else { return }
+            let data = wave()
+            players[sound] = (0..<2).compactMap { _ in
+                guard let player = try? AVAudioPlayer(data: data, fileTypeHint: AVFileType.wav.rawValue) else { return nil }
+                player.volume = 0.55
+                player.prepareToPlay()
+                return player
+            }
+        }
+    }
+
+    func play(_ sound: SoundEffects.Sound) {
+        queue.async { [self] in
+            guard let pool = players[sound], let player = pool.first(where: { !$0.isPlaying }) ?? pool.first else { return }
+            player.stop()
+            player.currentTime = 0
+            player.play()
         }
     }
 }

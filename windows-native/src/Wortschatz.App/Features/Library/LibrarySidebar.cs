@@ -9,13 +9,15 @@ using Avalonia.Threading;
 using Avalonia.VisualTree;
 using Wortschatz.App.DesignSystem;
 using Wortschatz.Core;
+using static Wortschatz.Core.CoreText;
 
 namespace Wortschatz.App.Features;
 
 /// <summary>
 /// The floating glass sidebar (Mac: LibrarySidebar.swift): search, "Übersicht", the sets with a mastery ring (a ▶ for
 /// a running session, the matching card under the title while searching, a context menu with the set's actions), and
-/// the study streak and "Einstellungen" at the bottom. Keys: ↑↓ move the selection through "Übersicht" and the
+/// the study streak and "Einstellungen" at the bottom (after an update «Aktualisiert auf …» above them,
+/// <see cref="UpdateNoticeCard"/>). Keys: ↑↓ move the selection through "Übersicht" and the
 /// sets (the list has the keyboard focus from the start, and keeps it when the selection opens another page); Enter then
 /// runs the page's main action (Lernen); Enter in the search field opens the first match.
 /// </summary>
@@ -79,10 +81,10 @@ public sealed class LibrarySidebar
         var p = WsTheme.P;
         var route = _model.Route;
 
-        var search = Ui.Field("Lernsets durchsuchen", _model.Search, 13, 34);
+        var search = Ui.Field(L("Lernsets durchsuchen"), _model.Search, 13, 34);
         search.Padding = new Thickness(30, 6, 10, 6);
         search.CornerRadius = new CornerRadius(10);
-        AutomationProperties.SetName(search, "Lernsets durchsuchen");
+        AutomationProperties.SetName(search, L("Lernsets durchsuchen"));
         var searchIcon = Icons.Icon(IconName.Search, 15, p.TextTertiary);
         searchIcon.Margin = new Thickness(10, 0, 0, 0);
         searchIcon.HorizontalAlignment = HorizontalAlignment.Left;
@@ -91,10 +93,10 @@ public sealed class LibrarySidebar
         searchBox.Children.Add(search);
         searchBox.Children.Add(searchIcon);
 
-        var overview = NavRow(IconName.Home, "Übersicht", route is Route.Overview, _model.ShowOverview);
-        var headerText = Ui.Text("Lernsets", 12, FontWeight.SemiBold, p.TextTertiary);
+        var overview = NavRow(IconName.Home, L("Übersicht"), route is Route.Overview, _model.ShowOverview);
+        var headerText = Ui.Text(L("Lernsets"), 12, FontWeight.SemiBold, p.TextTertiary);
         AutomationProperties.SetHeadingLevel(headerText, 2);
-        var header = Ui.Row(headerText, Ui.IconButton(IconName.Plus, "Neues Lernset (Ctrl+N)", () => _model.OpenEditor(), 24, ButtonKind.Glass));
+        var header = Ui.Row(headerText, Ui.IconButton(IconName.Plus, L("Neues Lernset (Ctrl+N)"), () => _model.OpenEditor(), 24, ButtonKind.Glass));
         header.Margin = new Thickness(10, 4, 4, 0);
 
         var list = new StackPanel { Spacing = 2 };
@@ -105,7 +107,7 @@ public sealed class LibrarySidebar
             _items.Add((overview, _model.ShowOverview));
             _selected = route is Route.Overview ? 0 : -1;
             var query = JSCompat.Trim(_model.Search);
-            headerText.Text = query.Length > 0 ? "Treffer" : "Lernsets";
+            headerText.Text = query.Length > 0 ? ResultsHeader : L("Lernsets");
             foreach (var summary in _model.FilteredSets)
             {
                 var row = SetRow(summary, route.RouteSetId == summary.Id, query);
@@ -133,15 +135,18 @@ public sealed class LibrarySidebar
 
         // "Einstellungen" as an entry of its own with text, below the streak (it used to be a small symbol inside the
         // streak box, which made it look like part of the streak).
-        var settings = NavRow(IconName.Gear, "Einstellungen", route is Route.Settings, () => _model.Navigate(new Route.Settings()));
-        ToolTip.SetTip(settings, "Einstellungen (Ctrl+,)");
+        var settings = NavRow(IconName.Gear, L("Einstellungen"), route is Route.Settings, () => _model.Navigate(new Route.Settings()));
+        ToolTip.SetTip(settings, L("Einstellungen (Ctrl+,)"));
 
         var grid = new Grid { RowDefinitions = new RowDefinitions("Auto,Auto,Auto,*,Auto,Auto"), RowSpacing = 12 };
         grid.Children.Add(searchBox);
         Place(grid, overview, 1);
         Place(grid, header, 2);
         Place(grid, Ui.Scroll(list), 3);
-        Place(grid, Footer(), 4);
+        // After an update: «Aktualisiert auf …» above the streak (Mac: UpdateNoticeCard in the sidebar's bottom inset).
+        Place(grid, Services.AppUpdater.Shared.Notice is { } notice
+            ? Ui.V(8, UpdateNoticeCard.Build(_model, notice, Services.AppUpdater.Shared.DismissNotice), Footer())
+            : Footer(), 4);
         settings.Margin = new Thickness(0, -6, 0, 0);
         Place(grid, settings, 5);
         var root = Ui.Glass(grid, 20, new Thickness(12, 14), shadow: true);
@@ -161,14 +166,20 @@ public sealed class LibrarySidebar
         _items[target].Open();
     }
 
+    /// <summary>
+    /// "Treffer" above the search results. The Mac's key is «Treffer (Suche)» with the default «Treffer»: the plain
+    /// «Treffer» is the accuracy statistic ("Accuracy"), the search results are "Results".
+    /// </summary>
+    static string ResultsHeader => CoreText.Table?.Lookup("Treffer (Suche)", null) ?? "Treffer";
+
     /// <summary>"Keine Ergebnisse für «…»" (Mac: ContentUnavailableView.search).</summary>
     static Control NoResults(string query)
     {
         var p = WsTheme.P;
         var icon = Icons.Icon(IconName.Search, 26, p.TextTertiary, 2);
         icon.HorizontalAlignment = HorizontalAlignment.Center;
-        var title = Ui.Text($"Keine Ergebnisse für «{query}»", 14, FontWeight.SemiBold, wrap: TextWrapping.Wrap, align: TextAlignment.Center);
-        var note = Ui.Text("Prüfe die Schreibweise oder versuche eine neue Suche.", 12.5, color: p.TextTertiary, wrap: TextWrapping.Wrap, align: TextAlignment.Center);
+        var title = Ui.Text(L($"Keine Ergebnisse für «{query}»"), 14, FontWeight.SemiBold, wrap: TextWrapping.Wrap, align: TextAlignment.Center);
+        var note = Ui.Text(L("Prüfe die Schreibweise oder versuche eine neue Suche."), 12.5, color: p.TextTertiary, wrap: TextWrapping.Wrap, align: TextAlignment.Center);
         title.HorizontalAlignment = note.HorizontalAlignment = HorizontalAlignment.Center;
         var box = Ui.V(6, icon, title, note);
         box.Margin = new Thickness(10, 40, 10, 0);
@@ -177,7 +188,7 @@ public sealed class LibrarySidebar
 
     static Control Empty()
     {
-        var empty = Ui.Text("Noch keine Lernsets", 13, color: WsTheme.P.TextTertiary);
+        var empty = Ui.Text(L("Noch keine Lernsets"), 13, color: WsTheme.P.TextTertiary);
         empty.Margin = new Thickness(10, 4);
         return empty;
     }
@@ -188,7 +199,7 @@ public sealed class LibrarySidebar
         var p = WsTheme.P;
         var streak = _model.Streak;
         bool running = streak.Current > 0;
-        var title = running ? $"{Labels.Plural(streak.Current, "Tag", "Tage")} Lernserie" : "Noch keine Lernserie";
+        var title = running ? L($"{Labels.Plural(streak.Current, "Tag", "Tage")} Lernserie") : L("Noch keine Lernserie");
         var text = Ui.V(0, Ui.Text(title, 13, FontWeight.SemiBold), Ui.Text(StreakCaption(streak), 11.5, color: p.TextTertiary));
         var flame = Icons.Icon(IconName.Flame, 16, running ? p.Flame : p.TextTertiary);
         flame.RenderTransformOrigin = RelativePoint.Center;
@@ -200,7 +211,15 @@ public sealed class LibrarySidebar
             CornerRadius = new CornerRadius(14),
             Background = WsTheme.B(running ? Palette.Hex(Ui.Rgb(p.Flame), streak.Today > 0 ? 0.12 : 0.07) : p.Glass),
         };
-        if (streak.Longest > 0) ToolTip.SetTip(box, $"Längste Serie: {Labels.Plural(streak.Longest, "Tag", "Tage")}");
+        if (AppDevice.IsPhone && running)
+        {
+            // Phone (drawer on the dark glass): the orange wash looked brown, like a warning (06.11.2026) – glass with an
+            // orange edge, the flame keeps its colour.
+            box.Background = WsTheme.B(p.Glass);
+            box.BorderBrush = WsTheme.B(Palette.Hex(Ui.Rgb(p.Flame), streak.Today > 0 ? 0.55 : 0.3));
+            box.BorderThickness = new Thickness(1);
+        }
+        if (streak.Longest > 0) ToolTip.SetTip(box, L($"Längste Serie: {Labels.Plural(streak.Longest, "Tag", "Tage")}"));
         AutomationProperties.SetName(text, $"{title}, {StreakCaption(streak)}");
         // The flame bounces when the streak changes (Mac: symbolEffect(.bounce, value: streak.current)).
         if (s_lastStreak >= 0 && s_lastStreak != streak.Current)
@@ -212,10 +231,10 @@ public sealed class LibrarySidebar
     /// <summary>"Heute geschafft", "Heute noch lernen", "Rekord: 9 Tage", … (Mac: StudyStreak.caption).</summary>
     public static string StreakCaption(StudyStreak streak)
     {
-        if (streak.Today > 0) return "Heute geschafft";
-        if (streak.Current > 0) return "Heute noch lernen";
-        if (streak.Longest > 0) return $"Rekord: {Labels.Plural(streak.Longest, "Tag", "Tage")}";
-        return "Lerne heute, um zu starten";
+        if (streak.Today > 0) return L("Heute geschafft");
+        if (streak.Current > 0) return L("Heute noch lernen");
+        if (streak.Longest > 0) return L($"Rekord: {Labels.Plural(streak.Longest, "Tag", "Tage")}");
+        return L("Lerne heute, um zu starten");
     }
 
     static void Place(Grid g, Control c, int row)
@@ -231,7 +250,7 @@ public sealed class LibrarySidebar
         content.Margin = new Thickness(10, 0);
         var b = Ui.Clickable(content, onClick, label, 10, selected ? p.AccentSoft : null, selected ? p.AccentSoft : null);
         b.Chrome.Height = 36;
-        if (selected) AutomationProperties.SetItemStatus(b, "Ausgewählt");
+        if (selected) AutomationProperties.SetItemStatus(b, L("Ausgewählt"));
         return b;
     }
 
@@ -246,7 +265,7 @@ public sealed class LibrarySidebar
         row.Children.Add(gauge);
         Grid.SetColumn(titles, 1);
         row.Children.Add(titles);
-        string? running = summary.Learn is { } l ? $"Lernen läuft: {l.Detail}" : summary.Write is { } w ? $"Schreiben läuft: {w.Detail}" : null;
+        string? running = summary.Learn is { } l ? L($"Lernen läuft: {l.Detail}") : summary.Write is { } w ? L($"Schreiben läuft: {w.Detail}") : null;
         if (running is not null)
         {
             var play = new Border
@@ -266,13 +285,13 @@ public sealed class LibrarySidebar
             ToolTip.SetTip(play, running);
         }
         var button = Ui.Clickable(row, () => _model.OpenSet(set.Id), set.Title, 10, selected ? p.AccentSoft : null, selected ? p.AccentSoft : null);
-        button.ContextMenu = SetActions.Menu(_model, _window, summary, includesStudy: true);
+        SetActions.AttachMenu(button, _model, _window, summary, includesStudy: true);
         // The screen reader hears the count, the mastery, a running session and the match (Mac: accessibilityValue).
-        var parts = new List<string> { StudyCopy.Terms(summary.Stats.Total), $"{summary.Stats.Percent} Prozent gemeistert" };
+        var parts = new List<string> { StudyCopy.Terms(summary.Stats.Total), L($"{summary.Stats.Percent} Prozent gemeistert") };
         if (running is not null) parts.Add(running);
-        if (match is not null) parts.Add($"Treffer: {match}");
+        if (match is not null) parts.Add(L($"Treffer: {match}"));
         AutomationProperties.SetHelpText(button, string.Join(", ", parts));
-        if (selected) AutomationProperties.SetItemStatus(button, "Ausgewählt");
+        if (selected) AutomationProperties.SetItemStatus(button, L("Ausgewählt"));
         return button;
     }
 

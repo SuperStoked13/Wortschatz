@@ -35,16 +35,26 @@ struct SettingsView: View {
             }
             Tab(SettingsTab.data.title, systemImage: SettingsTab.data.systemImage, value: .data) {
                 SettingsDataTab()
-                    .settingsPaneFrame(.data)
+                    .settingsPaneFrame(.data, extraHeight: optionalRowsHeight)
             }
         }
         .overlay {
-            // The main window draws the same toasts; here they show only while this window is in
-            // front, so feedback appears where the learner is looking.
+            // The main window draws the same toasts; while this window is in front they show
+            // here instead (and not there too), so feedback appears once, where the learner is
+            // looking.
             if appearsActive {
                 ToastOverlay(center: model.toasts)
             }
         }
+        .onChange(of: appearsActive, initial: true) { _, active in
+            model.toasts.isShownElsewhere = active
+        }
+        .onDisappear { model.toasts.isShownElsewhere = false }
+    }
+
+    /// Room for rows of Daten that are not always there.
+    private var optionalRowsHeight: CGFloat {
+        0
     }
 }
 
@@ -56,11 +66,11 @@ enum SettingsTab: String, CaseIterable, Identifiable {
 
     var title: String {
         switch self {
-        case .general: "Allgemein"
-        case .learn: "Lernen"
-        case .write: "Schreiben"
-        case .tolerance: "Toleranz"
-        case .data: "Daten"
+        case .general: String(localized: "Allgemein")
+        case .learn: String(localized: "Lernen")
+        case .write: String(localized: "Schreiben")
+        case .tolerance: String(localized: "Toleranz")
+        case .data: String(localized: "Daten")
         }
     }
 
@@ -83,15 +93,16 @@ enum SettingsTab: String, CaseIterable, Identifiable {
         case .learn: CGSize(width: width, height: 720)
         case .write: CGSize(width: width, height: 270)
         case .tolerance: CGSize(width: width, height: 500)
-        case .data: CGSize(width: width, height: 580)
+        case .data: CGSize(width: width, height: 540)
         }
     }
 }
 
 extension View {
-    /// Gives a settings pane its fixed size (`SettingsTab.size`).
-    func settingsPaneFrame(_ tab: SettingsTab) -> some View {
-        frame(width: tab.size.width, height: tab.size.height)
+    /// Gives a settings pane its fixed size (`SettingsTab.size`), plus `extraHeight` for rows
+    /// that are not always there.
+    func settingsPaneFrame(_ tab: SettingsTab, extraHeight: CGFloat = 0) -> some View {
+        frame(width: tab.size.width, height: tab.size.height + extraHeight)
     }
 }
 
@@ -103,7 +114,7 @@ struct SettingsWriter {
         do {
             try model.store.updateSettings(patch)
         } catch {
-            model.report(error, fallback: "Die Einstellung konnte nicht gespeichert werden.")
+            model.report(error, fallback: String(localized: "Die Einstellung konnte nicht gespeichert werden."))
         }
     }
 
@@ -121,9 +132,9 @@ struct SettingsWriter {
     func restoreDefaults(_ patch: StudyOptionsPatch, scope: String) {
         do {
             try model.store.updateSettings(SettingsPatch(study: patch))
-            model.toasts.show("\(scope): Standardwerte wiederhergestellt", tone: .success)
+            model.toasts.show(String(localized: "\(scope): Standardwerte wiederhergestellt"), tone: .success)
         } catch {
-            model.report(error, fallback: "Die Standardwerte konnten nicht wiederhergestellt werden.")
+            model.report(error, fallback: String(localized: "Die Standardwerte konnten nicht wiederhergestellt werden."))
         }
     }
 }
@@ -139,7 +150,10 @@ struct SettingsDefaultsFooter: View {
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: Spacing.m) {
             Text(
-                "Gilt für alle Lernsets. Was du in den Optionen eines Lernsets umstellst, gilt nur für dieses Lernset."
+                String(
+                    localized:
+                        "Gilt für alle Lernsets. Was du in den Optionen eines Lernsets umstellst, gilt nur für dieses Lernset."
+                )
                     + SettingsCopy.ownOptionsText(model.library.sets, standard: model.settings.study)
             )
                 .foregroundStyle(.secondary)

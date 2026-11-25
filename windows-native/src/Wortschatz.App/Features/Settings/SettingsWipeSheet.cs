@@ -5,6 +5,7 @@ using Avalonia.Layout;
 using Avalonia.Media;
 using Wortschatz.App.DesignSystem;
 using Wortschatz.Core;
+using static Wortschatz.Core.CoreText;
 
 namespace Wortschatz.App.Features.Settings;
 
@@ -20,10 +21,11 @@ public static class SettingsWipeSheet
     {
         var sets = model.Sets;
         var shown = DateTime.UtcNow;
-        model.Ask(new PromptRequest("Alle Daten löschen?", WipeMessage(sets),
+        var message = WipeMessage(sets);
+        model.Ask(new PromptRequest(L("Alle Daten löschen?"), message,
         [
-            new PromptButton("Abbrechen", IsCancel: true),
-            new PromptButton("Weiter", () => Confirm(model, window), IsDefault: true, IsDestructive: true),
+            new PromptButton(L("Abbrechen"), IsCancel: true),
+            new PromptButton(L("Weiter"), () => Confirm(model, window), IsDefault: true, IsDestructive: true),
         ])
         {
             Content = sets.Count > 0 ? BackupTip(model, window) : null,
@@ -34,30 +36,38 @@ public static class SettingsWipeSheet
     }
 
     /// <summary>The second step: "Endgültig löschen" or "Abbrechen" (the default, also on Enter).</summary>
-    /// <summary>"diesem Computer" / "diesem Gerät" (phone).</summary>
-    static string Device => AppDevice.IsPhone ? "diesem Gerät" : "diesem Computer";
-
     static void Confirm(AppModel model, MainView window)
     {
-        model.Ask(new PromptRequest("Wirklich alles löschen?",
-            "Das kann nicht rückgängig gemacht werden. Ohne Backup sind deine Lernsets danach endgültig weg.",
+        model.Ask(new PromptRequest(L("Wirklich alles löschen?"),
+            L("Das kann nicht rückgängig gemacht werden. Ohne Backup sind deine Lernsets danach endgültig weg."),
             [
-                new PromptButton("Endgültig löschen", () => Wipe(model, window), IsDestructive: true),
-                new PromptButton("Abbrechen", IsDefault: true, IsCancel: true),
+                new PromptButton(L("Endgültig löschen"), () => Wipe(model, window), IsDestructive: true),
+                new PromptButton(L("Abbrechen"), IsDefault: true, IsCancel: true),
             ])
         { Width = 520 });
-        Announcer.Announce("Wirklich alles löschen? Das kann nicht rückgängig gemacht werden.");
+        Announcer.Announce(L("Wirklich alles löschen? Das kann nicht rückgängig gemacht werden."));
     }
 
-    /// <summary>The first question (Mac: SettingsCopy.wipeMessage, "von diesem Computer" for "von diesem Mac").</summary>
+    /// <summary>
+    /// The first question (Mac: SettingsCopy.wipeMessage, "von diesem Computer" for "von diesem Mac", on a phone "von
+    /// diesem Gerät"): one whole sentence per case.
+    /// </summary>
     public static string WipeMessage(IReadOnlyList<VocabSet> sets)
     {
         var terms = Labels.Plural(sets.Sum(s => s.Cards.Count), "Begriff", "Begriffen");
-        return sets.Count switch
+        int count = sets.Count;
+        if (AppDevice.IsPhone)
+            return count switch
+            {
+                0 => L("Deine Statistik und deine Einstellungen werden von diesem Gerät gelöscht."),
+                1 => L($"Dein Lernset mit {terms}, dein Lernfortschritt, deine Statistik und deine Einstellungen werden von diesem Gerät gelöscht."),
+                _ => L($"Alle {count} Lernsets mit {terms}, dein Lernfortschritt, deine Statistik und deine Einstellungen werden von diesem Gerät gelöscht."),
+            };
+        return count switch
         {
-            0 => $"Deine Statistik und deine Einstellungen werden von {Device} gelöscht.",
-            1 => $"Dein Lernset mit {terms}, dein Lernfortschritt, deine Statistik und deine Einstellungen werden von {Device} gelöscht.",
-            _ => $"Alle {sets.Count} Lernsets mit {terms}, dein Lernfortschritt, deine Statistik und deine Einstellungen werden von {Device} gelöscht.",
+            0 => L("Deine Statistik und deine Einstellungen werden von diesem Computer gelöscht."),
+            1 => L($"Dein Lernset mit {terms}, dein Lernfortschritt, deine Statistik und deine Einstellungen werden von diesem Computer gelöscht."),
+            _ => L($"Alle {count} Lernsets mit {terms}, dein Lernfortschritt, deine Statistik und deine Einstellungen werden von diesem Computer gelöscht."),
         };
     }
 
@@ -68,11 +78,11 @@ public static class SettingsWipeSheet
         var bulb = Icons.Icon(IconName.Lightbulb, 17, p.Warning.Fill, 2);
         bulb.VerticalAlignment = VerticalAlignment.Center;
         row.Children.Add(bulb);
-        var text = Ui.Text("Tipp: Sichere vorher ein Backup.", 14, color: p.Text, wrap: TextWrapping.Wrap);
+        var text = Ui.Text(L("Tipp: Sichere vorher ein Backup."), 14, color: p.Text, wrap: TextWrapping.Wrap);
         text.VerticalAlignment = VerticalAlignment.Center;
         Grid.SetColumn(text, 1);
         row.Children.Add(text);
-        var export = Ui.Secondary("Backup exportieren …", () => _ = SettingsScreen.ExportBackup(model, window), height: 34);
+        var export = Ui.Secondary(L("Backup exportieren …"), () => _ = SettingsScreen.ExportBackup(model, window), height: 34);
         Grid.SetColumn(export, 2);
         row.Children.Add(export);
         return new Border { Child = row, Padding = new Thickness(12, 8), CornerRadius = new CornerRadius(10), Background = WsTheme.B(p.Warning.Soft) };
@@ -89,7 +99,7 @@ public static class SettingsWipeSheet
         }
         catch (LibraryStoreError)
         {
-            model.ShowToast(new ToastMessage("Die Daten konnten nicht gelöscht werden.", ToastTone.Danger, DurationMs: 6000));
+            model.ShowToast(new ToastMessage(L("Die Daten konnten nicht gelöscht werden."), ToastTone.Danger, DurationMs: 6000));
             return;
         }
         foreach (var lang in model.Speech.PreferredVoiceIds.Keys.ToList()) model.Speech.SetPreferredVoice(lang, null);
@@ -102,6 +112,6 @@ public static class SettingsWipeSheet
         // bring the deleted sets back.
         model.Store.Backend.DiscardBackups();
         if (model.Store.GetSettings().Theme != theme) window.Rebuild();
-        model.ShowToast(new ToastMessage("Alle Daten wurden gelöscht.", ToastTone.Success));
+        model.ShowToast(new ToastMessage(L("Alle Daten wurden gelöscht."), ToastTone.Success));
     }
 }

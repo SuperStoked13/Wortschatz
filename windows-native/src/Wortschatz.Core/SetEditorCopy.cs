@@ -1,11 +1,12 @@
 using System.Text.RegularExpressions;
+using static Wortschatz.Core.CoreText;
 
 namespace Wortschatz.Core;
 
 /// <summary>
 /// Texts and pure helpers of the set editor and its import panel (Mac: SetEditorCopy.swift, ImportSeparator.swift,
 /// ImportSpelling.swift and parseOptions of ImportPanelModel.swift = editor-util.js, editor.js, editor-cards.js).
-/// Swiss spelling ("ss", never the sharp s).
+/// German source with Swiss spelling ("ss", never the sharp s), translated with <see cref="CoreText.L(string)"/>.
 /// </summary>
 public static class SetEditorCopy
 {
@@ -32,37 +33,37 @@ public static class SetEditorCopy
 
     // MARK: Texts
 
-    public const string TitlePlaceholder = "z. B. Unité 3 – Les personnes";
-    public const string DescriptionPlaceholder = "Optional – z. B. Kapitel, Lehrmittel oder Prüfungsdatum";
-    public const string TitleMissing = "Gib deinem Lernset einen Titel.";
-    public const string TitleFromFile = "Aus dem Dateinamen übernommen – du kannst ihn jederzeit ändern.";
-    public const string Detected = "Automatisch erkannt";
-    public const string ListDiverted = "Liste erkannt – prüfe die Vorschau und übernimm die Karten.";
-    public const string EmptyLead = "Tippe deine Vokabeln ein – oder importiere oben eine ganze Liste auf einmal.";
-    public const string TermPlaceholder = "Begriff eingeben";
-    public const string DefinitionPlaceholder = "Definition eingeben";
-    public const string ImportPlaceholder = "Füge deine Vokabelliste hier ein – z. B. aus Word, einer PDF oder Quizlet. Begriff und Übersetzung werden automatisch erkannt.";
-    public const string ImportHint = "Tipp: Funktioniert mit abwechselnden Zeilen, Tabellen (Tab, Komma, Strichpunkt, Bindestrich) und Quizlet-Exporten.";
+    public static string TitlePlaceholder => L("z. B. Unité 3 – Les personnes");
+    public static string DescriptionPlaceholder => L("Optional – z. B. Kapitel, Lehrmittel oder Prüfungsdatum");
+    public static string TitleMissing => L("Gib deinem Lernset einen Titel.");
+    public static string TitleFromFile => L("Aus dem Dateinamen übernommen – du kannst ihn jederzeit ändern.");
+    public static string Detected => L("Automatisch erkannt");
+    public static string ListDiverted => L("Liste erkannt – prüfe die Vorschau und übernimm die Karten.");
+    public static string EmptyLead => L("Tippe deine Vokabeln ein – oder importiere oben eine ganze Liste auf einmal.");
+    public static string TermPlaceholder => L("Begriff eingeben");
+    public static string DefinitionPlaceholder => L("Definition eingeben");
+    public static string ImportPlaceholder => L("Füge deine Vokabelliste hier ein – z. B. aus Word, einer PDF oder Quizlet. Begriff und Übersetzung werden automatisch erkannt.");
+    public static string ImportHint => L("Tipp: Funktioniert mit abwechselnden Zeilen, Tabellen (Tab, Komma, Strichpunkt, Bindestrich) und Quizlet-Exporten.");
     /// <summary>Rows the import preview shows before it scrolls (<c>PREVIEW_ROWS</c>).</summary>
     public const int PreviewRows = 8;
 
     /// <summary>The save button: "Erstellen" for a new set, "Sichern" for an existing one.</summary>
-    public static string SaveLabel(bool isEditing) => isEditing ? "Sichern" : "Erstellen";
+    public static string SaveLabel(bool isEditing) => isEditing ? L("Sichern") : L("Erstellen");
 
     /// <summary>Why saving cannot work yet (<c>readiness</c> in editor.js), null when it can.</summary>
     public static string? Readiness(bool titleIsEmpty, int completeCards)
     {
-        if (titleIsEmpty) return "Titel fehlt";
-        if (completeCards == 0) return "Noch keine vollständige Karte";
+        if (titleIsEmpty) return L("Titel fehlt");
+        if (completeCards == 0) return L("Noch keine vollständige Karte");
         return null;
     }
 
     /// <summary>The cards section's error after a save attempt (<c>cardsMessage</c> in editor.js).</summary>
     public static string? CardsMessage(int completeCards, int invalidCards)
     {
-        if (completeCards == 0) return "Füge mindestens eine Karte mit Begriff und Definition hinzu.";
+        if (completeCards == 0) return L("Füge mindestens eine Karte mit Begriff und Definition hinzu.");
         if (invalidCards > 0)
-            return $"{Labels.Plural(invalidCards, "Karte ist", "Karten sind")} unvollständig – ergänze Begriff und Definition oder lösche sie.";
+            return L($"{Labels.Plural(invalidCards, "Karte ist", "Karten sind")} unvollständig – ergänze Begriff und Definition oder lösche sie.");
         return null;
     }
 
@@ -103,24 +104,25 @@ public static class SetEditorCopy
 
     // MARK: Parser flags
 
-    /// <summary>Flags that earn an amber "bitte prüfen" marker (<c>FLAG_TEXT</c>; duplicates are shown separately).</summary>
-    static readonly Dictionary<ParseFlag, string> FlagTexts = new()
+    /// <summary>The text of a flag that earns an amber "bitte prüfen" marker (<c>FLAG_TEXT</c>; duplicates are shown separately), else null.</summary>
+    static string? FlagText(ParseFlag flag) => flag switch
     {
-        [ParseFlag.Merged] = "Aus mehreren Zeilen zusammengefügt",
-        [ParseFlag.LowConfidence] = "Unsicher erkannt",
-        [ParseFlag.LangMismatch] = "Sprache passt nicht zur Spalte",
-        [ParseFlag.MissingTerm] = "Begriff fehlt",
-        [ParseFlag.MissingDefinition] = "Definition fehlt",
+        ParseFlag.Merged => L("Aus mehreren Zeilen zusammengefügt"),
+        ParseFlag.LowConfidence => L("Unsicher erkannt"),
+        ParseFlag.LangMismatch => L("Sprache passt nicht zur Spalte"),
+        ParseFlag.MissingTerm => L("Begriff fehlt"),
+        ParseFlag.MissingDefinition => L("Definition fehlt"),
+        _ => null,
     };
 
     /// <summary>Whether the flags earn a marker (<c>hasMarker</c>).</summary>
-    public static bool HasMarker(IEnumerable<ParseFlag> flags) => flags.Any(FlagTexts.ContainsKey);
+    public static bool HasMarker(IEnumerable<ParseFlag> flags) => flags.Any(f => FlagText(f) is not null);
 
     /// <summary>The marker's tooltip, e.g. "Unsicher erkannt – bitte prüfen" (<c>flagTooltip</c>).</summary>
     public static string? FlagTooltip(IEnumerable<ParseFlag> flags)
     {
-        var parts = flags.Where(FlagTexts.ContainsKey).Select(f => FlagTexts[f]).ToList();
-        return parts.Count == 0 ? null : $"{string.Join(" · ", parts)} – bitte prüfen";
+        var parts = flags.Select(FlagText).OfType<string>().ToList();
+        return parts.Count == 0 ? null : L($"{string.Join(" · ", parts)} – bitte prüfen");
     }
 
     /// <summary>The flags after swapping term and definition.</summary>
@@ -133,35 +135,37 @@ public static class SetEditorCopy
 
     // MARK: Detection
 
-    static readonly Dictionary<string, string> DelimiterNames = new()
+    /// <summary>"Getrennt durch …" per delimiter, each a whole label (translatable as one phrase); null for others.</summary>
+    static string? DelimiterLabel(string delimiter) => delimiter switch
     {
-        ["\t"] = "Tabulator",
-        [","] = "Komma",
-        [";"] = "Strichpunkt",
-        ["-"] = "Bindestrich",
-        ["="] = "Gleichheitszeichen",
-        [":"] = "Doppelpunkt",
-        ["|"] = "Senkrechten Strich",
-        ["→"] = "Pfeil",
-        ["/"] = "Schrägstrich",
+        "\t" => L("Getrennt durch Tabulator"),
+        "," => L("Getrennt durch Komma"),
+        ";" => L("Getrennt durch Strichpunkt"),
+        "-" => L("Getrennt durch Bindestrich"),
+        "=" => L("Getrennt durch Gleichheitszeichen"),
+        ":" => L("Getrennt durch Doppelpunkt"),
+        "|" => L("Getrennt durch Senkrechten Strich"),
+        "→" => L("Getrennt durch Pfeil"),
+        "/" => L("Getrennt durch Schrägstrich"),
+        _ => null,
     };
 
-    /// <summary>Short German description of the detected layout (<c>formatLabel</c>).</summary>
+    /// <summary>Short description of the detected layout (<c>formatLabel</c>).</summary>
     public static string? FormatLabel(ParseResult result)
     {
         switch (result.Format)
         {
             case ParseFormat.Blocks or ParseFormat.Alternating:
-                return "Abwechselnde Zeilen";
+                return L("Abwechselnde Zeilen");
             case ParseFormat.Columns:
-                return "Zwei Spalten nacheinander";
+                return L("Zwei Spalten nacheinander");
             case ParseFormat.Delimited:
                 var delimiter = result.Delimiter ?? "";
-                if (delimiter == "  ") return "Spalten mit Abstand";
-                if (delimiter == " ") return "Beide Sprachen in einer Zeile";
+                if (delimiter == "  ") return L("Spalten mit Abstand");
+                if (delimiter == " ") return L("Beide Sprachen in einer Zeile");
                 var key = delimiter == "\t" ? "\t" : JSCompat.Trim(delimiter);
-                if (DelimiterNames.TryGetValue(key, out var name)) return $"Getrennt durch {name}";
-                return key.Length == 0 ? null : $"Getrennt durch «{key}»";
+                if (DelimiterLabel(key) is { } label) return label;
+                return key.Length == 0 ? null : L($"Getrennt durch «{key}»");
             default:
                 return null;
         }
@@ -170,24 +174,24 @@ public static class SetEditorCopy
     /// <summary>Why a line was skipped (<c>SKIP_REASONS</c>).</summary>
     public static string SkipReasonText(SkipReason reason) => reason switch
     {
-        SkipReason.Heading => "Überschrift",
-        SkipReason.PageNumber => "Seitenzahl",
-        SkipReason.Noise => "Kein Vokabeltext",
-        _ => "Ohne Gegenstück",
+        SkipReason.Heading => L("Überschrift"),
+        SkipReason.PageNumber => L("Seitenzahl"),
+        SkipReason.Noise => L("Kein Vokabeltext"),
+        _ => L("Ohne Gegenstück"),
     };
 
     /// <summary>"52 Paare erkannt" / "Noch keine Paare erkannt".</summary>
-    public static string PairsDetected(int count) => count > 0 ? $"{Labels.Plural(count, "Paar", "Paare")} erkannt" : "Noch keine Paare erkannt";
+    public static string PairsDetected(int count) => count > 0 ? L($"{Labels.Plural(count, "Paar", "Paare")} erkannt") : L("Noch keine Paare erkannt");
 
     /// <summary>
-    /// The warnings to show under the detection: file notes, then the parser's (the "übersprungen" warning is covered by
-    /// the skipped-lines disclosure) (Mac: ImportPanelModel.warnings).
+    /// The warnings to show under the detection: file notes, then the parser's (the skipped-lines warning is covered by
+    /// the skipped-lines disclosure; compared as a whole, so it works in every language) (Mac: ImportPanelModel.warnings).
     /// </summary>
     public static IReadOnlyList<string> Warnings(ParseResult? result, IReadOnlyList<string> fileNotes)
     {
         if (result is null) return fileNotes;
-        bool skipped = result.Skipped.Count > 0;
-        return [.. fileNotes, .. result.Warnings.Where(w => !(skipped && w.Contains("übersprungen", StringComparison.Ordinal)))];
+        var skippedWarning = VocabParser.SkippedLinesWarning(result.Skipped.Count(s => s.Reason != SkipReason.Unpaired));
+        return [.. fileNotes, .. result.Warnings.Where(w => w != skippedWarning)];
     }
 
     // MARK: Parse options
@@ -258,12 +262,13 @@ public static class SetEditorCopy
     public static string? TypoTooltip(IReadOnlyList<SpellingIssue> issues)
     {
         if (issues.Count == 0) return null;
-        var words = issues.Select(i => i.Suggestions.Count > 0 ? $"«{i.Word}» ({i.Suggestions[0]}?)" : $"«{i.Word}»");
-        return $"{(issues.Count == 1 ? "Möglicher Tippfehler" : "Mögliche Tippfehler")}: {string.Join(", ", words)}";
+        var words = issues.Select(i => i.Suggestions.Count > 0 ? L($"«{i.Word}» ({i.Suggestions[0]}?)") : L($"«{i.Word}»"));
+        var list = string.Join(", ", words);
+        return issues.Count == 1 ? L($"Möglicher Tippfehler: {list}") : L($"Mögliche Tippfehler: {list}");
     }
 
     /// <summary>"1 möglicher Tippfehler" / "3 mögliche Tippfehler".</summary>
-    public static string TypoCount(int count) => count == 1 ? "1 möglicher Tippfehler" : $"{count} mögliche Tippfehler";
+    public static string TypoCount(int count) => count == 1 ? L("1 möglicher Tippfehler") : L($"{count} mögliche Tippfehler");
 }
 
 /// <summary>The "Trennung" choices of the import panel (Mac: ImportSeparator.swift, <c>SEPARATORS</c> in editor-util.js).</summary>
@@ -275,13 +280,13 @@ public static class ImportSeparatorExtensions
 
     public static string Label(this ImportSeparator separator) => separator switch
     {
-        ImportSeparator.Auto => "Automatisch",
-        ImportSeparator.Tab => "Tab",
-        ImportSeparator.Comma => "Komma",
-        ImportSeparator.Semicolon => "Strichpunkt",
-        ImportSeparator.Dash => "Bindestrich",
-        ImportSeparator.Lines => "Zeilenweise",
-        _ => "Eigenes…",
+        ImportSeparator.Auto => L("Automatisch"),
+        ImportSeparator.Tab => L("Tab"),
+        ImportSeparator.Comma => L("Komma"),
+        ImportSeparator.Semicolon => L("Strichpunkt"),
+        ImportSeparator.Dash => L("Bindestrich"),
+        ImportSeparator.Lines => L("Zeilenweise"),
+        _ => L("Eigenes…"),
     };
 
     /// <summary>

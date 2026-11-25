@@ -184,7 +184,9 @@ nonisolated enum ExamTime {
         if m == 0 { return Labels.plural(s, "Sekunde", "Sekunden") }
         return s == 0
             ? Labels.plural(m, "Minute", "Minuten")
-            : "\(Labels.plural(m, "Minute", "Minuten")) \(Labels.plural(s, "Sekunde", "Sekunden"))"
+            : String(
+                localized: "\(Labels.plural(m, "Minute", "Minuten")) \(Labels.plural(s, "Sekunde", "Sekunden"))",
+                comment: "Spoken duration: minutes, then seconds")
     }
 }
 
@@ -232,8 +234,9 @@ struct ExamEmptyView: View {
         CenteredScrollView {
             EmptyStateView(
                 systemImage: ExamSymbols.mode,
-                title: "Nichts zu prüfen",
-                message: "Dieses Lernset hat noch keine Begriffe mit Übersetzung. Füge welche hinzu, dann geht es los."
+                title: String(localized: "Nichts zu prüfen"),
+                message: String(
+                    localized: "Dieses Lernset hat noch keine Begriffe mit Übersetzung. Füge welche hinzu, dann geht es los.")
             ) {
                 SecondaryButton("Zurück zum Lernset", key: .escape, bindsShortcut: false, action: controller.exit)
                 PrimaryActionButton("Begriffe hinzufügen", systemImage: "plus", action: controller.addCards)

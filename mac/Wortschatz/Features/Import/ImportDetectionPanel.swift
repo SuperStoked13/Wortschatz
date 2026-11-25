@@ -4,21 +4,22 @@ import WortschatzImport
 
 /// The recognition below the paste box (port of `renderDetect` in editor-import.js): the
 /// detection bar ("✨ 52 Paare erkannt · Abwechselnde Zeilen · Französisch → Deutsch") with
-/// the separator controls, warnings and skipped lines on a content panel, then the preview
-/// table and "N Karten übernehmen".
+/// the separator controls, warnings and skipped lines on a content panel. The pairs themselves
+/// are the cards below (`SetEditorModel.syncImport`): no preview of its own and no "übernehmen"
+/// (Anthony, 25.11.2026); "Trennung" and "Seiten tauschen" change the cards at once.
 struct ImportDetectionPanel: View {
     let model: ImportPanelModel
     var focus: FocusState<SetEditorField?>.Binding
-    let onApply: () -> Void
+    /// "Zu den Karten": scrolls to the card list.
+    let onShowCards: () -> Void
 
     var body: some View {
         if let result = model.result {
             let count = result.cards.count
-            let typos = model.typos
             VStack(alignment: .leading, spacing: Spacing.m) {
                 ContentPanel(padding: Spacing.m) {
                     VStack(alignment: .leading, spacing: Spacing.s) {
-                        ImportDetectionSummary(result: result, swapsSides: model.swapsSides, typos: typos.values.reduce(0) { $0 + $1.count })
+                        ImportDetectionSummary(result: result, swapsSides: model.swapsSides)
                         if count == 0 {
                             Text(
                                 model.needsCustomSeparator
@@ -40,24 +41,21 @@ struct ImportDetectionPanel: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 if count > 0 {
-                    ImportPreviewTable(result: result, typos: typos)
-                }
-                HStack {
-                    if count > ImportPanelModel.previewRows {
-                        Text("Alle \(count) Paare in der Vorschau – scrolle darin für mehr.")
-                            .font(.callout)
-                            .foregroundStyle(.secondary)
+                    HStack(alignment: .firstTextBaseline, spacing: Spacing.s) {
+                        Label(
+                            "Die erkannten Paare stehen unten in den Karten – Trennung und Seiten tauschen ändern sie sofort.",
+                            systemImage: "arrow.down"
+                        )
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        Spacer(minLength: Spacing.s)
+                        Button("Zu den Karten", systemImage: "arrow.down.circle", action: onShowCards)
+                            .buttonStyle(.borderless)
+                            .foregroundStyle(Theme.accentText)
+                            .fixedSize()
+                            .accessibilityIdentifier("editor-show-cards")
                     }
-                    Spacer(minLength: Spacing.s)
-                    PrimaryActionButton(
-                        verbatim: count > 0 ? "\(Labels.plural(count, "Karte", "Karten")) übernehmen" : "Karten übernehmen",
-                        systemImage: "checkmark", key: nil
-                    ) {
-                        onApply()
-                    }
-                    .disabled(count == 0)
-                    .help("Die erkannten Paare in die Kartenliste übernehmen")
-                    .accessibilityIdentifier("editor-apply-import")
                 }
             }
         }
@@ -96,7 +94,7 @@ struct ImportDetectionPanel: View {
             }
             .toggleStyle(.button)
             .fixedSize()
-            .help("Begriff und Definition in der Erkennung vertauschen")
+            .help("Begriff und Definition der erkannten Karten vertauschen")
         }
     }
 
@@ -125,8 +123,6 @@ struct ImportDetectionPanel: View {
 private struct ImportDetectionSummary: View {
     let result: ParseResult
     let swapsSides: Bool
-    /// Probable typos in the recognised pairs (spell checker).
-    let typos: Int
 
     var body: some View {
         let count = result.cards.count
@@ -145,18 +141,14 @@ private struct ImportDetectionSummary: View {
             Spacer(minLength: Spacing.s)
             if count > 0, result.swapped, !swapsSides {
                 TintedChip(
-                    text: "Seiten automatisch getauscht", systemImage: "arrow.left.arrow.right",
+                    text: String(localized: "Seiten automatisch getauscht"), systemImage: "arrow.left.arrow.right",
                     palette: Theme.StatusPalette(fill: Theme.accent, text: Theme.accentText, soft: Theme.accentSoft),
                     size: .small)
             }
             if count > 0, flagged > 0 {
                 TintedChip(
-                    text: "\(flagged) bitte prüfen", systemImage: "exclamationmark.triangle", palette: Theme.warning, size: .small)
-            }
-            if count > 0, typos > 0 {
-                TintedChip(
-                    text: ImportSpelling.countLabel(typos), systemImage: "textformat.abc", palette: Theme.warning, size: .small)
-                    .help("Diese Wörter kennt die Rechtschreibprüfung nicht – nach dem Übernehmen kannst du sie mit einem Klick korrigieren.")
+                    text: String(localized: "\(flagged) bitte prüfen"), systemImage: "exclamationmark.triangle",
+                    palette: Theme.warning, size: .small)
             }
         }
         .accessibilityElement(children: .combine)
@@ -230,90 +222,6 @@ private struct ImportSkippedLines: View {
         } label: {
             Text("\(Labels.plural(skipped.count, "Zeile", "Zeilen")) übersprungen")
                 .font(.callout)
-        }
-    }
-}
-
-/// The recognised pairs as a table; flagged rows and rows with probable typos carry an amber
-/// marker with the reason.
-struct ImportPreviewTable: View {
-    let result: ParseResult
-    /// Probable typos per card index (`ImportSpelling.typos`).
-    var typos: [Int: [SpellingIssue]] = [:]
-
-    private struct Row: Identifiable {
-        let id: Int
-        let term: String
-        let definition: String
-        let tooltip: String?
-    }
-
-    private static let rowHeight: CGFloat = 24
-    /// Header plus the table's own top and bottom insets.
-    private static let chromeHeight: CGFloat = 50
-
-    var body: some View {
-        let rows = result.cards.enumerated().map { index, card in
-            let reasons = [SetEditorCopy.flagTooltip(card.flags), ImportSpelling.tooltip(typos[index] ?? [])].compactMap { $0 }
-            return Row(
-                id: index + 1, term: card.term, definition: card.definition,
-                tooltip: reasons.isEmpty ? nil : reasons.joined(separator: "\n"))
-        }
-        let shape = RoundedRectangle(cornerRadius: Radii.small, style: .continuous)
-        Table(rows) {
-            TableColumn(Text(verbatim: "#")) { row in
-                Text("\(row.id)")
-                    .monospacedDigit()
-                    .foregroundStyle(row.tooltip == nil ? Color.secondary : Theme.warning.text)
-            }
-            .width(min: 30, ideal: 34, max: 44)
-
-            TableColumn(Text(verbatim: "Begriff · \(Labels.langName(result.termLang))")) { row in
-                ImportPreviewCell(text: row.term, lang: result.termLang, missing: "Begriff fehlt")
-            }
-
-            TableColumn(Text(verbatim: "Definition · \(Labels.langName(result.defLang))")) { row in
-                ImportPreviewCell(text: row.definition, lang: result.defLang, missing: "Definition fehlt")
-            }
-
-            TableColumn(Text(verbatim: "")) { row in
-                if let tooltip = row.tooltip {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .foregroundStyle(Theme.warning.fill)
-                        .help(tooltip)
-                        .accessibilityLabel(tooltip)
-                }
-            }
-            .width(22)
-        }
-        .tableStyle(.inset(alternatesRowBackgrounds: true))
-        .scrollContentBackground(.hidden)
-        .background(Color(nsColor: .textBackgroundColor))
-        .frame(height: Self.chromeHeight + Self.rowHeight * CGFloat(min(rows.count, ImportPanelModel.previewRows)))
-        .clipShape(shape)
-        .overlay { shape.strokeBorder(Theme.hairline, lineWidth: 1).allowsHitTesting(false) }
-        .accessibilityLabel("Vorschau der erkannten Karten")
-    }
-}
-
-/// A preview cell in its side's language (Arabic starts at the column's right edge); an empty
-/// side shows what is missing.
-private struct ImportPreviewCell: View {
-    let text: String
-    let lang: Lang
-    let missing: String
-
-    var body: some View {
-        if text.isEmpty {
-            Text(missing)
-                .italic()
-                .foregroundStyle(Theme.warning.text)
-        } else {
-            Text(LearnText.spoken(text, lang: lang))
-                .lineLimit(1)
-                .truncationMode(.tail)
-                .cardTextLine(lang)
-                .help(text)
         }
     }
 }

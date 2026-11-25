@@ -89,10 +89,13 @@ public class SetEditorCopyTests
     [Fact]
     public void WarningsDropTheSkippedWarningWhenTheLinesAreListed()
     {
+        // The parser's own warning, compared as a whole (works in every language).
+        var skippedWarning = VocabParser.SkippedLinesWarning(1);
+        Assert.Equal("1 Zeile ohne Vokabeln wurde übersprungen.", skippedWarning);
         var skipped = new[] { new SkippedLine(1, "Vocabulaire", SkipReason.Heading) };
-        var result = Result(ParseFormat.Delimited, "-", skipped, ["1 Zeile übersprungen", "Gemischte Trennzeichen"]);
+        var result = Result(ParseFormat.Delimited, "-", skipped, [skippedWarning, "Gemischte Trennzeichen"]);
         Assert.Equal(["Seite 2 fehlt", "Gemischte Trennzeichen"], SetEditorCopy.Warnings(result, ["Seite 2 fehlt"]));
-        Assert.Equal(["1 Zeile übersprungen"], SetEditorCopy.Warnings(Result(ParseFormat.Delimited, "-", null, ["1 Zeile übersprungen"]), []));
+        Assert.Equal([skippedWarning], SetEditorCopy.Warnings(Result(ParseFormat.Delimited, "-", null, [skippedWarning]), []));
         Assert.Equal(["Notiz"], SetEditorCopy.Warnings(null, ["Notiz"]));
     }
 

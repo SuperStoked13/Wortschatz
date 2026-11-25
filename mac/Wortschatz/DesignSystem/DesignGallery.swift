@@ -205,9 +205,11 @@ private struct GalleryControls: View {
                 }
             }
             GalleryGroup("Schwebende Aktionsleiste") {
-                GlassActionBar {
-                    SecondaryButton("Weiss ich nicht", key: .optionReturn, bindsShortcut: false) {}
-                    PrimaryActionButton("Antworten", bindsShortcut: false) {}
+                GlassEffectContainer(spacing: Spacing.s) {
+                    HStack(spacing: Spacing.s) {
+                        SecondaryButton("Weiss ich nicht", key: .optionReturn, bindsShortcut: false) {}
+                        PrimaryActionButton("Antworten", bindsShortcut: false) {}
+                    }
                 }
             }
             GalleryGroup("Tasten") {
@@ -244,10 +246,6 @@ private struct GalleryProgress: View {
                             ProgressCapsule(counts: Sample.set, style: .compact)
                         }
                     }
-                    GalleryGroup("Runde") {
-                        RoundProgressBar(value: 3, total: 7, label: "Runde 2")
-                            .frame(width: 420)
-                    }
                     GalleryGroup("Seitenleiste") {
                         VStack(alignment: .leading, spacing: 10) {
                             sidebarRow("Unité 3 – La maison", count: 52, counts: Sample.set)
@@ -260,7 +258,7 @@ private struct GalleryProgress: View {
                 GalleryGroup("Lernstand") {
                     GlassPanel(padding: Spacing.xl) {
                         VStack(alignment: .leading, spacing: Spacing.l) {
-                            MasteryGauge(counts: Sample.set, size: .large, showsLegend: true)
+                            MasteryGauge(counts: Sample.set, size: .large)
                             HStack(spacing: Spacing.l) {
                                 MasteryGauge(counts: Sample.untouched, size: .medium)
                                 MasteryGauge(counts: Sample.round, size: .medium)
@@ -404,9 +402,11 @@ private struct GalleryStudyFeedback: View {
                     }
                 }) { _ in }
                 LearnStatusPill(status: LearnStatus(kind: .wrong, title: "Nicht ganz – das lernst du noch!", message: "Richtig: das Haus"), countdown: nil, trigger: 0)
-                GlassActionBar {
-                    SecondaryButton("Ich hatte recht", key: .commandReturn, bindsShortcut: false) {}
-                    PrimaryActionButton("Weiter", bindsShortcut: false) {}
+                GlassEffectContainer(spacing: Spacing.s) {
+                    HStack(spacing: Spacing.s) {
+                        SecondaryButton("Ich hatte recht", key: .commandReturn, bindsShortcut: false) {}
+                        PrimaryActionButton("Weiter", bindsShortcut: false) {}
+                    }
                 }
             }
             .frame(maxWidth: 540)
@@ -449,7 +449,7 @@ private struct GalleryFeedback: View {
                     message: "Füge deine Vokabelliste ein, wähle eine Datei oder ein Foto – Wortschatz erkennt die Paare automatisch."
                 ) {
                     PrimaryActionButton("Erstes Lernset erstellen", bindsShortcut: false) {}
-                    SecondaryButton("Aus der Web-Version übernehmen…", bindsShortcut: false) {}
+                    SecondaryButton("Backup laden…", bindsShortcut: false) {}
                 }
                 .frame(height: 420)
                 .celebration(playsOnAppear: false)

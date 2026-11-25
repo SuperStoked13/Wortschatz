@@ -1,6 +1,7 @@
 using Avalonia.Threading;
 using Wortschatz.App.Services;
 using Wortschatz.Core;
+using static Wortschatz.Core.CoreText;
 
 namespace Wortschatz.App;
 
@@ -74,7 +75,7 @@ public sealed record PromptRequest(string Title, string Message, IReadOnlyList<P
 
     /// <summary>A yes/no question: the confirm button (destructive: red) and "Abbrechen".</summary>
     public static PromptRequest Confirm(string title, string message, string confirmLabel, Action onConfirm, bool destructive = false) =>
-        new(title, message, [new PromptButton(confirmLabel, onConfirm, IsDefault: !destructive, IsDestructive: destructive), new PromptButton("Abbrechen", IsCancel: true, IsDefault: destructive)]);
+        new(title, message, [new PromptButton(confirmLabel, onConfirm, IsDefault: !destructive, IsDestructive: destructive), new PromptButton(L("Abbrechen"), IsCancel: true, IsDefault: destructive)]);
 }
 
 /// <summary>
@@ -89,6 +90,42 @@ public sealed class AppModel
     public SpeechService Speech { get; }
     public SoundEffects Sounds { get; }
     public AppPreferences Preferences { get; }
+
+    /// <summary>
+    /// Synonyms of a written question's answer that are not in the set ("Weitere Synonyme erkennen" and the set's own
+    /// switch in its options; Mac: SynonymAssistant.extraAnswers / isActive(forSet:)): from the built-in thesaurus of the
+    /// answer language, none when switched off. Read at every answer, so a change applies at once.
+    /// </summary>
+    public Func<SynonymQuery, IReadOnlyList<string>> ExtraAnswers(string setId) => query =>
+        Preferences.ExtendedSynonymsFor(setId) ? Wortschatz.Core.ExtendedSynonyms.ThesaurusAnswers(query) : [];
+
+    /// <summary>
+    /// A set's page opened: what its first multiple-choice round needs (the cards' word classes) is worked out in the
+    /// background, so «Lernen» starts without waiting for it (LearnEngine.PrepareChoices).
+    /// </summary>
+    public void PrepareStudy(string setId)
+    {
+        if (Set(setId) is not { Cards.Count: > 1 } set) return;
+        var cards = set.Cards;
+        Task.Run(() =>
+        {
+            try { LearnEngine.PrepareChoices(cards); }
+            catch (Exception) { }
+        });
+    }
+
+    /// <summary>A written session starts: its languages' thesauri load in the background (if synonyms are on for the set).</summary>
+    public void PreloadSynonyms(VocabSet? set)
+    {
+        if (set is null || !Preferences.ExtendedSynonymsFor(set.Id)) return;
+        SynonymLexicon.Preload(set.TermLang);
+        SynonymLexicon.Preload(set.DefLang);
+    }
+
+    /// <summary>The library changed (a hook; nothing to do in this build).</summary>
+    void LibraryChangedForSync()
+    {
+    }
     public Route Route { get; private set; } = new Route.Overview();
     /// <summary>The toasts on screen, oldest first (at most MaxToasts, like the web app's MAX_TOASTS).</summary>
     public List<ToastMessage> Toasts { get; } = [];
@@ -113,8 +150,11 @@ public sealed class AppModel
     {
         Store = store;
         Preferences = preferences;
+        // The texts' language before anything shows a text (Mac: AppLanguage.install at launch).
+        AppLanguage.Install(preferences.Language);
         Speech = speech ?? SpeechService.Create();
-        Sounds = new SoundEffects(() => Preferences.SoundEffects);
+        // A set's own switch (its options) mutes the sounds while it is on screen.
+        Sounds = new SoundEffects(() => Preferences.SoundEffectsFor(Route.RouteSetId));
         Speech.MissingVoice += lang => Dispatcher.UIThread.Post(() => ShowMissingVoice(lang));
         Speech.LoadPreferredVoices(Preferences.SpeechVoices);
         Speech.PreferredVoicesChanged += () => Preferences.SpeechVoices = new Dictionary<Lang, string>(Speech.PreferredVoiceIds);
@@ -125,6 +165,71 @@ public sealed class AppModel
             Changed?.Invoke();
             CelebrateDailyStreak();
         });
+        ObserveLearnSwitches();
+    }
+
+    // MARK: Learn switches (Mac: AppModel+LearnSwitches.swift)
+
+    /// <summary>«Wiederholungsfragen» and «Nachkontrolle nach Fehlern» (the same for every set).</summary>
+    public readonly record struct LearnSwitches(bool Review, bool Recheck);
+
+    /// <summary>The two Learn switches as they are now.</summary>
+    public LearnSwitches CurrentLearnSwitches => new(Preferences.LearnReview, Preferences.LearnRecheck);
+
+    /// <summary>The switches the stored sessions were last brought in line with.</summary>
+    LearnSwitches _learnSwitches;
+
+    /// <summary>
+    /// Brings the stored sessions in line with the Nachkontrolle now (sessions stored before the switches applied at once
+    /// kept it for days), then watches the two Learn switches wherever they are switched: Einstellungen › Lernen, a set's
+    /// options, Lernen's options.
+    /// </summary>
+    void ObserveLearnSwitches()
+    {
+        _learnSwitches = CurrentLearnSwitches;
+        SwitchStoredSessions(review: null, recheck: _learnSwitches.Recheck);
+        // Imported preferences may come from another thread: looked at on the UI thread.
+        Preferences.LearnSwitchesChanged += () => Dispatcher.UIThread.Post(LearnSwitchesMayHaveChanged);
+    }
+
+    /// <summary>
+    /// A switch that changed applies at once to every stored Learn session (since 24.11.2026: before, a long session
+    /// kept the rechecks for days after they were switched off). An open Lernen applies it to its own session too
+    /// (LearnController.SwitchesMayHaveChanged, from its options or after Changed).
+    /// </summary>
+    void LearnSwitchesMayHaveChanged()
+    {
+        var now = CurrentLearnSwitches;
+        var before = _learnSwitches;
+        if (now == before) return;
+        _learnSwitches = now;
+        SwitchStoredSessions(now.Review != before.Review ? now.Review : null, now.Recheck != before.Recheck ? now.Recheck : null);
+        Changed?.Invoke();
+    }
+
+    /// <summary>Every unfinished stored session with the switched option(s) applied (null: not switched), written as one change.</summary>
+    void SwitchStoredSessions(bool? review, bool? recheck)
+    {
+        double time = TimeUtil.NowMs();
+        var switched = new List<(string SetId, LearnFlow.SavedLearn Saved)>();
+        foreach (var set in Store.ListSets())
+        {
+            if (LearnFlow.SavedLearn.FromJson(Store.GetLearnJSON(set.Id)) is not { } saved
+                || saved.Switching(review, recheck, Store.GetProgress(set.Id), time) is not { } next) continue;
+            switched.Add((set.Id, next));
+        }
+        if (switched.Count == 0) return;
+        try
+        {
+            Store.Batch(() =>
+            {
+                foreach (var (setId, saved) in switched) Store.SaveLearnJSON(setId, saved.ToJson());
+            });
+        }
+        catch (LibraryStoreError e)
+        {
+            Report(e);
+        }
     }
 
     // MARK: Saving
@@ -157,20 +262,15 @@ public sealed class AppModel
 
     void SaveInBackground()
     {
-        (byte[] Data, int Revision)? pending;
-        try { pending = Store.EncodePending(); }
-        catch (LibraryStoreError e)
-        {
-            SaveFinished(e);
-            return;
-        }
-        if (pending is not { } p) return;
+        // A copy of the unsaved library is cheap; encoding it (the whole library as JSON) and writing it run in the
+        // background, in order, so the UI thread never waits for either.
+        if (Store.PendingSnapshot() is not { } p) return;
         var previous = _writing;
         _writing = Task.Run(async () =>
         {
             await previous;
             Exception? failure = null;
-            try { Store.WriteEncoded(p.Data, p.Revision); }
+            try { Store.WriteEncoded(LibraryStore.Encode(p.Doc), p.Revision); }
             catch (Exception e) { failure = e; }
             Dispatcher.UIThread.Post(() => SaveFinished(failure));
         });
@@ -210,6 +310,7 @@ public sealed class AppModel
     /// <summary>Writes everything now (the window closes). False when the library could not be saved.</summary>
     public bool Flush()
     {
+        Preferences.Flush();
         _saveTimer?.Stop();
         try { _writing.Wait(TimeSpan.FromSeconds(5)); }
         catch (AggregateException) { }
@@ -225,17 +326,17 @@ public sealed class AppModel
         }
     }
 
-    /// <summary>The text of an error for a toast (Mac: AppModel.message(for:fallback:)).</summary>
-    public static string Message(Exception error, string fallback = "Etwas ist schiefgelaufen. Bitte versuche es nochmal.") =>
+    /// <summary>The text of an error for a toast (Mac: AppModel.message(for:fallback:)); no fallback: «Etwas ist schiefgelaufen …».</summary>
+    public static string Message(Exception error, string? fallback = null) =>
         error switch
         {
             LibraryStoreError store => store.Message,
             BackupFileError file => file.Message,
-            _ => fallback,
+            _ => fallback ?? L("Etwas ist schiefgelaufen. Bitte versuche es nochmal."),
         };
 
     /// <summary>An error as a red toast (Mac: report(_:fallback:)).</summary>
-    public void Report(Exception error, string fallback = "Etwas ist schiefgelaufen. Bitte versuche es nochmal.") =>
+    public void Report(Exception error, string? fallback = null) =>
         ShowToast(new ToastMessage(Message(error, fallback), ToastTone.Danger, DurationMs: 6000));
 
     /// <summary>
@@ -248,12 +349,14 @@ public sealed class AppModel
     public static AppModel OpenDefault()
     {
         var folder = Environment.GetEnvironmentVariable("WORTSCHATZ_NATIVE_DATA");
+        // An update test (AppUpdater.TestKey) never touches the real library: it keeps its own next to the test exe.
+        if (AppUpdater.TestFolder is { } updateTest) folder = Path.Combine(updateTest, "data");
         string path;
         try
         {
             // Without %LOCALAPPDATA% the default path would be relative (next to wherever the exe was started).
             if (string.IsNullOrWhiteSpace(folder) && string.IsNullOrEmpty(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData)))
-                throw new DirectoryNotFoundException("Der Ordner «AppData\\Local» fehlt.");
+                return InMemory(null);
             path = Path.GetFullPath(string.IsNullOrWhiteSpace(folder) ? FileBackend.DefaultPath() : Path.Combine(folder, "library.json"));
         }
         catch (Exception e)
@@ -299,12 +402,12 @@ public sealed class AppModel
         {
             int n = store.ListSets().Count;
             model.ShowToast(new ToastMessage(
-                n == 1 ? "1 Lernset aus der bisherigen Windows-App übernommen." : $"{n} Lernsets aus der bisherigen Windows-App übernommen.",
+                n == 1 ? L("1 Lernset aus der bisherigen Windows-App übernommen.") : L($"{n} Lernsets aus der bisherigen Windows-App übernommen."),
                 ToastTone.Success, DurationMs: 7000));
         }
         else if (failure is not null)
         {
-            model.ShowToast(new ToastMessage("Die Lernsets der bisherigen Windows-App konnten nicht übernommen werden: " + failure,
+            model.ShowToast(new ToastMessage(L($"Die Lernsets der bisherigen Windows-App konnten nicht übernommen werden: {failure}"),
                 ToastTone.Warning, DurationMs: 9000));
         }
 
@@ -361,33 +464,41 @@ public sealed class AppModel
     /// <summary>The question after a damaged library was repaired on loading (null: it loaded fine).</summary>
     static PromptRequest? RecoveryPrompt(LibraryStore store) => store.Recovery.Kind switch
     {
-        LoadRecoveryKind.FromBackup => new PromptRequest("Deine Daten wurden wiederhergestellt",
-            "Die Datei mit deinen Lernsets war beschädigt oder fehlte. Wortschatz hat die neueste lesbare Sicherung geladen; die letzten Minuten vor dem Problem können fehlen.",
+        LoadRecoveryKind.FromBackup => new PromptRequest(L("Deine Daten wurden wiederhergestellt"),
+            L("Die Datei mit deinen Lernsets war beschädigt oder fehlte. Wortschatz hat die neueste lesbare Sicherung geladen; die letzten Minuten vor dem Problem können fehlen."),
             [new PromptButton("OK", IsDefault: true, IsCancel: true)]),
-        LoadRecoveryKind.Reset => new PromptRequest("Deine Daten konnten nicht gelesen werden",
-            "Die Datei mit deinen Lernsets ist beschädigt, und es gibt keine lesbare Sicherung. Wortschatz startet leer; die beschädigte Datei bleibt als «library-corrupt.json» im Speicherort erhalten. Mit einem Backup kannst du deine Lernsets wiederherstellen.",
+        LoadRecoveryKind.Reset => new PromptRequest(L("Deine Daten konnten nicht gelesen werden"),
+            L("Die Datei mit deinen Lernsets ist beschädigt, und es gibt keine lesbare Sicherung. Wortschatz startet leer; die beschädigte Datei bleibt als «library-corrupt.json» im Speicherort erhalten. Mit einem Backup kannst du deine Lernsets wiederherstellen."),
             [new PromptButton("OK", IsDefault: true, IsCancel: true)]),
         _ => null,
     };
 
     /// <summary>
     /// The app on an in-memory library when not even the storage location can be found (Mac: AppModel.launch): it works,
-    /// and says that changes are lost when it quits.
+    /// and says that changes are lost when it quits. <paramref name="reason"/>: an error's message; null: the folder
+    /// «AppData\Local» is missing.
     /// </summary>
-    static AppModel InMemory(string reason) => new(new LibraryStore(new MemoryBackend()), AppPreferences.InMemory())
+    static AppModel InMemory(string? reason)
     {
-        StartupPrompt = new PromptRequest("Die Daten können nicht gespeichert werden",
-            $"Wortschatz findet seinen Speicherort nicht. Änderungen gehen beim Beenden verloren. ({reason})",
-            [new PromptButton("OK", IsDefault: true, IsCancel: true)]),
-    };
-
-    /// <summary>Where the library file lives (Einstellungen › Speicherort).</summary>
-    public string DataPath => Store.Backend is FileBackend f ? f.Path : "Nur im Arbeitsspeicher";
+        var model = new AppModel(new LibraryStore(new MemoryBackend()), AppPreferences.InMemory());
+        // The texts after the model: its constructor sets their language.
+        string why = reason ?? L("Der Ordner «AppData\\Local» fehlt.");
+        model.StartupPrompt = new PromptRequest(L("Die Daten können nicht gespeichert werden"),
+            L($"Wortschatz findet seinen Speicherort nicht. Änderungen gehen beim Beenden verloren. ({why})"),
+            [new PromptButton("OK", IsDefault: true, IsCancel: true)]);
+        return model;
+    }
 
     // MARK: Library
 
     /// <summary>The library's view data, rebuilt once after each store change (Mac: AppModel.library).</summary>
     public LibrarySnapshot Library => _library ??= LibrarySnapshot.Build(Store);
+
+    /// <summary>
+    /// The clock moved on (the overview's minute): the next read builds the snapshot anew with the time now, so «vor
+    /// 5 Minuten», «gestern» and today's answers follow the clock, not only the next change of the library.
+    /// </summary>
+    public void RefreshLibraryTime() => _library = null;
 
     public List<VocabSet> Sets => Library.Sets.Select(s => s.Set).ToList();
 
@@ -413,9 +524,6 @@ public sealed class AppModel
     public SetProgress ProgressOf(VocabSet set) => Library.Summary(set.Id)?.Stats ?? Mastery.SetProgressOf(set, Store.GetProgress(set.Id));
 
     public StudyStreak Streak => Library.Stats.Streak;
-
-    /// <summary>Answers given today (the overview's "Heute beantwortet").</summary>
-    public int AnsweredToday => Library.Stats.Streak.Today;
 
     /// <summary>The set the window is about (the set page, a study screen or the editor of a set).</summary>
     public string? CurrentSetId => Route.RouteSetId is { } id && Store.GetSet(id) is not null ? id : null;
@@ -529,11 +637,13 @@ public sealed class AppModel
         {
             var copy = Store.DuplicateSet(setId);
             SaveNow();
-            ShowToast(new ToastMessage($"Kopie von «{ShortTitle(set.Title)}» erstellt", ToastTone.Success, "Öffnen", () => OpenSet(copy.Id)));
+            LibraryChangedForSync();
+            // Long enough to read and tap «Öffnen» (3.5 s went by unnoticed on the phone).
+            ShowToast(new ToastMessage(L($"Kopie von «{ShortTitle(set.Title)}» erstellt"), ToastTone.Success, L("Öffnen"), () => OpenSet(copy.Id), DurationMs: 6000));
         }
         catch (Exception e)
         {
-            Report(e, "Das Lernset konnte nicht dupliziert werden.");
+            Report(e, L("Das Lernset konnte nicht dupliziert werden."));
         }
     }
 
@@ -541,9 +651,9 @@ public sealed class AppModel
     public void ConfirmResetProgress(string setId)
     {
         if (Store.GetSet(setId) is null) return;
-        Ask(PromptRequest.Confirm("Fortschritt zurücksetzen?",
-            "Alle Begriffe gelten danach wieder als «Neu», und laufende Runden in Lernen und Schreiben werden beendet. Die Begriffe selbst bleiben erhalten.",
-            "Zurücksetzen", () =>
+        Ask(PromptRequest.Confirm(L("Fortschritt zurücksetzen?"),
+            L("Alle Begriffe gelten danach wieder als «Neu», und laufende Runden in Lernen und Schreiben werden beendet. Die Begriffe selbst bleiben erhalten."),
+            L("Zurücksetzen"), () =>
             {
                 // Like the Mac: the answers and running Lernen/Schreiben rounds go; the flashcard pile stays (the
                 // question does not mention it).
@@ -551,7 +661,8 @@ public sealed class AppModel
                 {
                     Store.ResetProgress(setId);
                     SaveNow();
-                    ShowToast(new ToastMessage("Fortschritt zurückgesetzt", ToastTone.Success));
+                    LibraryChangedForSync();
+                    ShowToast(new ToastMessage(L("Fortschritt zurückgesetzt"), ToastTone.Success));
                 }
                 catch (Exception e) { Report(e); }
             }, destructive: true));
@@ -568,23 +679,24 @@ public sealed class AppModel
         try { Store.DeleteSet(setId); }
         catch (Exception e)
         {
-            Report(e, "Das Lernset konnte nicht gelöscht werden.");
+            Report(e, L("Das Lernset konnte nicht gelöscht werden."));
             return;
         }
         SaveNow();
+        LibraryChangedForSync();
         if (Route.RouteSetId == setId) ShowOverview();
         var record = new DeletedSet(snapshot);
         _undo.Add(record);
         _redo.Clear();
         var title = ShortTitle(snapshot.Set.Title);
-        ShowToast(new ToastMessage($"«{title}» gelöscht", ActionLabel: "Rückgängig", Action: () =>
+        ShowToast(new ToastMessage(L($"«{title}» gelöscht"), ActionLabel: L("Rückgängig"), Action: () =>
         {
             // The undo stack must not restore it a second time.
             _undo.Remove(record);
             _redo.Remove(record);
             RestoreDeleted(record);
         }, DurationMs: 7000) { Icon = DesignSystem.IconName.Trash });
-        DesignSystem.Announcer.Announce($"Lernset «{title}» gelöscht");
+        DesignSystem.Announcer.Announce(L($"Lernset «{title}» gelöscht"));
     }
 
     /// <summary>A deleted set's snapshot, the target of its undo/redo (Mac: DeletedSet).</summary>
@@ -640,18 +752,22 @@ public sealed class AppModel
         {
             var set = Store.RestoreSet(record.Snapshot);
             SaveNow();
-            ShowToast(new ToastMessage($"«{ShortTitle(set.Title)}» wiederhergestellt", ToastTone.Success));
+            LibraryChangedForSync();
+            ShowToast(new ToastMessage(L($"«{ShortTitle(set.Title)}» wiederhergestellt"), ToastTone.Success));
             if (Route is Route.Overview || Route.RouteSetId is null) OpenSet(set.Id);
             return true;
         }
         catch (Exception e)
         {
-            Report(e, "Das Lernset konnte nicht wiederhergestellt werden.");
+            Report(e, L("Das Lernset konnte nicht wiederhergestellt werden."));
             return false;
         }
     }
 
-    /// <summary>The ★ toggle of a card.</summary>
+    /// <summary>
+    /// The ★ toggle of a card. Saved like an answer (SaveSoon through the store notification): a star clicked on a long
+    /// list no longer waits for the whole library to be encoded and written.
+    /// </summary>
     public void ToggleStar(string setId, string cardId)
     {
         try { Store.ToggleStar(setId, cardId); }
@@ -660,7 +776,6 @@ public sealed class AppModel
             Report(e);
             return;
         }
-        SaveNow();
         AnnounceStar(setId, cardId);
     }
 
@@ -668,7 +783,7 @@ public sealed class AppModel
     public void AnnounceStar(string setId, string cardId)
     {
         if (Store.GetSet(setId)?.Cards.FirstOrDefault(c => c.Id == cardId) is { } card)
-            DesignSystem.Announcer.Announce(card.Starred ? "Markiert" : "Markierung entfernt");
+            DesignSystem.Announcer.Announce(card.Starred ? L("Markiert") : L("Markierung entfernt"));
     }
 
     VocabSpellChecker? _speller;
@@ -687,9 +802,13 @@ public sealed class AppModel
     {
         // Only errors interrupt the screen reader (Mac: warnings are announced politely).
         DesignSystem.Announcer.Announce(toast.Text, important: toast.Tone is ToastTone.Danger);
+        // The same message again (⇆ twice) replaced nothing and the two stood on top of each other over the cards
+        // (Joan's phone, 06.11.2026): the older one goes.
+        foreach (var same in Toasts.Where(t => t.Text == toast.Text).ToList()) DismissToast(same.Id);
         Toasts.Add(toast);
         ToastShown?.Invoke(toast);
-        while (Toasts.Count > MaxToasts) DismissToast(Toasts[0].Id);
+        int max = AppDevice.IsPhone ? 2 : MaxToasts;
+        while (Toasts.Count > max) DismissToast(Toasts[0].Id);
     }
 
     public void DismissToast(Guid id)
@@ -705,8 +824,8 @@ public sealed class AppModel
         _missingVoiceShown[lang] = DateTime.UtcNow;
         ShowToast(new ToastMessage(
             AppDevice.IsPhone
-                ? $"Keine Stimme für {Labels.LangName(lang)} installiert. Android-Einstellungen › Sprache › Sprachausgabe › Sprachdaten herunterladen."
-                : $"Keine Stimme für {Labels.LangName(lang)} installiert. Windows-Einstellungen › Zeit und Sprache › Sprachausgabe › Stimmen hinzufügen.",
+                ? L($"Keine Stimme für {Labels.LangName(lang)} installiert. Android-Einstellungen › Sprache › Sprachausgabe › Sprachdaten herunterladen.")
+                : L($"Keine Stimme für {Labels.LangName(lang)} installiert. Windows-Einstellungen › Zeit und Sprache › Sprachausgabe › Stimmen hinzufügen."),
             ToastTone.Warning, DurationMs: 7000));
     }
 
@@ -725,7 +844,7 @@ public sealed class AppModel
         var streak = Mastery.StudyStreakOf(activity.ToDictionary(p => p.Key, p => (double)p.Value), TimeUtil.NowMs());
         if (streak.Today <= 0 || streak.Current <= 0) return;
         Preferences.CelebratedStreakDay = today;
-        var message = streak.Current == 1 ? "Neue Lernserie gestartet – lerne morgen weiter!" : $"Lernserie: {streak.Current} Tage in Folge!";
+        var message = streak.Current == 1 ? L("Neue Lernserie gestartet – lerne morgen weiter!") : L($"Lernserie: {streak.Current} Tage in Folge!");
         DispatcherTimer.RunOnce(() =>
         {
             ShowToast(new ToastMessage(message, ToastTone.Streak));

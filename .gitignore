@@ -8,8 +8,10 @@ Stuff/
 # Fertige Builds (gross, entstehen aus dem Code). Die Downloads in Downloadseite/releases/
 # schliesst schon Downloadseite/.gitignore aus (nur README.md bleibt).
 mac/build/
-windows/dist/
 
 # Persönliche Xcode-Einstellungen und Mac-Systemdateien
 xcuserdata/
 .DS_Store
+
+# Python-Zwischendateien (z. B. von mac/scripts/strings.py)
+__pycache__/

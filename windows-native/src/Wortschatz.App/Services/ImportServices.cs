@@ -3,6 +3,7 @@ using UglyToad.PdfPig;
 using UglyToad.PdfPig.Content;
 using UglyToad.PdfPig.Exceptions;
 using Wortschatz.Core;
+using static Wortschatz.Core.CoreText;
 #if WINDOWS
 using System.Runtime.InteropServices.WindowsRuntime;
 using Windows.Globalization;
@@ -125,7 +126,7 @@ sealed class PdfPigDocument(PdfDocument document, byte[] data) : IPdfDocument
 #if WINDOWS
         return RenderAsync(pageIndex, scale).GetAwaiter().GetResult();
 #else
-        throw new ImportError(ImportErrorCode.OcrFailed, "Gescannte PDF-Seiten können nur unter Windows gelesen werden.");
+        throw new ImportError(ImportErrorCode.OcrFailed, L("Gescannte PDF-Seiten können nur unter Windows gelesen werden."));
 #endif
     }
 
@@ -276,7 +277,7 @@ public sealed class WindowsTextRecognizer : ITextRecognizer
         var engines = Engines(languages.Count > 0 ? languages : ["de-DE"]);
         if (engines.Count == 0)
             throw new ImportError(ImportErrorCode.OcrFailed,
-                "Windows hat keine Texterkennung installiert. Füge unter «Einstellungen › Zeit und Sprache › Sprache» eine Sprache hinzu und versuche es nochmals.");
+                L("Windows hat keine Texterkennung installiert. Füge unter «Einstellungen › Zeit und Sprache › Sprache» eine Sprache hinzu und versuche es nochmals."));
 
         // Windows limits the image size; larger images are scaled down and the boxes scaled back.
         double f = Math.Min(1, WinOcr.OcrEngine.MaxImageDimension / (double)Math.Max(image.Width, image.Height));

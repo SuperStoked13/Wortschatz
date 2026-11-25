@@ -36,7 +36,7 @@ public struct ImportPipeline: Sendable {
         var batch = ImportBatch()
         for (i, source) in sources.enumerated() {
             try Task.checkImportCancellation()
-            let prefix = sources.count > 1 ? "Datei \(i + 1) von \(sources.count): " : ""
+            let prefix = sources.count > 1 ? L("Datei %@ von %@", "\(i + 1)", "\(sources.count)") + ": " : ""
             let label = source.name.isEmpty ? "" : "«\(source.name)»: "
             let fileReport = report.slice(from: Double(i) / count, width: 1 / count, prefix: prefix)
             do throws(ImportError) {

@@ -34,23 +34,23 @@ struct SetEditorCardsHeader: View {
                 HStack(spacing: Spacing.xs) {
                     if stats.duplicates > 0 {
                         TintedChip(
-                            text: "\(Labels.plural(stats.duplicates, "Begriff", "Begriffe")) doppelt", systemImage: "doc.on.doc",
+                            text: String(localized: "\(Labels.plural(stats.duplicates, "Begriff", "Begriffe")) doppelt"), systemImage: "doc.on.doc",
                             palette: Theme.warning, size: .small)
                     }
                     if stats.flagged > 0 {
                         TintedChip(
-                            text: "\(stats.flagged) bitte prüfen", systemImage: "exclamationmark.triangle", palette: Theme.warning,
+                            text: String(localized: "\(stats.flagged) bitte prüfen"), systemImage: "exclamationmark.triangle", palette: Theme.warning,
                             size: .small)
                     }
                     if stats.typos > 0 {
                         TintedChip(
-                            text: ImportSpelling.countLabel(stats.typos), systemImage: "textformat.abc", palette: Theme.warning,
+                            text: SetEditorCopy.typoCount(stats.typos), systemImage: "textformat.abc", palette: Theme.warning,
                             size: .small)
                             .help("Klicke in einer Karte auf den markierten Begriff, um ihn zu korrigieren oder zu ignorieren.")
                     }
                     if stats.invalid > 0 {
                         TintedChip(
-                            text: "\(stats.invalid) unvollständig", systemImage: "exclamationmark.circle", palette: Theme.failure,
+                            text: String(localized: "\(stats.invalid) unvollständig"), systemImage: "exclamationmark.circle", palette: Theme.failure,
                             size: .small)
                     }
                 }
@@ -69,20 +69,25 @@ struct SetEditorCardsHeader: View {
     }
 }
 
-/// "# · BEGRIFF · FRANZÖSISCH · DEFINITION · DEUTSCH", pinned above the rows while scrolling.
+/// "# · BEGRIFF · FRANZÖSISCH · DEFINITION · DEUTSCH", pinned above the rows while scrolling
+/// (just "BEGRIFF" while its language is still "Automatisch", nil).
 struct SetEditorColumnHeader: View {
-    let termLang: Lang
-    let defLang: Lang
+    let termLang: Lang?
+    let defLang: Lang?
 
     var body: some View {
         HStack(spacing: SetEditorLayout.columnSpacing) {
             Text(verbatim: "#")
                 .frame(width: SetEditorLayout.numberWidth, alignment: .trailing)
             HStack(spacing: SetEditorLayout.fieldSpacing) {
-                Text("Begriff · \(Labels.langName(termLang))")
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                Text("Definition · \(Labels.langName(defLang))")
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                Group {
+                    if let termLang { Text("Begriff · \(Labels.langName(termLang))") } else { Text("Begriff") }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                Group {
+                    if let defLang { Text("Definition · \(Labels.langName(defLang))") } else { Text("Definition") }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
             Color.clear
                 .frame(width: SetEditorLayout.actionsWidth, height: 1)
@@ -156,9 +161,8 @@ struct SetEditorRowView: View {
 
     private func field(isTerm: Bool) -> some View {
         let id: SetEditorField = isTerm ? .term(row.id) : .definition(row.id)
-        let isFocused = focus.wrappedValue == id
         let isMissing = row.isInvalid && (isTerm ? row.trimmedTerm : row.trimmedDefinition).isEmpty
-        let side = isTerm ? "Begriff" : "Definition"
+        let side = isTerm ? String(localized: "Begriff") : String(localized: "Definition")
         let lang = Labels.langName(isTerm ? termLang : defLang)
         return VStack(alignment: .leading, spacing: 6) {
             TextField(
@@ -180,11 +184,8 @@ struct SetEditorRowView: View {
             .onKeyPress(keys: [.tab, .delete], phases: .down) { press in
                 handle(press, isTerm: isTerm)
             }
-            .accessibilityLabel("Karte \(number): \(side) (\(lang))")
-            Rectangle()
-                .fill(isMissing ? Theme.failure.fill : isFocused ? Theme.accent : Theme.hairline)
-                .frame(height: isFocused || isMissing ? 2 : 1)
-                .accessibilityHidden(true)
+            .accessibilityLabel(isTerm ? "Karte \(number): Begriff (\(lang))" : "Karte \(number): Definition (\(lang))")
+            SetEditorFieldLine(id: id, focus: focus, isMissing: isMissing)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -222,11 +223,12 @@ struct SetEditorRowView: View {
         HStack(spacing: Spacing.xs) {
             if row.isInvalid {
                 TintedChip(
-                    text: row.trimmedTerm.isEmpty ? "Begriff fehlt" : "Definition fehlt", systemImage: "exclamationmark.circle",
+                    text: row.trimmedTerm.isEmpty ? String(localized: "Begriff fehlt") : String(localized: "Definition fehlt"),
+                    systemImage: "exclamationmark.circle",
                     palette: Theme.failure, size: .small)
             }
             if row.isDuplicate {
-                TintedChip(text: "Doppelter Begriff", systemImage: "doc.on.doc", palette: Theme.warning, size: .small)
+                TintedChip(text: String(localized: "Doppelter Begriff"), systemImage: "doc.on.doc", palette: Theme.warning, size: .small)
             }
             ForEach(spellingNotes.prefix(3)) { note in
                 SpellingChip(issue: note.issue, number: number) { replacement in
@@ -315,9 +317,9 @@ struct SetEditorCardsFooter: View {
 
     private func hints(spacing: CGFloat) -> some View {
         HStack(spacing: spacing) {
-            KeyHint(.returnKey, "nächstes Feld")
-            KeyHint(.optionReturn, "Zeilenumbruch")
-            KeyHint(.tab, "in der letzten Karte: neue Karte")
+            KeyHint(.returnKey, String(localized: "nächstes Feld"))
+            KeyHint(.optionReturn, String(localized: "Zeilenumbruch"))
+            KeyHint(.tab, String(localized: "in der letzten Karte: neue Karte"))
             KeyHint(.commandReturn, editor.saveLabel)
         }
         .fixedSize()
@@ -353,10 +355,34 @@ private struct SpellingChip: View {
         .menuIndicator(.hidden)
         .fixedSize()
         .help("Möglicher Tippfehler – klicken für Vorschläge")
-        .accessibilityLabel("Karte \(number): möglicher Tippfehler «\(issue.word)»\(issue.suggestions.first.map { ", Vorschlag \($0)" } ?? "")")
+        .accessibilityLabel(accessibilityText)
     }
 
     private var label: String {
-        issue.suggestions.first.map { "«\(issue.word)» → \($0)?" } ?? "«\(issue.word)» unbekannt"
+        issue.suggestions.first.map { String(localized: "«\(issue.word)» → \($0)?") }
+            ?? String(localized: "«\(issue.word)» unbekannt")
+    }
+
+    private var accessibilityText: String {
+        if let suggestion = issue.suggestions.first {
+            return String(localized: "Karte \(number): möglicher Tippfehler «\(issue.word)», Vorschlag \(suggestion)")
+        }
+        return String(localized: "Karte \(number): möglicher Tippfehler «\(issue.word)»")
+    }
+}
+
+/// The line under an editor field: accent while it has the keys, red while it is missing. The
+/// only part of a row that reads the focus, so ↩ and ⇥ redraw two lines instead of every row.
+private struct SetEditorFieldLine: View {
+    let id: SetEditorField
+    var focus: FocusState<SetEditorField?>.Binding
+    let isMissing: Bool
+
+    var body: some View {
+        let isFocused = focus.wrappedValue == id
+        Rectangle()
+            .fill(isMissing ? Theme.failure.fill : isFocused ? Theme.accent : Theme.hairline)
+            .frame(height: isFocused || isMissing ? 2 : 1)
+            .accessibilityHidden(true)
     }
 }

@@ -51,6 +51,10 @@ final class ToastCenter {
     /// (the study screens' action bar) registered with `.reservesToastSpace()`.
     private(set) var bottomClearance: CGFloat = 0
 
+    /// Another window draws these toasts right now (the Settings window while it is in front):
+    /// overlays added with `.toastOverlay(_:)` leave them out, so a toast never shows twice.
+    var isShownElsewhere = false
+
     @ObservationIgnored private var clearances: [UUID: CGFloat] = [:]
     @ObservationIgnored private var timers: [UUID: Task<Void, Never>] = [:]
     @ObservationIgnored private var deadlines: [UUID: ContinuousClock.Instant] = [:]
@@ -81,7 +85,7 @@ final class ToastCenter {
         if let duration {
             schedule(toast.id, after: duration)
         }
-        Announcer.announce(action.map { "\(message). \($0.label) möglich." } ?? message, important: tone == .danger)
+        Announcer.announce(action.map { String(localized: "\(message). \($0.label) möglich.") } ?? message, important: tone == .danger)
         return toast.id
     }
 
@@ -154,12 +158,14 @@ final class ToastCenter {
 /// Usually added with `.toastOverlay(_:)`.
 struct ToastOverlay: View {
     let center: ToastCenter
+    /// Steps aside while another window shows the same toasts (`ToastCenter.isShownElsewhere`).
+    var yieldsToOtherWindow = false
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         VStack(spacing: Spacing.xs) {
-            ForEach(center.toasts) { toast in
+            ForEach(yieldsToOtherWindow && center.isShownElsewhere ? [] : center.toasts) { toast in
                 ToastCapsule(toast: toast, center: center)
                     // A short rise that lands exactly (no scaling: text and glass stay crisp),
                     // and a quicker exit.
@@ -245,7 +251,7 @@ extension View {
     /// Shows the center's toasts over this view and puts the center into the environment
     /// (`@Environment(ToastCenter.self)`).
     func toastOverlay(_ center: ToastCenter) -> some View {
-        overlay { ToastOverlay(center: center) }
+        overlay { ToastOverlay(center: center, yieldsToOtherWindow: true) }
             .environment(center)
     }
 

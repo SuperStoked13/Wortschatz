@@ -38,8 +38,10 @@ struct WriteSummaryView: View {
                         Text("\(summary.correct) von \(summary.total) richtig")
                             .font(Typography.headline)
                         HStack(spacing: Spacing.xs) {
-                            TintedChip(text: "\(summary.correct) richtig", systemImage: "checkmark", palette: Theme.success)
-                            TintedChip(text: "\(summary.incorrect) falsch", systemImage: "xmark", palette: Theme.failure)
+                            TintedChip(
+                                text: String(localized: "\(summary.correct) richtig"), systemImage: "checkmark", palette: Theme.success)
+                            TintedChip(
+                                text: String(localized: "\(summary.incorrect) falsch"), systemImage: "xmark", palette: Theme.failure)
                         }
                         if let counters {
                             VStack(alignment: .leading, spacing: 6) {
@@ -67,10 +69,10 @@ struct WriteSummaryView: View {
             let missed = rows.filter { $0.correct != true }
             let hit = rows.filter { $0.correct == true }
             if !missed.isEmpty {
-                WriteTermList(title: "Noch üben", rows: missed, marker: .result)
+                WriteTermList(title: String(localized: "Noch üben"), rows: missed, marker: .result)
             }
             if !hit.isEmpty {
-                WriteTermList(title: "Richtig", rows: hit, marker: .result)
+                WriteTermList(title: String(localized: "Richtig"), rows: hit, marker: .result)
             }
         }
     }
@@ -133,6 +135,10 @@ struct WriteTermList: View {
     let title: String
     let rows: [WriteFlow.TermRow]
     let marker: Marker
+    /// With a set, each row ends with its ★ toggle (results: mark what went wrong for later).
+    var starSetID: String? = nil
+
+    @Environment(AppModel.self) private var model
 
     var body: some View {
         VStack(alignment: .leading, spacing: Spacing.s) {
@@ -146,7 +152,7 @@ struct WriteTermList: View {
                     .padding(.horizontal, 8)
                     .padding(.vertical, 2)
                     .background(.quaternary, in: Capsule(style: .continuous))
-                    .accessibilityLabel("\(rows.count) \(rows.count == 1 ? "Begriff" : "Begriffe")")
+                    .accessibilityLabel(Labels.plural(rows.count, "Begriff", "Begriffe"))
             }
             .accessibilityElement(children: .combine)
             VStack(spacing: 0) {
@@ -188,9 +194,21 @@ struct WriteTermList: View {
             if marker == .misses, let label = row.missesLabel {
                 TintedChip(text: label, palette: Theme.failure, size: .small)
             }
+            if let starSetID {
+                StarToggle(isStarred: isStarred(row.cardId, in: starSetID)) {
+                    model.toggleStar(setID: starSetID, cardID: row.cardId)
+                }
+            }
         }
         .padding(.horizontal, Spacing.l)
         .padding(.vertical, Spacing.s)
-        .accessibilityElement(children: .combine)
+        .accessibilityElement(children: rowChildren)
+    }
+
+    /// One element per row; with stars the ★ stays a button of its own.
+    private var rowChildren: AccessibilityChildBehavior { starSetID == nil ? .combine : .contain }
+
+    private func isStarred(_ cardID: String, in setID: String) -> Bool {
+        model.isStarred(setID: setID, cardID: cardID)
     }
 }

@@ -185,6 +185,41 @@ struct LearnSpacingTests {
         #expect(final.recheck?.due == [])
     }
 
+    /// The study card shows "Nachkontrolle" (and the first one a hint): the question says what it is.
+    @Test func theRecheckIsMarkedAsSuchOnScreen() throws {
+        let cards = Self.makeCards(80)
+        var s = Self.create(cards, mc: false, recheck: true)
+        let missed = try #require(s.queue.first).cardId
+        let rng = mulberry32(seed: 7)
+        var t = Self.T0
+        var recheck: LearnEngine.Question?
+        var learning: [LearnEngine.Question] = []
+        var guardCount = 0
+        while recheck == nil, !LearnEngine.isFinished(s) {
+            guardCount += 1
+            try #require(guardCount < 5000, "no recheck came")
+            t += 1000
+            guard let q = LearnEngine.current(s) else {
+                s = LearnEngine.nextRound(s, cards: cards, rng: rng, now: t)
+                continue
+            }
+            if q.isRecheck { recheck = q } else { learning.append(q) }
+            s = LearnEngine.answer(s, correct: s.answered > 0, now: t)
+        }
+        let found = try #require(recheck)
+        #expect(found.cardId == missed)
+        #expect(!found.isReview)
+        #expect(learning.allSatisfy { !$0.isRecheck })
+
+        let card = try #require(cards.first { $0.id == found.cardId })
+        let info = LearnFlow.questionInfo(found, card: card, cards: cards, termLang: .fr, defLang: .de)
+        #expect(info.isRecheck)
+        #expect(!info.isReview)
+        let first = try #require(learning.first)
+        let firstCard = try #require(cards.first { $0.id == first.cardId })
+        #expect(!LearnFlow.questionInfo(first, card: firstCard, cards: cards, termLang: .fr, defLang: .de).isRecheck)
+    }
+
     @Test func aWrongRecheckLearnsTheCardAgainAndChecksItOnceMore() {
         let cards = Self.makeCards(80)
         let s = Self.create(cards, mc: false, recheck: true, seed: 2)

@@ -28,7 +28,7 @@ generator or the web reference changes. Output is deterministic: two runs must b
 - It is an ES module run with `jsc -m`, not Node. Use `print` (there is no `console`) and
   `readFile(path)` (UTF-8). jsc cannot list directories, so add new test fixtures to
   `FIXTURE_FILES` in `lib.js`.
-- Import the web reference by **absolute path**:
+- Import the web reference **relatively** (works wherever the project folder is):
   `import { grade } from '../../Website/src/core/grading.js';`
   Import the helpers relatively: `import { Cases, mulberry32, … } from './lib.js';`
 - Keep it **deterministic**. Never use `Math.random` or `Date.now()`. Use `mulberry32(seed)` for
@@ -125,7 +125,7 @@ Key order never matters.
 - **Numbers:**
   - `Math.round` rounds half up (`JSCompat.round`).
   - Number formatting is `JSCompat.numberToString` ("5", not "5.0"; "1e-7").
-  - `Number.isInteger` is `JSCompat.isInteger`.
+  - `Number.isInteger(x)` is `x.isFinite && x == x.rounded(.towardZero)`.
 - **Dates:**
   - All timestamps are epoch ms as `Double`.
   - Local calendar logic takes a `TimeZone` (`TimeUtil.localDate`, `dateKey`, `localTimestamp`,

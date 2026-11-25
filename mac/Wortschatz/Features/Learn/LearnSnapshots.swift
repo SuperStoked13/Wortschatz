@@ -186,8 +186,8 @@ private enum LearnSnapshotScript {
                 c.send(.draftChanged(asked % 5 == 3 ? nearMiss(expected) : expected))
                 c.send(.proceed)
             case .copy:
+                // Typed out as shown, the copy continues by itself.
                 c.send(.draftChanged(state.question?.expected ?? ""))
-                c.send(.proceed)
             case .feedback, .checkpoint:
                 c.send(.proceed)
             case .finished, .allMastered, .empty:

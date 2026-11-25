@@ -11,8 +11,8 @@ using Avalonia.VisualTree;
 using Wortschatz.App.DesignSystem;
 using Wortschatz.App.Features;
 using Wortschatz.App.Features.Study;
-using Wortschatz.App.Services;
 using Wortschatz.Core;
+using static Wortschatz.Core.CoreText;
 
 namespace Wortschatz.App;
 
@@ -59,12 +59,42 @@ public sealed class MainView : UserControl
         BuildChrome();
         _model.RouteChanged += () => ShowRoute();
         _model.Changed += QueueRefresh;
+        // «Aktualisiert auf …» closed (or shown by the snapshot tool): the sidebar without it.
+        Services.AppUpdater.Shared.NoticeChanged += () =>
+        {
+            if (_screen?.UsesSidebar == true) RenderSidebarOnly();
+        };
         _model.PromptChanged += RenderPrompt;
         if (Application.Current?.PlatformSettings is { } platform)
             platform.ColorValuesChanged += (_, _) => Dispatcher.UIThread.Post(RefreshSystemLook);
         if (Application.Current is { } app) app.ActualThemeVariantChanged += (_, _) => Rebuild();
         _model.SharedArrived += HandleShared;
-        SizeChanged += (_, e) => AppDevice.ViewWidth = e.NewSize.Width;
+        SizeChanged += (_, e) =>
+        {
+            AppDevice.ViewWidth = e.NewSize.Width;
+            UpdateStudyScale(e.NewSize);
+            // Turning the phone with the keyboard open: Android closes the keyboard without telling (no InputPane
+            // change), and the old keyboard height left an empty page in landscape and the buttons hanging in the
+            // middle back in portrait (Joan's phone, 06.11.2026). A new size starts without it; an open keyboard
+            // reports itself again.
+            if (_keyboardInset > 0 && Math.Abs(e.NewSize.Width - e.PreviousSize.Width) > 1)
+            {
+                _keyboardInset = 0;
+                ApplySafeArea();
+            }
+            // Turned with an answer field focused: the field with its character bar into view (in landscape the bar
+            // sat half behind the buttons, 06.11.2026). The nearest stack around the field holds both.
+            // Android drops the focus when the phone turns, so in a study screen it is the answer field on screen.
+            if (AppDevice.IsPhone && Math.Abs(e.NewSize.Width - e.PreviousSize.Width) > 1 && _model.Route is Route.Study)
+                foreach (var ms in new[] { 400, 900 })
+                    DispatcherTimer.RunOnce(() =>
+                    {
+                        var field = FocusManager?.GetFocusedElement() as TextBox
+                            ?? _screen?.View.GetVisualDescendants().OfType<TextBox>().FirstOrDefault(b => b.IsEffectivelyVisible && b.IsEffectivelyEnabled && b.Bounds.Width > 100);
+                        // The field and the room of a character bar under it (about 60 points).
+                        field?.BringIntoView(new Rect(0, 0, field.Bounds.Width, field.Bounds.Height + 72));
+                    }, TimeSpan.FromMilliseconds(ms));
+        };
         ShowRoute();
     }
 
@@ -193,17 +223,17 @@ public sealed class MainView : UserControl
             return false;
         if (!_model.Flush())
         {
-            _model.Ask(new PromptRequest("Deine Änderungen konnten nicht gespeichert werden",
-                "Wenn du Wortschatz jetzt beendest, gehen die letzten Änderungen verloren. Exportiere zur Sicherheit ein Backup.",
+            _model.Ask(new PromptRequest(L("Deine Änderungen konnten nicht gespeichert werden"),
+                L("Wenn du Wortschatz jetzt beendest, gehen die letzten Änderungen verloren. Exportiere zur Sicherheit ein Backup."),
                 [
-                    new PromptButton("Nochmal versuchen", close, IsDefault: true),
-                    new PromptButton("Backup exportieren …", () => _ = Features.Settings.SettingsScreen.ExportBackup(_model, this)),
-                    new PromptButton("Trotzdem beenden", () =>
+                    new PromptButton(L("Nochmal versuchen"), close, IsDefault: true),
+                    new PromptButton(L("Backup exportieren …"), () => _ = Features.Settings.SettingsScreen.ExportBackup(_model, this)),
+                    new PromptButton(L("Trotzdem beenden"), () =>
                     {
                         _quitConfirmed = true;
                         close();
                     }, IsDestructive: true),
-                    new PromptButton("Abbrechen", IsCancel: true),
+                    new PromptButton(L("Abbrechen"), IsCancel: true),
                 ]));
             return false;
         }
@@ -267,7 +297,11 @@ public sealed class MainView : UserControl
         }
     }
 
-    /// <summary>Rebuilds everything (after a theme change).</summary>
+    /// <summary>
+    /// Rebuilds everything (after a theme change). Applying a theme can switch Avalonia's theme variant, whose change
+    /// event rebuilds once more while this one runs: needed (25.11.2026), the second one picks the palette of «System»
+    /// from the new variant, the first one still read the old one.
+    /// </summary>
     public void Rebuild()
     {
         ApplyAppearance();
@@ -392,7 +426,7 @@ public sealed class MainView : UserControl
     {
         var p = WsTheme.P;
         var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*,Auto"), Height = PhoneBarHeight, Margin = new Thickness(6, 0) };
-        var menu = Ui.IconButton(IconName.Menu, "Lernsets und Menü", OpenDrawer, 44, ButtonKind.Plain);
+        var menu = Ui.IconButton(IconName.Menu, L("Lernsets und Menü"), OpenDrawer, 44, ButtonKind.Plain);
         menu.VerticalAlignment = VerticalAlignment.Center;
         grid.Children.Add(menu);
         var title = Ui.Text(PageName(), 17, FontWeight.SemiBold, p.Text);
@@ -401,9 +435,10 @@ public sealed class MainView : UserControl
         title.Margin = new Thickness(6, 0);
         Grid.SetColumn(title, 1);
         grid.Children.Add(title);
-        if (_model.Route is not Route.Editor)
+        // «+ Neues Lernset» next to the library pages; in the settings it looked like «add a setting».
+        if (_model.Route is not (Route.Editor or Route.Settings))
         {
-            var add = Ui.IconButton(IconName.Plus, "Neues Lernset", () => _model.OpenEditor(), 44, ButtonKind.Plain);
+            var add = Ui.IconButton(IconName.Plus, L("Neues Lernset"), () => _model.OpenEditor(), 44, ButtonKind.Plain);
             add.VerticalAlignment = VerticalAlignment.Center;
             Grid.SetColumn(add, 2);
             grid.Children.Add(add);
@@ -414,9 +449,9 @@ public sealed class MainView : UserControl
     /// <summary>The name of the current page in the phone's bar.</summary>
     string PageName() => _model.Route switch
     {
-        Route.SetDetail d => _model.Set(d.SetId)?.Title is { Length: > 0 } t ? t : "Lernset",
-        Route.Editor e => e.SetId is null ? "Neues Lernset" : "Lernset bearbeiten",
-        Route.Settings => "Einstellungen",
+        Route.SetDetail d => _model.Set(d.SetId)?.Title is { Length: > 0 } t ? t : L("Lernset"),
+        Route.Editor e => e.SetId is null ? L("Neues Lernset") : L("Lernset bearbeiten"),
+        Route.Settings => L("Einstellungen"),
         _ => "Wortschatz",
     };
 
@@ -491,7 +526,91 @@ public sealed class MainView : UserControl
 
     void OnBackRequested(object? sender, RoutedEventArgs e)
     {
+        // One press of the system back reached the app twice when a text field had the focus (the keyboard sends an
+        // Esc as well; Joan's phone with Typewise, 06.11.2026): the second one closed again what the first opened, or
+        // went a second page back. A back right after a back or an Esc is the same press.
+        if (BackJustHandled())
+        {
+            e.Handled = true;
+            return;
+        }
+        _lastBackAt = DateTime.UtcNow;
+        // The system closes an open drop-down list or menu itself on back, before the app hears of it (Joan's phone,
+        // 06.11.2026: back on «Zeitlimit» or «⋯» left the page). Such a back has done its job.
+        if (AppDevice.IsPhone && DateTime.UtcNow - s_popupClosedAt < PopupEcho)
+        {
+            e.Handled = true;
+            return;
+        }
         if (GoBack()) e.Handled = true;
+    }
+
+    static DateTime s_popupClosedAt;
+    static readonly TimeSpan PopupEcho = TimeSpan.FromMilliseconds(400);
+
+    DateTime _lastBackAt;
+    static readonly TimeSpan BackEcho = TimeSpan.FromMilliseconds(450);
+
+    bool BackJustHandled() => AppDevice.IsPhone && DateTime.UtcNow - _lastBackAt < BackEcho;
+
+    /// <summary>An open drop-down list or context menu (phone: back closes it first, like a tap outside).</summary>
+    bool ClosePopups()
+    {
+        bool closed = false;
+        foreach (var box in this.GetVisualDescendants().OfType<ComboBox>())
+        {
+            if (!box.IsDropDownOpen) continue;
+            box.IsDropDownOpen = false;
+            closed = true;
+        }
+        if (s_openMenu is { } r && r.TryGetTarget(out var menu) && menu.IsOpen)
+        {
+            menu.Close();
+            closed = true;
+        }
+        s_openMenu = null;
+        // The phone shows menus in the window's overlay layer: look for open ones there too (the opened event did not
+        // come for menus opened in code, «⋯» on the set page – back went to the overview, 06.11.2026).
+        if (_top is { } top)
+            foreach (var open in top.GetVisualDescendants().OfType<ContextMenu>().Where(m => m.IsOpen).ToList())
+            {
+                open.Close();
+                closed = true;
+            }
+        return closed;
+    }
+
+    /// <summary>The context menu open right now (see <see cref="TrackMenus"/>).</summary>
+    static WeakReference<ContextMenu>? s_openMenu;
+
+    /// <summary>Remembers the open context menu, so the system back can close it.</summary>
+    public static void TrackMenus()
+    {
+        // Phone: no tooltips – a long press showed a PC tooltip that stayed and was cut at the right edge (06.11.2026).
+        // (A style for every control froze the start; the tip is simply dropped where it is set.)
+        if (AppDevice.IsPhone)
+            ToolTip.TipProperty.Changed.AddClassHandler<Control>((c, e) =>
+            {
+                if (e.NewValue is not null) c.ClearValue(ToolTip.TipProperty);
+            });
+        ComboBox.IsDropDownOpenProperty.Changed.AddClassHandler<ComboBox>((_, e) =>
+        {
+            if (e.NewValue is false) s_popupClosedAt = DateTime.UtcNow;
+        });
+        ContextMenu.ClosedEvent.AddClassHandler<ContextMenu>((_, _) => s_popupClosedAt = DateTime.UtcNow);
+        MenuBase.IsOpenProperty.Changed.AddClassHandler<MenuBase>((_, e) =>
+        {
+            if (e.NewValue is false) s_popupClosedAt = DateTime.UtcNow;
+        });
+        Avalonia.Controls.Primitives.Popup.IsOpenProperty.Changed.AddClassHandler<Avalonia.Controls.Primitives.Popup>((_, e) =>
+        {
+            if (e.NewValue is false) s_popupClosedAt = DateTime.UtcNow;
+        });
+        ContextMenu.OpenedEvent.AddClassHandler<ContextMenu>((menu, _) => s_openMenu = new WeakReference<ContextMenu>(menu));
+        ContextMenu.ClosedEvent.AddClassHandler<ContextMenu>((menu, _) =>
+        {
+            if (s_openMenu is { } r && r.TryGetTarget(out var m) && ReferenceEquals(m, menu)) s_openMenu = null;
+        });
     }
 
     /// <summary>
@@ -501,6 +620,7 @@ public sealed class MainView : UserControl
     /// </summary>
     public bool GoBack()
     {
+        if (ClosePopups()) return true;
         if (_drawerOpen)
         {
             CloseDrawer();
@@ -548,7 +668,7 @@ public sealed class MainView : UserControl
         _keysDown.Clear();
         // Toasts stay above a study screen's floating action bar.
         // Phone: above the study screens' two-line action bar.
-        if (_toasts is not null) _toasts.BottomClearance = AppDevice.IsPhone && !_screen.UsesSidebar ? 150 : _screen.ToastClearance;
+        ApplyToastClearance();
         if (AppDevice.IsPhone) CloseDrawer();
         RenderBody();
         if (!rebuild && !AppDevice.IsPhone) SlideSidebar(hadSidebar, _screen.UsesSidebar, leavingSidebar, leavingPage);
@@ -559,12 +679,62 @@ public sealed class MainView : UserControl
         PerfTrace.UntilLayout(this, started, _screen.GetType().Name);
     }
 
+    // MARK: Study screens on large windows
+
+    /// <summary>
+    /// The study screens (Lernen, Schreiben, Karteikarten, Prüfung) are laid out for 1280 × 800. On a larger window they
+    /// grow as a whole – card, type and buttons alike – instead of a small card in the middle of a large monitor (Joan,
+    /// 06.11.2026). No upper limit (Joan: on a huge monitor it should just keep growing); in steps of 0.05 (no new
+    /// layout for every pixel); never smaller than designed, never on a phone. The sizes are Windows' logical pixels:
+    /// a 4K/8K screen at 200–300 % display scaling grows only a little, the same screen at 100 % a lot.
+    /// </summary>
+    public double StudyScale { get; private set; } = 1;
+
+    /// <summary>The size a study screen lays out in: the window divided by StudyScale.</summary>
+    public Size StudyArea => new(Bounds.Width / StudyScale, Bounds.Height / StudyScale);
+
+    public const double StudyDesignWidth = 1280, StudyDesignHeight = 800;
+
+    /// <summary>The scale for a window of <paramref name="size"/> (pure, for tests and the snapshot tool).</summary>
+    public static double StudyScaleFor(Size size)
+    {
+        if (AppDevice.IsPhone || size.Width <= 0 || size.Height <= 0) return 1;
+        double fit = Math.Min(size.Width / StudyDesignWidth, size.Height / StudyDesignHeight);
+        return Math.Max(1, Math.Floor(fit * 20) / 20);
+    }
+
+    LayoutTransformControl? _studyHost;
+
+    /// <summary>
+    /// Toasts stay above a study screen's floating action bar; phone: above its two-line bar. On a scaled study screen
+    /// they grow with it (from their bottom edge), so they do not shrink to a speck on a huge monitor.
+    /// </summary>
+    void ApplyToastClearance()
+    {
+        if (_toasts is null || _screen is null) return;
+        bool scaled = !AppDevice.IsPhone && !_screen.UsesSidebar && StudyScale > 1;
+        _toasts.BottomClearance = AppDevice.IsPhone && !_screen.UsesSidebar ? 150
+            : _screen.UsesSidebar ? _screen.ToastClearance : _screen.ToastClearance * StudyScale;
+        _toasts.RenderTransformOrigin = new RelativePoint(0.5, 1, RelativeUnit.Relative);
+        _toasts.RenderTransform = scaled ? new ScaleTransform(StudyScale, StudyScale) : null;
+    }
+
+    void UpdateStudyScale(Size size)
+    {
+        double scale = StudyScaleFor(size);
+        if (scale == StudyScale) return;
+        StudyScale = scale;
+        if (_studyHost is not null) _studyHost.LayoutTransform = new ScaleTransform(scale, scale);
+        ApplyToastClearance();
+    }
+
     void RenderBody()
     {
         _body.Children.Clear();
         if (_screen is null) return;
         // The same screen again (sidebar shown or hidden): out of its old layout first.
         if (_screen.View.Parent is Panel previous) previous.Children.Remove(_screen.View);
+        _studyHost = null;
         if (AppDevice.IsPhone)
         {
             // Phone: the page alone; the bar on top only next to pages that would have the sidebar.
@@ -587,18 +757,29 @@ public sealed class MainView : UserControl
             if (!_sidebarHidden) layout.Children.Add(SidebarEdge(layout));
             _body.Children.Add(layout);
         }
-        else _body.Children.Add(_screen.View);
+        else
+        {
+            // A study screen: scaled to the window (StudyScale). LayoutTransformControl scales through its child's
+            // RenderTransform, which the screens' entrance animations set too: a plain panel in between keeps both.
+            var inner = new Panel();
+            inner.Children.Add(_screen.View);
+            _studyHost = new LayoutTransformControl { Child = inner, LayoutTransform = new ScaleTransform(StudyScale, StudyScale) };
+            _body.Children.Add(_studyHost);
+        }
     }
 
     // MARK: Sidebar
 
-    /// <summary>Like the Mac's SidebarColumn: at least 250 wide, at most half the window.</summary>
+    /// <summary>
+    /// Like the Mac's SidebarColumn: at least 250 wide, at most 360 – dragged out, the sidebar stops there and the set
+    /// page beside it always stays in view (Mac since 24.11.2026, Anthony; before: half the window).
+    /// </summary>
     const double SidebarMinWidth = 250;
     const double SidebarDefaultWidth = 262;
+    const double SidebarMaxWidth = 360;
     bool _sidebarHidden;
 
     double SidebarWidth => Math.Clamp(_model.Preferences.SidebarWidth ?? SidebarDefaultWidth, SidebarMinWidth, SidebarMaxWidth);
-    double SidebarMaxWidth => Math.Max(SidebarMinWidth, Math.Floor(ViewSize.Width / 2 / 10) * 10);
 
     /// <summary>The sidebar of the current layout (null on a study screen).</summary>
     Control? CurrentSidebar() =>
@@ -606,7 +787,7 @@ public sealed class MainView : UserControl
 
     /// <summary>
     /// The sidebar's right edge: drag it to make the sidebar wider or narrower (Mac: NavigationSplitView's divider, at most
-    /// half the window), double-click to go back to the usual width.
+    /// SidebarMaxWidth), double-click to go back to the usual width.
     /// </summary>
     Control SidebarEdge(Grid layout)
     {
@@ -619,7 +800,7 @@ public sealed class MainView : UserControl
             Cursor = new Cursor(StandardCursorType.SizeWestEast),
             ZIndex = 5,
         };
-        ToolTip.SetTip(edge, "Ziehen, um die Seitenleiste breiter oder schmaler zu machen");
+        ToolTip.SetTip(edge, L("Ziehen, um die Seitenleiste breiter oder schmaler zu machen"));
         AutomationProperties.SetAccessibilityView(edge, AccessibilityView.Raw);
         double? startX = null, startWidth = null;
         edge.PointerPressed += (_, e) =>
@@ -668,7 +849,7 @@ public sealed class MainView : UserControl
         _sidebarHidden = !_sidebarHidden;
         RenderBody();
         SlideSidebar(_sidebarHidden, !_sidebarHidden, before);
-        DesignSystem.Announcer.Announce(_sidebarHidden ? "Seitenleiste ausgeblendet" : "Seitenleiste eingeblendet");
+        DesignSystem.Announcer.Announce(_sidebarHidden ? L("Seitenleiste ausgeblendet") : L("Seitenleiste eingeblendet"));
     }
 
     /// <summary>
@@ -824,6 +1005,8 @@ public sealed class MainView : UserControl
             if (prompt.Buttons.FirstOrDefault(b => b.IsCancel) is { } c) _model.Answer(c);
             return true;
         }
+        // A text field in the prompt (a form sheet) gets its keys: deleting, moving, pasting.
+        if (FocusManager?.GetFocusedElement() is TextBox box && _promptLayer.IsVisualAncestorOf(box)) return false;
         // Tab and arrows move between the buttons; everything else stays away from the screen behind.
         return e.Key is not (Key.Tab or Key.Left or Key.Right or Key.Space);
     }
@@ -832,6 +1015,31 @@ public sealed class MainView : UserControl
 
     void OnKeyDownTunnel(object? sender, KeyEventArgs e)
     {
+        try { KeyDownTunnel(e); }
+        finally
+        {
+            // Phone: an Esc that did something is the press; the back request Android sends after it is its echo. An Esc
+            // nothing handled must let that back request through (else back did not close the drawer, 06.11.2026).
+            if (e.Key == Key.Escape && AppDevice.IsPhone && e.Handled) _lastBackAt = DateTime.UtcNow;
+        }
+    }
+
+    void KeyDownTunnel(KeyEventArgs e)
+    {
+        // Phone: the system back reaches the app as an Esc key on some phones (Joan's, 06.11.2026), not as a back
+        // request: an open drop-down list or menu closes first, the page stays.
+        if (e.Key == Key.Escape && AppDevice.IsPhone && ClosePopups())
+        {
+            e.Handled = true;
+            _lastBackAt = DateTime.UtcNow;
+            return;
+        }
+        // Phone: the Esc the keyboard sends along with the system back (see OnBackRequested) is the same press.
+        if (e.Key == Key.Escape && BackJustHandled())
+        {
+            e.Handled = true;
+            return;
+        }
         bool isRepeat = !_keysDown.Add(e.Key);
         if (e.Key is Key.Enter or Key.Return)
         {
@@ -889,6 +1097,8 @@ public sealed class MainView : UserControl
     {
         if (_model.Prompt is not null)
         {
+            // Typing reaches only a text field in the prompt (a form sheet), never the screen behind it.
+            if (e.Source is Visual target && _promptLayer.IsVisualAncestorOf(target)) return;
             e.Handled = true;
             return;
         }

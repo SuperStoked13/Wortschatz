@@ -42,7 +42,7 @@ public class LearnFlowTests
         ("feedback", s.Feedback is { } f ? JSONValue.Obj(("f", (f with { Result = null }).ToString()), ("r", f.Result?.ToJson() ?? JSONValue.Null)) : JSONValue.Null),
         ("highlighted", JSONValue.Nullable(s.Highlighted)), ("typed", s.Typed), ("draft", s.Draft), ("pending", s.Pending.ToJsonOrNull()),
         ("roundStart", s.RoundStartCounts?.ToString() ?? ""), ("prompt", s.Prompt?.ToString() ?? ""), ("overlay", s.Overlay?.ToString() ?? ""),
-        ("optionsBefore", s.OptionsBeforeOverlay?.ToJson() ?? JSONValue.Null), ("reviewBefore", JSONValue.Nullable(s.ReviewBeforeOverlay)),
+        ("optionsBefore", s.OptionsBeforeOverlay?.ToJson() ?? JSONValue.Null), ("recheck", s.Recheck),
         ("token", JSONValue.Nullable(s.AutoAdvanceToken)), ("lastToken", s.LastToken), ("paused", s.AutoAdvancePaused), ("praise", s.LastPraise ?? ""),
         ("lock", s.InputLockedUntil), ("rejections", s.Rejections), ("transitions", s.Transitions)).ToString();
 
@@ -689,12 +689,108 @@ public class LearnFlowTests
         Assert.Equal(Phase.Copy, d.State.Phase);
         Assert.Equal(2, d.State.Rejections);
         Assert.True(d.Announced("Noch nicht ganz – tippe die richtige Antwort genau ab."));
-        d.Type("le chemin");
+        // Accepted without its article, but not typed out as shown: Return continues.
+        d.Type("chemin");
+        Assert.Equal(Phase.Copy, d.State.Phase);
         d.Press(KeyInput.Return);
-        // No retry at the end of the round any more: the only card comes back in the next round (multiple choice).
+        // No retry at the end of the round any more: the only card comes back in the next round (written: it was
+        // answered right before, so no multiple choice).
         Assert.Equal(Phase.Checkpoint, d.State.Phase);
         d.Press(KeyInput.Return);
-        Assert.Equal(Phase.Mc, d.State.Phase);
+        Assert.Equal(Phase.Written, d.State.Phase);
+    }
+
+    [Fact]
+    public void TheCopyStepContinuesOnceTheAnswerIsTypedOut()
+    {
+        var cards = Words();
+        var d = new Driver(MakeSet(cards), Familiar(cards), Options(retype: true), subset: StudySubset.CardIds(["a"]));
+        d.Type("la route");
+        d.Press(KeyInput.Return);
+        Assert.Equal(Phase.Copy, d.State.Phase);
+        d.Type("le chemi");
+        Assert.Equal(Phase.Copy, d.State.Phase);
+        Assert.Null(d.State.AutoAdvanceToken);
+        var transitions = d.State.Transitions;
+        // Upper/lower case and spacing do not matter. The finished word stays a short beat.
+        d.Type("Le  Chemin");
+        Assert.Equal(Phase.Copy, d.State.Phase);
+        Assert.Equal(CopyStep.AdvanceMs, d.Timers[^1].Ms);
+        d.FireTimer();
+        Assert.Equal(Phase.Checkpoint, d.State.Phase);
+        Assert.Equal(transitions + 1, d.State.Transitions);
+        // Return out of habit right after it falls into the input lock.
+        d.Press(KeyInput.Return, after: 100);
+        Assert.Equal(Phase.Checkpoint, d.State.Phase);
+    }
+
+    [Fact]
+    public void EnterDuringTheBeatContinuesAtOnce()
+    {
+        var cards = Words();
+        var d = new Driver(MakeSet(cards), Familiar(cards), Options(retype: true), subset: StudySubset.CardIds(["a"]));
+        d.Type("la route");
+        d.Press(KeyInput.Return);
+        d.Send(new Event.DraftChanged("le chemin"), after: 1500);
+        var token = d.State.AutoAdvanceToken;
+        Assert.NotNull(token);
+        d.Press(KeyInput.Return, after: 150);
+        Assert.Equal(Phase.Checkpoint, d.State.Phase);
+        // The beat's timer is stale now.
+        d.Send(new Event.AutoAdvanceFired(token ?? -1), after: 250);
+        Assert.Equal(Phase.Checkpoint, d.State.Phase);
+    }
+
+    [Fact]
+    public void ACopyAcceptedLikeAnAnswerContinuesToo()
+    {
+        Card[] cards = [new("a", "le/la collègue", "der Arbeitskollege, die Arbeitskollegin"), new("b", "la rue", "die Strasse")];
+        var d = new Driver(MakeSet(cards), Familiar(cards), Options(retype: true), subset: StudySubset.CardIds(["a"]));
+        d.Type("la route");
+        d.Press(KeyInput.Return);
+        Assert.Equal(Phase.Copy, d.State.Phase);
+        d.Type("le collègue");
+        Assert.NotNull(d.State.AutoAdvanceToken);
+        // Typing on so that it is no longer right stops the beat; right again starts it anew.
+        d.Type("le collègues x");
+        Assert.Null(d.State.AutoAdvanceToken);
+        d.Type("la collègue");
+        d.FireTimer();
+        Assert.Equal(Phase.Checkpoint, d.State.Phase);
+    }
+
+    [Fact]
+    public void ACopyThatIsOnlyTheStartOfTheAnswerWaitsForReturn()
+    {
+        Card[] cards = [new("a", "le cerveau, les cerveaux", "das Gehirn"), new("b", "la rue", "die Strasse")];
+        var d = new Driver(MakeSet(cards), Familiar(cards), Options(retype: true), subset: StudySubset.CardIds(["a"]));
+        d.Type("la route");
+        d.Press(KeyInput.Return);
+        Assert.Equal(Phase.Copy, d.State.Phase);
+        // One of the two forms: right, but whoever copies both must not be cut off after it.
+        d.Type("le cerveau");
+        Assert.Equal(Phase.Copy, d.State.Phase);
+        Assert.Null(d.State.AutoAdvanceToken);
+        d.Press(KeyInput.Return);
+        Assert.Equal(Phase.Checkpoint, d.State.Phase);
+    }
+
+    [Fact]
+    public void ATypedOutCopyWaitsWhileTheOptionsAreOpen()
+    {
+        var cards = Words();
+        var d = new Driver(MakeSet(cards), Familiar(cards), Options(retype: true), subset: StudySubset.CardIds(["a"]));
+        d.Type("la route");
+        d.Press(KeyInput.Return);
+        d.Type("le chemin");
+        var token = d.State.AutoAdvanceToken;
+        d.Send(new Event.OverlayPresented(Flow.Overlay.Options), after: 100);
+        d.Send(new Event.AutoAdvanceFired(token ?? -1), after: 300);
+        Assert.Equal(Phase.Copy, d.State.Phase);
+        d.Send(new Event.OverlayDismissed());
+        Assert.Equal(Phase.Copy, d.State.Phase);
+        d.FireTimer();
+        Assert.Equal(Phase.Checkpoint, d.State.Phase);
     }
 
     [Fact]
@@ -839,7 +935,7 @@ public class LearnFlowTests
             // The only card of the subset: a miss comes back in the next round, after the checkpoint.
             ("written wrong", () => { var d = Written(); d.AnswerByKeys(false); return d; }, "Weiter", 1, d => d.State.Phase == Phase.Checkpoint),
             ("copy, empty", () => { var d = Written(true); d.AnswerByKeys(false); return d; }, "Weiter", 0, d => d.State.Phase == Phase.Copy && d.State.Rejections == 1),
-            ("copy, typed", () => { var d = Written(true); d.AnswerByKeys(false); d.Type("le chemin"); return d; }, "Weiter", 1, d => d.State.Phase == Phase.Checkpoint),
+            ("copy, typed", () => { var d = Written(true); d.AnswerByKeys(false); d.Type("chemin"); return d; }, "Weiter", 1, d => d.State.Phase == Phase.Checkpoint), // typed out as shown it would continue by itself
             ("checkpoint", () => { var d = new Driver(MakeSet(MakeCards(2)), options: Options(roundSize: 2)); Play(d, p => p == Phase.Checkpoint); return d; }, "Weiter zu Runde 2", 1,
                 d => d.State.Phase == Phase.Written),
             ("finished", () => { var d = new Driver(MakeSet(MakeCards(2))); Play(d, p => p == Phase.Finished); return d; }, "Fertig", 0,
@@ -900,8 +996,21 @@ public class LearnFlowTests
                         d.Press(KeyInput.Return);
                         Assert.Equal(before, d.State.Transitions);
                     }
-                    d.Type(d.Question!.Expected);
-                    d.Press(KeyInput.Return);
+                    // Typed out, the copy continues by itself after a short beat, or at once with Enter; whichever
+                    // comes second does nothing.
+                    d.Send(new Event.DraftChanged(d.Question!.Expected), after: 600);
+                    var token = d.State.AutoAdvanceToken;
+                    Assert.NotNull(token);
+                    if (decide() < 0.5)
+                    {
+                        d.Press(KeyInput.Return, after: 100);
+                        d.Send(new Event.AutoAdvanceFired(token!.Value), after: CopyStep.AdvanceMs);
+                    }
+                    else
+                    {
+                        d.Send(new Event.AutoAdvanceFired(token!.Value), after: CopyStep.AdvanceMs);
+                        d.Press(KeyInput.Return, after: 100);
+                    }
                     Assert.Equal(1, d.State.Transitions - before);
                     break;
                 case Flow.PhaseKind.Feedback or Flow.PhaseKind.Checkpoint:

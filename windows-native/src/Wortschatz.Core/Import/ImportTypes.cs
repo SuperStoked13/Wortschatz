@@ -1,7 +1,10 @@
+using static Wortschatz.Core.CoreText;
+
 namespace Wortschatz.Core;
 
 // Port of ImportTypes.swift: shared types of the importers (the contracts of src/import/files.js,
-// pdf.js and ocr.js). All user-facing text is German with Swiss spelling.
+// pdf.js and ocr.js). All user-facing text is German with Swiss spelling, in the app's language through
+// CoreText.L.
 
 /// <summary>What an imported file contained (JS <c>kind</c>).</summary>
 public enum ImportFileKind { Text, Pdf, Image }
@@ -22,7 +25,7 @@ public sealed record ImportSource(string Name, string MimeType = "", byte[]? Dat
 }
 
 /// <summary>
-/// The text read from one file (JS <c>{ text, kind, name, warnings }</c>). Warnings: German messages about
+/// The text read from one file (JS <c>{ text, kind, name, warnings }</c>). Warnings: messages (app language) about
 /// content that could not be read although the import worked (e.g. scanned pages of a text PDF).
 /// </summary>
 public sealed record ImportedFile(string Text, ImportFileKind Kind, string Name, IReadOnlyList<string> Warnings)
@@ -30,7 +33,7 @@ public sealed record ImportedFile(string Text, ImportFileKind Kind, string Name,
     public ImportedFile(string text, ImportFileKind kind, string name) : this(text, kind, name, []) { }
 }
 
-/// <summary>Progress of a running import: a fraction 0…1 and a German status line.</summary>
+/// <summary>Progress of a running import: a fraction 0…1 and a status line (in the app's language).</summary>
 public readonly record struct ImportProgress(double Fraction, string Message);
 
 /// <summary>The kind of an import failure (Swift <c>ImportError.Code</c>; raw values like the JS <c>err.code</c>).</summary>
@@ -62,7 +65,7 @@ public enum ImportErrorCode
     PdfTooManyPages,
 }
 
-/// <summary>An import failure with a German, user-presentable message (JS errors with <c>err.code</c>).</summary>
+/// <summary>An import failure with a user-presentable message (JS errors with <c>err.code</c>; German source).</summary>
 public sealed class ImportError(ImportErrorCode code, string message, Exception? inner = null) : Exception(message, inner)
 {
     public ImportErrorCode Code { get; } = code;
@@ -90,42 +93,42 @@ public sealed class ImportError(ImportErrorCode code, string message, Exception?
     }
 }
 
-/// <summary>The German messages of the web importers (Swiss spelling).</summary>
+/// <summary>The messages of the web importers (German source with Swiss spelling, translated with L).</summary>
 public static class ImportMessages
 {
-    public const string Unsupported = "Dieses Dateiformat wird nicht unterstützt.";
-    public const string Document =
-        Unsupported + " Kopiere den Text aus dem Dokument und füge ihn ins Textfeld ein – oder speichere es als PDF.";
-    public const string Empty = "Die Datei ist leer.";
-    public const string TooLarge = "Die Textdatei ist zu gross (maximal 5 MB).";
-    public const string PdfEmpty = "In der PDF-Datei wurde kein Text gefunden.";
-    public const string Read = "Die Datei konnte nicht gelesen werden. Ist sie noch vorhanden und vollständig heruntergeladen?";
-    public const string Aborted = "Import abgebrochen.";
-    public const string ImageEmpty =
-        "Auf dem Bild wurde kein Text erkannt. Achte auf gutes Licht und eine scharfe Aufnahme und fotografiere die Seite möglichst gerade.";
-    public const string OcrFailed =
-        "Die Texterkennung ist fehlgeschlagen. Versuche es mit einem schärferen Foto oder einem Screenshot.";
-    public const string Decode = "Das Bild konnte nicht geöffnet werden.";
-    public const string PdfPassword =
-        "Diese PDF-Datei ist passwortgeschützt. Entferne den Schutz oder kopiere den Text direkt aus der PDF.";
-    public const string PdfInvalid = "Die PDF-Datei ist beschädigt oder keine gültige PDF.";
-    public const string PdfFailed = "Die PDF-Datei konnte nicht gelesen werden.";
+    public static string Unsupported => L("Dieses Dateiformat wird nicht unterstützt.");
+    public static string Document =>
+        L("Dieses Dateiformat wird nicht unterstützt. Kopiere den Text aus dem Dokument und füge ihn ins Textfeld ein – oder speichere es als PDF.");
+    public static string Empty => L("Die Datei ist leer.");
+    public static string TooLarge => L("Die Textdatei ist zu gross (maximal 5 MB).");
+    public static string PdfEmpty => L("In der PDF-Datei wurde kein Text gefunden.");
+    public static string Read => L("Die Datei konnte nicht gelesen werden. Ist sie noch vorhanden und vollständig heruntergeladen?");
+    public static string Aborted => L("Import abgebrochen.");
+    public static string ImageEmpty =>
+        L("Auf dem Bild wurde kein Text erkannt. Achte auf gutes Licht und eine scharfe Aufnahme und fotografiere die Seite möglichst gerade.");
+    public static string OcrFailed =>
+        L("Die Texterkennung ist fehlgeschlagen. Versuche es mit einem schärferen Foto oder einem Screenshot.");
+    public static string Decode => L("Das Bild konnte nicht geöffnet werden.");
+    public static string PdfPassword =>
+        L("Diese PDF-Datei ist passwortgeschützt. Entferne den Schutz oder kopiere den Text direkt aus der PDF.");
+    public static string PdfInvalid => L("Die PDF-Datei ist beschädigt oder keine gültige PDF.");
+    public static string PdfFailed => L("Die PDF-Datei konnte nicht gelesen werden.");
     /// <summary>Fallback for a failed file in a batch (editor-import.js).</summary>
-    public const string FileFailed = "Die Datei konnte nicht gelesen werden.";
+    public static string FileFailed => L("Die Datei konnte nicht gelesen werden.");
 
     public static string PdfTooManyPages(int count) =>
-        $"Diese PDF-Datei enthält {count} gescannte Seiten. Die Texterkennung ist auf {PDFTextExtractor.MaxOCRPages} Seiten beschränkt – teile die Datei bitte auf.";
+        L($"Diese PDF-Datei enthält {count} gescannte Seiten. Die Texterkennung ist auf {PDFTextExtractor.MaxOCRPages} Seiten beschränkt – teile die Datei bitte auf.");
 
     // Progress lines.
-    public const string ReadingFile = "Datei wird gelesen …";
-    public const string FileRead = "Datei gelesen";
-    public const string PreparingImage = "Bild wird vorbereitet …";
-    public const string Recognizing = "Texterkennung läuft …";
-    public const string Recognized = "Text erkannt";
-    public const string OpeningPDF = "PDF wird geöffnet …";
-    public const string ReadingPDF = "PDF wird gelesen …";
-    public const string PdfRead = "PDF gelesen";
-    public const string PdfReadPartially = "PDF gelesen – gescannte Seiten konnten nicht erkannt werden.";
+    public static string ReadingFile => L("Datei wird gelesen …");
+    public static string FileRead => L("Datei gelesen");
+    public static string PreparingImage => L("Bild wird vorbereitet …");
+    public static string Recognizing => L("Texterkennung läuft …");
+    public static string Recognized => L("Text erkannt");
+    public static string OpeningPDF => L("PDF wird geöffnet …");
+    public static string ReadingPDF => L("PDF wird gelesen …");
+    public static string PdfRead => L("PDF gelesen");
+    public static string PdfReadPartially => L("PDF gelesen – gescannte Seiten konnten nicht erkannt werden.");
 }
 
 /// <summary>

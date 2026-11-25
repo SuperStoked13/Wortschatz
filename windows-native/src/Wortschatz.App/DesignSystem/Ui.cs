@@ -7,6 +7,7 @@ using Avalonia.Input;
 using Avalonia.Layout;
 using Avalonia.Media;
 using Wortschatz.Core;
+using static Wortschatz.Core.CoreText;
 
 namespace Wortschatz.App.DesignSystem;
 
@@ -87,14 +88,6 @@ public class WsButton : Button
         Refresh();
     }
 
-    /// <summary>Exact colours for a selected/checked look (overrides the kind's).</summary>
-    public void SetSelected(bool selected)
-    {
-        if (!selected) return;
-        var p = WsTheme.P;
-        SetColors(p.AccentSoft, p.AccentSoft, p.AccentSoft, Colors.Transparent);
-    }
-
     public Border Chrome => _chrome;
 
     void Refresh()
@@ -132,6 +125,17 @@ public class WsButton : Button
     {
         base.OnPointerReleased(e);
         _down = false;
+        // A finger does not hover: without this a tapped button kept its hover colour until the next tap elsewhere.
+        if (e.Pointer.Type == PointerType.Touch) _over = false;
+        Refresh();
+    }
+
+    /// <summary>A press that turned into a scroll (e.g. swiping the accent keys) lets go of the button.</summary>
+    protected override void OnPointerCaptureLost(PointerCaptureLostEventArgs e)
+    {
+        base.OnPointerCaptureLost(e);
+        _down = false;
+        if (e.Pointer.Type == PointerType.Touch) _over = false;
         Refresh();
     }
 
@@ -173,9 +177,16 @@ public static class Ui
         return t;
     }
 
-    /// <summary>The small spaced capitals above a section ("WEITERLERNEN").</summary>
+    /// <summary>The small spaced capitals above a section ("WEITERLERNEN"), in capitals of the app's language.</summary>
     public static TextBlock Eyebrow(string text, Color? color = null) =>
-        Text(text.ToUpper(System.Globalization.CultureInfo.GetCultureInfo("de-CH")), 12, FontWeight.SemiBold, color ?? P.TextTertiary, letterSpacing: 1);
+        Text(text.ToUpper(Services.AppLanguage.FormattingCulture), 12, FontWeight.SemiBold, color ?? P.TextTertiary, letterSpacing: 1);
+
+    /// <summary>
+    /// A text whose German word means something else elsewhere (Mac: <c>String(localized: key, defaultValue:)</c>):
+    /// <c>Ui.Meaning("Töne", L("Töne (Soundeffekte)"))</c> – German shows the word, another language the translation of
+    /// the key with its meaning in brackets.
+    /// </summary>
+    public static string Meaning(string german, string translated) => CoreText.Table is null ? german : translated;
 
     public static TextBlock Title(string text, double size = 32) => Text(text, size, FontWeight.Bold, wrap: TextWrapping.Wrap);
 
@@ -225,8 +236,6 @@ public static class Ui
         Panel panel => panel.Children.Count <= 4 && panel.Children.All(c => c.Width <= 48 || c is Border { Width: <= 48 } || c is TextBlock { Text.Length: <= 6 }),
         _ => control.Width <= 90,
     };
-
-    public static Control Spacer(double height) => new Border { Height = height };
 
     // MARK: Surfaces
 
@@ -323,10 +332,19 @@ public static class Ui
 
     public static WsButton IconButton(IconName icon, string tooltip, Action onClick, double size = 38, ButtonKind kind = ButtonKind.Glass, Color? color = null)
     {
+        // Phone: small plain symbols (🔊 ☆ ✏ on the cards, 32 points) were easy to miss – a tap beside the star turned the
+        // flashcard instead (06.11.2026). The touch area grows to 44, the layout stays (negative margin).
+        double grow = 0;
+        if (AppDevice.IsPhone && kind == ButtonKind.Plain && size is >= 28 and < 44)
+        {
+            grow = (44 - size) / 2;
+            size = 44;
+        }
         var b = new WsButton(new Border { Child = Icons.Icon(icon, 18, color ?? P.TextSecondary), HorizontalAlignment = HorizontalAlignment.Center },
             kind, size, size / 2, new Thickness(0)) { Width = size };
         b.Chrome.Child!.HorizontalAlignment = HorizontalAlignment.Center;
         b.Chrome.Child!.VerticalAlignment = VerticalAlignment.Center;
+        if (grow > 0) b.Margin = new Thickness(-grow);
         b.Click += (_, _) => onClick();
         ToolTip.SetTip(b, tooltip);
         AutomationProperties.SetName(b, tooltip);
@@ -361,31 +379,32 @@ public static class Ui
     {
         if (string.IsNullOrWhiteSpace(keyHint)) return;
         AutomationProperties.SetAcceleratorKey(control, keyHint.Replace("↵", "Enter").Replace(' ', '+'));
-        AutomationProperties.SetHelpText(control, $"Kurzbefehl: {KeyName(keyHint)}");
+        AutomationProperties.SetHelpText(control, L($"Kurzbefehl: {KeyName(keyHint)}"));
     }
 
     /// <summary>
-    /// The German name of a key hint for screen readers ("↵" → "Eingabetaste", "Alt ↵" → "Alt-Eingabetaste", "Ctrl E" →
-    /// "Steuerung-E", "1" → "Taste 1"; Mac: KeyGlyph.accessibilityName).
+    /// The name of a key hint for screen readers ("↵" → "Eingabetaste", "Alt ↵" → "Alt-Eingabetaste", "Ctrl E" →
+    /// "Steuerung-E", "1" → "Taste 1"; Mac: KeyGlyph.accessibilityName). Key names, joined with "-" in every language.
     /// </summary>
     public static string KeyName(string hint)
     {
         var parts = hint.Split([' ', '+'], StringSplitOptions.RemoveEmptyEntries);
-        if (parts.Length == 1 && parts[0].Length == 1 && char.IsDigit(parts[0][0])) return $"Taste {parts[0]}";
+        if (parts.Length == 1 && parts[0].Length == 1 && char.IsDigit(parts[0][0])) return L($"Taste {parts[0]}");
         return string.Join("-", parts.Select(part => part switch
         {
-            "↵" or "Enter" => "Eingabetaste",
-            "Esc" => "Escape-Taste",
-            "Ctrl" or "Strg" => "Steuerung",
-            "Shift" or "⇧" => "Umschalt",
+            "↵" or "Enter" => L("Eingabetaste"),
+            "Esc" => L("Escape-Taste"),
+            "Ctrl" or "Strg" => L("Steuerung"),
+            "Shift" or "⇧" => L("Umschalt"),
             "Alt" => "Alt",
-            "Tab" or "⇥" => "Tabulatortaste",
-            "⌫" => "Rückschritttaste",
-            "␣" => "Leertaste",
-            "←" => "Pfeil nach links",
-            "→" => "Pfeil nach rechts",
-            "↑↓←→" or "↑↓" => "Pfeiltasten",
-            "Entf" => "Entfernen",
+            "Tab" or "⇥" => L("Tabulatortaste"),
+            "⌫" => L("Rückschritttaste"),
+            "␣" => L("Leertaste"),
+            "←" => L("Pfeil nach links"),
+            "→" => L("Pfeil nach rechts"),
+            "↑↓←→" or "↑↓" => L("Pfeiltasten"),
+            // The Del key (not the button «Entfernen»); «Del» is its cap in English.
+            "Entf" or "Del" => Meaning("Entfernen", L("Entfernen (Taste)")),
             _ => part.ToUpperInvariant(),
         }));
     }
@@ -414,12 +433,12 @@ public static class Ui
     /// </summary>
     public static string ChipName(string text, IconName? icon = null)
     {
-        if (Labels.STATUS.Values.Contains(text)) return $"Status: {text}";
+        if (Labels.STATUS.Values.Contains(text)) return L($"Status: {text}");
         foreach (var a in Enum.GetValues<Lang>())
             foreach (var b in Enum.GetValues<Lang>())
                 if (text == Labels.LangPair(a, b) || text == $"{Labels.LangName(a)} → {Labels.LangName(b)}")
-                    return $"{Labels.LangName(a)} nach {Labels.LangName(b)}";
-        if (icon == IconName.Lightbulb) return $"Hinweis: {text}";
+                    return L($"{Labels.LangName(a)} nach {Labels.LangName(b)}");
+        if (icon == IconName.Lightbulb) return L($"Hinweis: {text}");
         return text;
     }
 
@@ -442,23 +461,6 @@ public static class Ui
         g.Children.Add(b);
         if (total == 0) g.Children.Clear();
         return border;
-    }
-
-    /// <summary>The round's segment bar ("Runde 3 ▬▬▬▭▭"): filled, half and empty segments.</summary>
-    public static Control Segments(IReadOnlyList<LearnFlow.SegmentFill> fills, double width = 26)
-    {
-        var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4, VerticalAlignment = VerticalAlignment.Center };
-        foreach (var f in fills)
-        {
-            var g = new Grid { Width = width, Height = 5 };
-            g.Children.Add(new Border { CornerRadius = new CornerRadius(3), Background = WsTheme.B(P.Track) });
-            if (f.Reached > 0)
-                g.Children.Add(new Border { CornerRadius = new CornerRadius(3), Background = WsTheme.B(Palette.Hex(Rgb(P.Learning.Fill), 0.9)), Width = width * f.Reached, HorizontalAlignment = HorizontalAlignment.Left });
-            if (f.Mastered > 0)
-                g.Children.Add(new Border { CornerRadius = new CornerRadius(3), Background = WsTheme.B(P.Mastered.Fill), Width = width * f.Mastered, HorizontalAlignment = HorizontalAlignment.Left });
-            row.Children.Add(g);
-        }
-        return row;
     }
 
     public static uint Rgb(Color c) => (uint)(c.R << 16 | c.G << 8 | c.B);

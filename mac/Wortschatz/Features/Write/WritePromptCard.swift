@@ -6,6 +6,7 @@ import WortschatzCore
 /// the answer field with the special characters, the accepted answer, or the miss with
 /// "Deine Antwort", "Richtige Antwort" and the copy field.
 struct WritePromptCard: View {
+    @Environment(\.studyScale) private var studyScale
     let controller: WriteController
     let question: WriteFlow.Question
     var focus: FocusState<WriteKeyRouter.Focus?>.Binding
@@ -26,8 +27,9 @@ struct WritePromptCard: View {
                     tools
                 }
                 ZStack(alignment: .leading) {
-                    Text(LearnText.spoken(question.prompt, lang: question.promptLang))
-                        .font(Typography.prompt(for: question.prompt))
+                    // Long words shrink a little, then break at syllables (`LongWordText`).
+                    LongWordText(
+                        text: question.prompt, lang: question.promptLang, size: Typography.promptSize(for: question.prompt) * studyScale)
                         .foregroundStyle(.primary)
                         .multilineTextAlignment(.leading)
                         .fixedSize(horizontal: false, vertical: true)
@@ -55,15 +57,18 @@ struct WritePromptCard: View {
     private var tools: some View {
         HStack(spacing: Spacing.xxs) {
             if question.promptLang != .other {
-                LearnIconButton(label: "Vorlesen", help: "Vorlesen (⌘R)", systemImage: "speaker.wave.2.fill") {
+                LearnIconButton(
+                    label: String(localized: "Vorlesen"), help: String(localized: "Vorlesen (⌘R)"),
+                    systemImage: "speaker.wave.2.fill"
+                ) {
                     controller.send(.speak(.prompt))
                 }
                 .symbolEffect(.variableColor.iterative, isActive: controller.speech.isSpeaking && !reduceMotion)
             }
 
             LearnIconButton(
-                label: question.starred ? "Markierung entfernen" : "Markieren",
-                help: question.starred ? "Markierung entfernen (⌘D)" : "Markieren (⌘D)",
+                label: question.starred ? String(localized: "Markierung entfernen") : String(localized: "Markieren"),
+                help: question.starred ? String(localized: "Markierung entfernen (⌘D)") : String(localized: "Markieren (⌘D)"),
                 systemImage: question.starred ? "star.fill" : "star",
                 tint: question.starred ? Theme.star : nil
             ) {
@@ -73,8 +78,8 @@ struct WritePromptCard: View {
 
             // ⌘E wins over the Lernset menu's ⌘E while a card is on screen: it edits this card.
             LearnIconButton(
-                label: "Karte bearbeiten", help: "Karte bearbeiten (⌘E)", systemImage: "square.and.pencil",
-                shortcut: KeyboardShortcut("e", modifiers: .command)
+                label: String(localized: "Karte bearbeiten"), help: String(localized: "Karte bearbeiten (⌘E)"),
+                systemImage: "square.and.pencil", shortcut: KeyboardShortcut("e", modifiers: .command)
             ) {
                 controller.send(.requestEdit)
             }
@@ -154,9 +159,9 @@ struct WritePromptCard: View {
                 // AppKit writes the text back when the field becomes first responder: only real
                 // edits reach the flow (an edit clears the rejected-copy mark).
                 text: Binding(
-                    get: { controller.state.input },
+                    get: { controller.input },
                     set: { text in
-                        if text != controller.state.input { controller.send(.inputChanged(text)) }
+                        if text != controller.input { controller.send(.inputChanged(text)) }
                     }),
                 selection: $selection,
                 label: WriteFlow.fieldLabel(state),
@@ -192,6 +197,7 @@ struct WritePromptCard: View {
 /// The large answer (or copy) field, a plain text field; `StudyAnswerBox` draws its box (with
 /// a red ring after a rejected copy).
 private struct WriteAnswerField: View {
+    @Environment(\.studyScale) private var studyScale
     @Binding var text: String
     @Binding var selection: TextSelection?
     let label: String
@@ -210,9 +216,12 @@ private struct WriteAnswerField: View {
     let onKey: (KeyInput, _ isRepeat: Bool) -> Void
 
     var body: some View {
+        // Read here, so a text changed by the app (a special character) reaches the field: the
+        // screen around it is not rebuilt when only the text changes (`WriteController.input`).
+        let _ = text
         TextField(label, text: $text, selection: $selection, prompt: Text(placeholder))
             .textFieldStyle(.plain)
-            .font(Typography.answerField)
+            .font(Typography.answerField(studyScale))
             .cardFieldDirection(lang)
             .autocorrectionDisabled()
             .writingToolsBehavior(.disabled)
@@ -221,7 +230,7 @@ private struct WriteAnswerField: View {
             .onSubmit(onSubmit)
             .studyFieldKeys(onKey)
             .accessibilityLabel("\(label): \(placeholder)")
-            .accessibilityHint(isInvalid ? "Noch nicht ganz – tippe die richtige Antwort genau ab." : placeholder)
+            .accessibilityHint(isInvalid ? String(localized: "Noch nicht ganz – tippe die richtige Antwort genau ab.") : placeholder)
             .accessibilityIdentifier(isCopy ? "write-copy" : "write-answer")
     }
 }
@@ -273,6 +282,7 @@ private struct WriteCorrectDetails: View {
 /// After a miss: "Deine Antwort" with the character diff and the hint chip, "Richtige Antwort"
 /// with 🔊, the note after a correcting edit, the copy field (if on) and "Bearbeiten ⌘E".
 private struct WriteMissDetails<Copy: View>: View {
+    @Environment(\.studyScale) private var studyScale
     let feedback: WriteFlow.Feedback
     let question: WriteFlow.Question
     let onSpeak: () -> Void
@@ -282,7 +292,7 @@ private struct WriteMissDetails<Copy: View>: View {
     var body: some View {
         VStack(alignment: .leading, spacing: Spacing.m) {
             if feedback.showsGiven {
-                StudyFeedbackRow(title: "Deine Antwort") {
+                StudyFeedbackRow(title: String(localized: "Deine Antwort")) {
                     if feedback.showsHint, let hint = feedback.hintLabel {
                         HintChip(verbatim: hint, size: .small)
                     }
@@ -291,19 +301,21 @@ private struct WriteMissDetails<Copy: View>: View {
                 }
             }
 
-            StudyFeedbackRow(title: "Richtige Antwort") {
+            StudyFeedbackRow(title: String(localized: "Richtige Antwort")) {
                 EmptyView()
             } content: {
                 HStack(alignment: .center, spacing: Spacing.xs) {
                     // Not selectable (like Learn): selectable text takes the keyboard focus when
                     // clicked, and Return ("Weiter") or the copy field would stop getting keys.
                     Text(LearnText.spoken(question.expected, lang: question.answerLang))
-                        .font(Typography.answerField)
+                        .font(Typography.answerField(studyScale))
                         .foregroundStyle(Theme.success.text)
                         .fixedSize(horizontal: false, vertical: true)
                         .cardTextDirection(question.answerLang)
                     if question.answerLang != .other {
-                        LearnIconButton(label: "Antwort vorlesen", help: "Antwort vorlesen", systemImage: "speaker.wave.2", action: onSpeak)
+                        LearnIconButton(
+                            label: String(localized: "Antwort vorlesen"), help: String(localized: "Antwort vorlesen"),
+                            systemImage: "speaker.wave.2", action: onSpeak)
                     }
                 }
             }

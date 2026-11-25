@@ -13,11 +13,6 @@ enum PasteboardImage {
     /// Content types the editor accepts for ⌘V (`onPasteCommand`) and drops (`onDrop`).
     static let acceptedTypes: [UTType] = [.fileURL] + imageTypes
 
-    /// Whether the pasteboard holds something for the importer: files or an image.
-    static func hasImportableContent(_ pasteboard: NSPasteboard = .general) -> Bool {
-        !fileURLs(on: pasteboard).isEmpty || pasteboard.availableType(from: imageTypes.map(pasteboardType)) != nil
-    }
-
     /// Whether the pasteboard holds an image (for enabling "Bild aus Zwischenablage").
     static func hasImage(_ pasteboard: NSPasteboard = .general) -> Bool {
         pasteboard.availableType(from: imageTypes.map(pasteboardType)) != nil

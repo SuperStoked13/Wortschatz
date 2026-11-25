@@ -102,12 +102,16 @@ struct ExamSheetView: View {
         guard langs.count == 1, let lang = langs.first, lang != .other,
             controller.set.termLang != controller.set.defLang
         else { return count }
-        return "\(count) · Antworten auf \(Labels.langName(lang))"
+        return String(localized: "\(count) · Antworten auf \(Labels.langName(lang))")
     }
 
     private func row(_ question: ExamQuestion, proxy: ScrollViewProxy) -> some View {
-        ExamQuestionRow(
+        let isFocused = focus.wrappedValue == question.number
+        return ExamQuestionRow(
             question: question,
+            answer: controller.answers[question.number] ?? "",
+            selectionShown: isFocused ? selection : nil,
+            isFocused: isFocused,
             text: Binding(
                 get: { controller.answers[question.number] ?? "" },
                 set: { controller.setAnswer($0, for: question.number) }),
@@ -117,7 +121,6 @@ struct ExamSheetView: View {
             focus: focus,
             promptLabel: promptLabel(question),
             placeholder: placeholder(question),
-            isAnswered: LearnText.hasText(controller.answers[question.number] ?? ""),
             isWide: isWide,
             onEscape: controller.exit
         ) {
@@ -127,6 +130,8 @@ struct ExamSheetView: View {
             focus.wrappedValue = next
             withAnimation(.easeInOut(duration: 0.25)) { proxy.scrollTo(next) }
         }
+        // Only the row whose answer, caret or focus changed is rebuilt, not every row per key.
+        .equatable()
     }
 
     /// The accent buttons of the focused answer's language, floating over the bar.
@@ -167,34 +172,46 @@ struct ExamSheetView: View {
     private func promptLabel(_ question: ExamQuestion) -> String {
         let set = controller.set
         if set.termLang == set.defLang || question.promptLang == .other {
-            return question.ask == .term ? "Definition" : "Begriff"
+            return question.ask == .term ? String(localized: "Definition") : String(localized: "Begriff")
         }
         return Labels.langName(question.promptLang)
     }
 
     private func placeholder(_ question: ExamQuestion) -> String {
         let set = controller.set
-        if set.termLang == set.defLang || question.answerLang == .other { return "Antwort" }
-        return "Auf \(Labels.langName(question.answerLang)) …"
+        if set.termLang == set.defLang || question.answerLang == .other { return String(localized: "Antwort") }
+        return String(localized: "Auf \(Labels.langName(question.answerLang)) …")
     }
 }
 
 /// One question of the sheet: its number, the prompt and the answer field; side by side in wide
-/// windows, one under the other in narrow ones.
-private struct ExamQuestionRow: View {
+/// windows, one under the other in narrow ones. Equatable on what it shows (`answer`,
+/// `selectionShown`, `isFocused` …), so typing in one field leaves the other rows alone; the
+/// bindings and actions read the live values.
+private struct ExamQuestionRow: View, Equatable {
     let question: ExamQuestion
+    /// The answer as typed (`text` reads the same, live).
+    let answer: String
+    /// The caret, for the focused row only (`selection` reads the same, live).
+    let selectionShown: TextSelection?
+    let isFocused: Bool
     @Binding var text: String
     @Binding var selection: TextSelection?
     var focus: FocusState<Int?>.Binding
     let promptLabel: String
     let placeholder: String
-    let isAnswered: Bool
     let isWide: Bool
     /// esc: the field editor would swallow it before the Lernen menu's "Beenden" sees it.
     let onEscape: () -> Void
     let onSubmit: () -> Void
 
-    private var isFocused: Bool { focus.wrappedValue == question.number }
+    private var isAnswered: Bool { LearnText.hasText(answer) }
+
+    static func == (a: Self, b: Self) -> Bool {
+        a.question == b.question && a.answer == b.answer && a.selectionShown == b.selectionShown
+            && a.isFocused == b.isFocused && a.promptLabel == b.promptLabel && a.placeholder == b.placeholder
+            && a.isWide == b.isWide
+    }
 
     var body: some View {
         let layout =
@@ -214,7 +231,7 @@ private struct ExamQuestionRow: View {
                         .cardTextDirection(question.promptLang)
                         .accessibilityLabel(
                             Text(
-                                AttributedString("Frage \(question.number), \(promptLabel): ")
+                                AttributedString(String(localized: "Frage \(question.number), \(promptLabel): "))
                                     + LearnText.spoken(question.prompt, lang: question.promptLang)))
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)

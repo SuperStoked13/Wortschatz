@@ -320,8 +320,9 @@ struct LearnEngineTests {
         let progress = [
             "c1": Self.progressEntry(2),  // mastered
             "c2": Self.progressEntry(1),  // familiar → written
-            "c3": Self.progressEntry(0, 1, 1, .incorrect),  // reset → mc, but not fresh
+            "c3": Self.progressEntry(0, 1, 1, .incorrect),  // reset after a right answer → written, not fresh
             "c4": Self.progressEntry(5, 6, 1),  // mastered
+            "c6": Self.progressEntry(0, 0, 2, .incorrect),  // never right → mc, not fresh
         ]
         let s = Self.create(cards, progress: progress, seed: 3)
         var stages: [String: Int] = [:]
@@ -330,6 +331,7 @@ struct LearnEngineTests {
         stages["c2"] = 1
         stages["c4"] = 2
         #expect(s.stage == stages)
+        #expect(s.solved == ["c1": true, "c2": true, "c3": true, "c4": true])
         #expect(s.initiallyMastered.sorted() == ["c1", "c4"])
         #expect(s.initiallyMastered == s.order.filter { $0 == "c1" || $0 == "c4" })
         #expect(Set(s.queue.map(\.cardId)) == ["c2", "c3", "c5", "c6"])
@@ -340,12 +342,14 @@ struct LearnEngineTests {
         for q in s.queue where byCard[q.cardId] == nil { byCard[q.cardId] = q }
         #expect(byCard["c2"]?.type == .written)
         #expect(byCard["c2"]?.choices == nil)
-        #expect(byCard["c3"]?.type == .mc)
+        #expect(byCard["c3"]?.type == .written)
+        #expect(byCard["c3"]?.retryChoices?.count == 4)
         #expect(byCard["c5"]?.type == .mc)
+        #expect(byCard["c6"]?.type == .mc)
         // Planned as if every answer were right: c2 is mastered with one question, the others
         // need two.
         #expect(s.queue.count { $0.cardId == "c2" } == 1)
-        #expect(LearnEngine.counts(s) == Self.counts(2, 2, 2, 6))
+        #expect(LearnEngine.counts(s) == Self.counts(1, 3, 2, 6))
         #expect(!LearnEngine.isFinished(s))
     }
 
@@ -460,7 +464,76 @@ struct LearnEngineTests {
         #expect(LearnEngine.counts(s) == Self.counts(0, 0, 6, 6))
     }
 
-    @Test func aWrongWrittenAnswerSendsTheCardBackToMultipleChoice() {
+    @Test func multipleChoiceOnlyUntilACardWasAnsweredRightOnce() {
+        let cards = Self.makeCards(2)
+        let learn = LearnOptions(roundSize: 4)
+        func types(_ st: LearnState, _ id: String) -> [QuestionType] { st.queue.filter { $0.cardId == id }.map(\.type) }
+        var s = Self.create(cards, learn: learn, seed: 12)
+        let a = s.order[0]
+        let b = s.order[1]
+        #expect(s.queue.map(\.cardId) == [a, b, a, b])
+        #expect(s.queue.map(\.type) == [.mc, .mc, .written, .written])
+        // A multiple-choice miss: the card's later question is multiple choice again.
+        s = LearnEngine.answer(s, correct: false, now: T0 + SEC)
+        #expect(s.solved.isEmpty)
+        #expect(types(s, a) == [.mc])
+        Self.checkChoices(s.queue.first { $0.cardId == a }!, cards)
+        // Right once: written from then on.
+        s = LearnEngine.answer(s, correct: true, now: T0 + 2 * SEC)
+        #expect(s.solved == [b: true])
+        #expect(types(s, b) == [.written])
+        s = LearnEngine.answer(s, correct: true, now: T0 + 3 * SEC)
+        #expect(s.solved == [a: true, b: true])
+        // A written miss resets the stage, but the card stays written.
+        #expect(LearnEngine.current(s) == Q(qid: "1.1.2:\(b)", cardId: b, type: .written, ask: .term))
+        s = LearnEngine.answer(s, correct: false, now: T0 + 4 * SEC)
+        #expect(s.stage[b] == 0)
+        #expect(s.solved == [a: true, b: true])
+        #expect(LearnEngine.isRoundOver(s))
+        s = Self.next(s, cards, seed: 13, now: T0 + MIN)
+        #expect(types(s, b) == [.written, .written])
+        #expect(s.queue.allSatisfy { $0.type == .written })
+        let (_, log) = Self.playSession(s, cards, seed: 14) { _, _ in true }
+        #expect(log.allSatisfy { $0.q.type == .written })
+
+        // "Ich hatte recht" after a multiple-choice miss counts as right.
+        var o = Self.create(cards, learn: learn, seed: 12)
+        o = LearnEngine.answer(o, correct: false, now: T0 + SEC)
+        o = LearnEngine.override(o, now: T0 + 2 * SEC)
+        #expect(o.solved == [a: true])
+        #expect(types(o, a) == [.written])
+
+        // Answered right elsewhere (Write mode) and then wrong: still stage 0, but written.
+        var w = Self.create(cards, learn: learn, seed: 12)
+        let elsewhere: ProgressMap = [a: Self.progressEntry(0, 1, 1, .incorrect)]
+        #expect(LearnEngine.solvedFromProgress(elsewhere[a]))
+        #expect(!LearnEngine.solvedFromProgress(Self.progressEntry(0, 0, 3, .incorrect)))
+        #expect(!LearnEngine.solvedFromProgress(nil))
+        #expect(!LearnEngine.matchesProgress(w, progress: elsewhere))
+        w = LearnEngine.syncProgress(w, progress: elsewhere, now: T0 + SEC)
+        #expect(w.stage[a] == 0)
+        #expect(w.solved == [a: true])
+        #expect(types(w, a) == [.written, .written])
+        #expect(types(w, b) == [.mc, .written])
+        #expect(LearnEngine.matchesProgress(w, progress: elsewhere))
+        // Progress reset: multiple choice again, with the options the questions kept.
+        let before = w
+        w = LearnEngine.syncProgress(w, progress: [:], now: T0 + 2 * SEC)
+        #expect(w.solved.isEmpty)
+        #expect(types(w, a) == [.mc, .mc])
+        for (i, q) in w.queue.enumerated() where q.cardId == a { #expect(q.choices == before.queue[i].retryChoices) }
+
+        // A session stored before 24.11.2026 has no `solved`: cards past stage 0 count as solved.
+        guard case var .object(raw) = try? JSONValue(encoding: s) else {
+            Issue.record("not an object")
+            return
+        }
+        raw["solved"] = nil
+        let restored = LearnEngine.copyState(.object(raw))
+        #expect(restored.solved == s.order.reduce(into: [:]) { out, id in if (s.stage[id] ?? 0) > 0 { out[id] = true } })
+    }
+
+    @Test func aWrongWrittenAnswerResetsTheStageButStaysWritten() {
         let cards = Self.makeCards(5)
         var progress: ProgressMap = [:]
         for c in cards { progress[c.id] = Self.progressEntry(1) }
@@ -478,10 +551,10 @@ struct LearnEngineTests {
         s = Self.playRound(s, startAt: T0 + 10 * SEC) { _, _ in true }
         #expect(LearnEngine.checkpoint(s).items.first { $0.cardId == id } == Item(cardId: id, stage: 0, results: [false]))
         s = Self.next(s, cards, seed: 5, now: T0 + MIN)
-        // The only open card: multiple choice, then (nothing else to wait for) written right after.
+        // The only open card, answered right before: written twice (nothing else to wait for).
+        #expect(s.solved[id] == true)
         #expect(s.queue.map(\.qid) == ["2.1:\(id)", "2.1.2:\(id)"])
-        #expect(s.queue.map(\.type) == [.mc, .written])
-        Self.checkChoices(s.queue[0], cards)
+        #expect(s.queue.map(\.type) == [.written, .written])
         s = LearnEngine.answer(s, correct: true, now: T0 + MIN + 5 * SEC)
         #expect(s.stage[id] == 1)
         #expect(!LearnEngine.isFinished(s))
@@ -559,7 +632,8 @@ struct LearnEngineTests {
         let (_, log) = Self.playSession(s, cards, seed: 6) { _, _ in true }
         let mine = log.filter { $0.q.cardId == keep }
         #expect((mine.first?.wait ?? -1) >= min(LearnEngine.MIN_GAP, (mine.first?.open ?? 0) - 1))
-        #expect(mine.map(\.q.type) == [.mc, .written])
+        // Answered right before (progress): written, also after the miss.
+        #expect(mine.map(\.q.type) == [.written, .written])
     }
 
     @Test func theSessionOrderIsShuffledOnceNewCardsFollowIt() {
@@ -627,7 +701,8 @@ struct LearnEngineTests {
                     t += 4 * SEC
                     let q = LearnEngine.current(s)!
                     #expect((s.stage[q.cardId] ?? 0) < 2)
-                    #expect(q.type == (s.stage[q.cardId] == 0 ? .mc : .written))
+                    // Multiple choice only until the card was answered right once.
+                    #expect(q.type == (s.stage[q.cardId] == 0 && s.solved[q.cardId] != true ? .mc : .written))
                     if q.type == .mc { Self.checkChoices(q, cards) }
                     let before = s
                     s = LearnEngine.answer(s, correct: rng() < 0.7, now: t)
@@ -635,9 +710,10 @@ struct LearnEngineTests {
                     #expect(s.lastAt[q.cardId] == before.clock)
                     #expect(s.repeats == (before.lastAt[q.cardId] != nil ? before.repeats + 1 : 0))
                     if s.last?.correct == false && rng() < 0.15 { s = LearnEngine.override(s, now: t + SEC) }
+                    #expect((s.solved[q.cardId] == true) == (before.solved[q.cardId] == true || s.last?.correct == true))
                     // Queued questions of the card follow its stage at once.
                     for x in s.queue where x.cardId == q.cardId {
-                        #expect(x.type == (s.stage[q.cardId] == 0 ? .mc : .written))
+                        #expect(x.type == (s.stage[q.cardId] == 0 && s.solved[q.cardId] != true ? .mc : .written))
                     }
                 }
                 #expect(s.clock == s.answered)
@@ -924,15 +1000,15 @@ struct LearnEngineTests {
         #expect(stats.elapsedMs > 0)
     }
 
-    @Test func finalStatsHardestTiesKeepTheSessionOrderMaxTen() {
+    @Test func finalStatsHardestTiesKeepTheSessionOrderEveryMissedCard() {
         let cards = Self.makeCards(12)
         // 11 questions: 11 new cards (the first one may come back only after 10 others).
         var s = Self.create(cards, learn: LearnOptions(roundSize: 11), seed: 14)
         #expect(s.queue.map(\.cardId) == Array(s.order.prefix(11)))
         s = Self.playRound(s) { _, _ in false }
         let stats = LearnEngine.finalStats(s)
-        #expect(stats.hardest.count == 10)
-        #expect(stats.hardest == s.order.prefix(10).map { MissedCard(cardId: $0, misses: 1) })
+        #expect(stats.hardest.count == 11)
+        #expect(stats.hardest == s.order.prefix(11).map { MissedCard(cardId: $0, misses: 1) })
         #expect(stats.answered == 11)
         #expect(stats.accuracy == 0)
         #expect(stats.rounds == 1)
@@ -1097,6 +1173,63 @@ struct LearnEngineTests {
         #expect(
             LearnEngine.buildChoices(cards, card: cards[0], ask: .term, rng: mulberry32(seed: 5))
                 == LearnEngine.buildChoices(cards, card: cards[0], ask: .term, rng: mulberry32(seed: 5)))
+    }
+
+    /// French–German cards of four word classes (WordClass) and their classes.
+    static let mixed: [(id: String, term: String, definition: String, cls: String)] = [
+        ("corps", "le corps", "der Körper", "noun"), ("tete", "la tête", "der Kopf", "noun"),
+        ("nez", "le nez", "die Nase", "noun"), ("bouche", "la bouche", "der Mund", "noun"),
+        ("dent", "la dent", "der Zahn", "noun"), ("manger", "manger", "essen", "verb"),
+        ("boire", "boire", "trinken", "verb"), ("dormir", "dormir", "schlafen", "verb"),
+        ("lever", "se lever", "aufstehen", "verb"), ("lent", "lent, lente", "langsam", "adj"),
+        ("rapide", "rapide", "schnell", "adj"), ("beau", "beau, belle", "schön", "adj"),
+        ("gentil", "gentil, gentille", "nett", "adj"), ("noel", "Joyeux Noël!", "Frohe Weihnachten!", "phrase"),
+        ("merci", "Merci beaucoup!", "Vielen Dank!", "phrase"),
+    ]
+
+    @Test func buildChoicesWrongOptionsAreOfTheSameWordClassWhileThereAreEnough() {
+        let cards = Self.mixed.map { Card(id: $0.id, term: $0.term, definition: $0.definition) }
+        let cls = Dictionary(uniqueKeysWithValues: Self.mixed.map { ($0.id, $0.cls) })
+        for seed in 1...60 {
+            for card in cards {
+                let ask: AskSide = seed % 2 == 1 ? .term : .definition
+                let choices = LearnEngine.buildChoices(cards, card: card, ask: ask, rng: mulberry32(seed: seed))
+                #expect(choices.count == 4)
+                let others = choices.filter { $0.cardId != card.id }.map { cls[$0.cardId]! }
+                let want = cls[card.id]!
+                // Only two expressions: the other one, then cards of other classes.
+                if want == "phrase" {
+                    #expect(others.filter { $0 == "phrase" }.count == 1)
+                } else {
+                    #expect(others == [want, want, want])
+                }
+            }
+        }
+    }
+
+    @Test func buildChoicesTheMostAlikeOptionsComeMostOftenButTakeTurns() {
+        let cards = Self.makeCards(40)
+        let card = cards[19]
+        var seen: [String: Int] = [:]
+        var near = 0
+        var total = 0
+        for seed in 1...300 {
+            for c in LearnEngine.buildChoices(cards, card: card, ask: .term, rng: mulberry32(seed: seed)) where c.cardId != card.id {
+                seen[c.cardId, default: 0] += 1
+                let at = cards.firstIndex { $0.id == c.cardId }!
+                if abs(at - 19) <= 3 { near += 1 }
+                total += 1
+            }
+        }
+        // Mostly the neighbours in the set (6 of 39 cards), yet more than three different options.
+        #expect(Double(near) / Double(total) > 0.6)
+        #expect(seen.count > 6)
+        // The options of one question stay in random order: the closest is not always first.
+        var firsts = Set<String>()
+        for seed in 1...40 {
+            firsts.insert(LearnEngine.buildChoices(cards, card: card, ask: .term, rng: mulberry32(seed: seed)).first { $0.cardId != card.id }!.cardId)
+        }
+        #expect(firsts.count > 3)
     }
 
     @Test func buildChoicesOddInputNeverTraps() {
@@ -1777,7 +1910,8 @@ struct LearnEngineTests {
         let mcQ = r.queue.first { $0.type == .mc }!
         #expect(mcQ.cardId == zeros[0])
         progress[mcQ.cardId] = Self.recorded(true)
-        // Write: a queued written card (stage 1) is answered wrong → its question becomes multiple choice.
+        // Write: a queued written card (stage 1) is answered wrong → stage 0, but it stays written
+        // (it was answered right before).
         let wQ = r.queue.first { $0.cardId == ones[1] }!
         #expect(wQ.type == .written)
         progress[ones[1]] = Mastery.applyAnswer(progress[ones[1]], correct: false, at: T0)
@@ -1791,10 +1925,8 @@ struct LearnEngineTests {
                 == LearnQueueQuestion(
                     qid: mcQ.qid, cardId: mcQ.cardId, type: .written, ask: mcQ.ask, retryChoices: mcQ.retryChoices))
         #expect(r.queue.filter { $0.cardId == mcQ.cardId }.map(\.type) == [.written, .written])
-        let nowW = r.queue.first { $0.qid == wQ.qid }!
-        #expect(nowW.type == .mc)
-        #expect(nowW.choices == wQ.retryChoices)
-        Self.checkChoices(nowW, cards)
+        #expect(r.stage[ones[1]] == 0)
+        #expect(r.queue.first { $0.qid == wQ.qid } == wQ)
         #expect(!r.queue.contains { $0.cardId == done.cardId })
         #expect(r.stage[done.cardId] == 2)
         #expect(LearnEngine.counts(r).mastered == 1)
@@ -1827,7 +1959,7 @@ struct LearnEngineTests {
         #expect(LearnEngine.counts(s) == Self.counts(3, 1, 0, 4))
         s = Self.playRound(s, startAt: T0 + SEC) { _, _ in true }
         s = Self.next(s, cards, seed: 33, now: T0 + MIN)
-        #expect(s.queue.first { $0.cardId == "c1" }?.type == .mc)
+        #expect(s.queue.first { $0.cardId == "c1" }?.type == .written)  // answered right before: no multiple choice
         #expect(LearnEngine.finalStats(s).alreadyMastered == 0)
     }
 

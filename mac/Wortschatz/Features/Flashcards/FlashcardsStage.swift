@@ -5,6 +5,7 @@ import WortschatzCore
 /// card still gliding off over it), and the floating action bar; an empty set gets a message
 /// instead.
 struct FlashcardsStage: View {
+    @Environment(\.studyScale) private var studyScale
     let controller: FlashcardsController
     let onEditCard: () -> Void
 
@@ -25,7 +26,7 @@ struct FlashcardsStage: View {
                         summary
                         deck
                     }
-                    .frame(maxWidth: LayoutMetrics.studyColumnWidth)
+                    .frame(maxWidth: LayoutMetrics.studyColumnWidth * StudyScale.widthFactor(studyScale))
                     .padding(.horizontal, Spacing.xxl)
                     .padding(.top, topInset)
                     .padding(.bottom, Spacing.xl)
@@ -81,7 +82,7 @@ struct FlashcardsStage: View {
     // MARK: Layout
 
     private var columnWidth: CGFloat {
-        min(LayoutMetrics.studyColumnWidth, size.width - 2 * Spacing.xxl)
+        min(LayoutMetrics.studyColumnWidth * StudyScale.widthFactor(studyScale), size.width - 2 * Spacing.xxl)
     }
 
     /// The card sits a little below the toolbar in tall windows and close to it in short ones.
@@ -103,6 +104,7 @@ struct FlashcardsStage: View {
 /// (with this round's counts) and "Umdrehen ↩"; after a round "Weiter mit N Karten ↩"; at the
 /// end "Lernen" and "Nochmal von vorne ↩". It always ends with the Return action.
 struct FlashcardsActionBar: View {
+    @Environment(\.studyScale) private var studyScale
     let controller: FlashcardsController
 
     private var deck: FlashcardDeck { controller.deck }
@@ -112,7 +114,7 @@ struct FlashcardsActionBar: View {
             bar(isCompact: false)
             bar(isCompact: true)
         }
-        .frame(maxWidth: LayoutMetrics.studyColumnWidth)
+        .frame(maxWidth: LayoutMetrics.studyColumnWidth * StudyScale.widthFactor(studyScale))
         .padding(.horizontal, Spacing.xxl)
         .padding(.top, Spacing.s)
         .padding(.bottom, Spacing.l)
@@ -129,6 +131,7 @@ struct FlashcardsActionBar: View {
                         .frame(height: Keycap.Size.regular.height)
                 }
                 .buttonStyle(.glass)
+                .buttonBorderShape(.capsule)
                 .controlSize(.large)
                 .disabled(!deck.canUndo)
                 .help("Letzte Karte zurückholen (⌫)")
@@ -196,6 +199,7 @@ private struct FlashcardSortButton: View {
             .motionAnimation(Motion.snappy, value: count)
         }
         .buttonStyle(.glass)
+        .buttonBorderShape(.capsule)
         .controlSize(.large)
         .help("\(verdict.title) (\(verdict == .know ? "→" : "←"))")
         .accessibilityLabel(verdict.title)
@@ -249,14 +253,17 @@ struct FlashcardsSummaryView: View {
             .frame(maxWidth: .infinity)
 
             HStack(spacing: Spacing.s) {
-                StatTile("Weiss ich", value: "\(deck.knownCount)", systemImage: FlashcardsSymbols.know, tint: Theme.success.fill)
+                StatTile(
+                    String(localized: "Weiss ich"), value: "\(deck.knownCount)", systemImage: FlashcardsSymbols.know,
+                    tint: Theme.success.fill)
                 if !isFinished {
                     StatTile(
-                        "Lerne ich noch", value: "\(deck.learningCount)", systemImage: FlashcardsSymbols.stillLearning,
+                        String(localized: "Lerne ich noch"), value: "\(deck.learningCount)",
+                        systemImage: FlashcardsSymbols.stillLearning,
                         tint: Theme.learning.fill)
                 }
                 StatTile(
-                    deck.round == 1 ? "Runde" : "Runden", value: "\(deck.round)",
+                    deck.round == 1 ? String(localized: "Runde") : String(localized: "Runden"), value: "\(deck.round)",
                     systemImage: "arrow.trianglehead.2.clockwise", tint: Theme.info.fill)
             }
             .frame(maxWidth: 620)
@@ -286,19 +293,20 @@ private struct FinishCelebration: ViewModifier {
 
 /// No card with text in the set: back to the set, or add terms (Return).
 struct FlashcardsEmptyView: View {
+    @Environment(\.studyScale) private var studyScale
     let controller: FlashcardsController
 
     var body: some View {
         CenteredScrollView {
             EmptyStateView(
                 systemImage: "rectangle.on.rectangle.slash",
-                title: "Keine Karten zum Umdrehen",
-                message: "Dieses Lernset hat noch keine Begriffe. Füge welche hinzu, dann geht es los."
+                title: String(localized: "Keine Karten zum Umdrehen"),
+                message: String(localized: "Dieses Lernset hat noch keine Begriffe. Füge welche hinzu, dann geht es los.")
             ) {
                 SecondaryButton("Zurück zum Lernset", key: .escape, bindsShortcut: false, action: controller.exit)
                 PrimaryActionButton("Begriffe hinzufügen", systemImage: "plus", action: controller.addCards)
             }
-            .frame(maxWidth: LayoutMetrics.studyColumnWidth)
+            .frame(maxWidth: LayoutMetrics.studyColumnWidth * StudyScale.widthFactor(studyScale))
         }
     }
 }

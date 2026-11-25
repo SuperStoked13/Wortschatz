@@ -1,6 +1,7 @@
 using Wortschatz.App.DesignSystem;
 using Wortschatz.App.Features.Study;
 using Wortschatz.Core;
+using static Wortschatz.Core.CoreText;
 using DeckPhase = Wortschatz.Core.FlashcardDeck.DeckPhase;
 
 namespace Wortschatz.App.Features.Flashcards;
@@ -169,7 +170,7 @@ public sealed class FlashcardsController
     public void Sort(FlashcardVerdict verdict, bool flung = false)
     {
         if (Phase != DeckPhase.Card || CurrentCard is not { } card) return;
-        Announcer.Announce(verdict == FlashcardVerdict.Know ? "Weiss ich" : "Lerne ich noch");
+        Announcer.Announce(verdict == FlashcardVerdict.Know ? L("Weiss ich") : L("Lerne ich noch"));
         Depart(card, Deck.IsFlipped, new FlashcardDepartureKind.Sorted(verdict), flung, Swipe.OffsetFor(card.Id));
         Arrival = new FlashcardArrival.FromStack();
         // The stack the swipe uncovered goes back under the next card as it rises.
@@ -227,7 +228,7 @@ public sealed class FlashcardsController
             Restart();
             return;
         }
-        Confirm("Karteikarten neu starten?", FlashcardCopy.RestartMessage(Deck), "Neu starten", () => Restart());
+        Confirm(L("Karteikarten neu starten?"), FlashcardCopy.RestartMessage(Deck), L("Neu starten"), () => Restart());
     }
 
     /// <summary>A new deck over the same cards (or, with starredOnly, over all or the starred ones).</summary>
@@ -354,7 +355,7 @@ public sealed class FlashcardsController
         catch (Exception e)
         {
             // Mac: model.report(error, fallback:) – the store's own message (an empty card, a card that is gone), else the fallback.
-            _model.ShowToast(new ToastMessage(e is LibraryStoreError ? e.Message : "Die Karte konnte nicht gespeichert werden.", ToastTone.Danger, DurationMs: 6000));
+            _model.ShowToast(new ToastMessage(e is LibraryStoreError ? e.Message : L("Die Karte konnte nicht gespeichert werden."), ToastTone.Danger, DurationMs: 6000));
             return;
         }
         _model.SaveSoon();

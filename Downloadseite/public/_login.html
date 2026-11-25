@@ -14,7 +14,7 @@
       <input type="hidden" name="weiter" value="{{login.next}}">
       <label class="login-label" for="passwort">Passwort</label>
       <input class="login-input" id="passwort" name="passwort" type="password" autocomplete="current-password" required autofocus>
-      {{#login.error}}<p class="login-error" role="alert">{{login.error}}</p>{{/login.error}}
+      {{#login.wrong}}<p class="login-error" role="alert">Das Passwort stimmt nicht.</p>{{/login.wrong}}
       <button class="btn btn-primary login-button" type="submit">Anmelden</button>
     </form>
   </main>

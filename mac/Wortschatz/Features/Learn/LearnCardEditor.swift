@@ -75,6 +75,7 @@ struct LearnCardEditor: View {
                 .disabled(errors.term != nil || errors.definition != nil)
             }
             .controlSize(.large)
+            .buttonBorderShape(.capsule)
             .padding(.horizontal, Spacing.l)
             .padding(.bottom, Spacing.l)
         }

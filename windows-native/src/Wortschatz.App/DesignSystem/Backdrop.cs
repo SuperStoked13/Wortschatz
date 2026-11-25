@@ -40,9 +40,6 @@ public sealed class Backdrop : Control
     DispatcherTimer? _timer;
     TopLevel? _top;
 
-    /// <summary>False: a still image (the snapshot tool, tests).</summary>
-    public bool Drifts { get; init; } = true;
-
     protected override void OnAttachedToVisualTree(VisualTreeAttachmentEventArgs e)
     {
         base.OnAttachedToVisualTree(e);
@@ -69,7 +66,7 @@ public sealed class Backdrop : Control
 
     void OnActivity(object? sender, EventArgs e) => UpdateTimer();
 
-    bool ShouldDrift => Drifts && !Motion.ReduceMotion && !Motion.IsSnapshot && WsTheme.P.BackdropBlobs.Length > 0
+    bool ShouldDrift => !Motion.ReduceMotion && !Motion.IsSnapshot && WsTheme.P.BackdropBlobs.Length > 0
         && _top is Window { IsActive: true, WindowState: not WindowState.Minimized };
 
     void UpdateTimer()

@@ -198,7 +198,7 @@ extension VocabParser {
     }
 }
 
-// MARK: - German warnings
+// MARK: - Warnings (German source, translated with `L`)
 
 extension VocabParser {
     final class Warnings {
@@ -206,24 +206,33 @@ extension VocabParser {
         enum Kind: CaseIterable {
             case unpaired, merged, reversed, lowConfidence, langMismatch, missingTerm, missingDefinition
 
-            var texts: (one: String, many: String) {
+            /// The warning for the line numbers `n` ("3", "3 und 5"); `one`: a single line.
+            func text(one: Bool, _ n: String) -> String {
                 switch self {
                 case .unpaired:
-                    ("Zeile {n} konnte keinem Paar zugeordnet werden.", "Zeilen {n} konnten keinem Paar zugeordnet werden.")
+                    one
+                        ? L("Zeile %@ konnte keinem Paar zugeordnet werden.", n)
+                        : L("Zeilen %@ konnten keinem Paar zugeordnet werden.", n)
                 case .merged:
-                    ("Zeile {n} wurde als Fortsetzung der vorherigen Zeile übernommen.",
-                     "Zeilen {n} wurden als Fortsetzung der vorherigen Zeile übernommen.")
+                    one
+                        ? L("Zeile %@ wurde als Fortsetzung der vorherigen Zeile übernommen.", n)
+                        : L("Zeilen %@ wurden als Fortsetzung der vorherigen Zeile übernommen.", n)
                 case .reversed:
-                    ("Zeile {n}: Begriff und Definition waren vertauscht und wurden umgedreht.",
-                     "Zeilen {n}: Begriff und Definition waren vertauscht und wurden umgedreht.")
+                    one
+                        ? L("Zeile %@: Begriff und Definition waren vertauscht und wurden umgedreht.", n)
+                        : L("Zeilen %@: Begriff und Definition waren vertauscht und wurden umgedreht.", n)
                 case .lowConfidence:
-                    ("Zeile {n} wurde unsicher erkannt – bitte prüfen.", "Zeilen {n} wurden unsicher erkannt – bitte prüfen.")
+                    one
+                        ? L("Zeile %@ wurde unsicher erkannt – bitte prüfen.", n)
+                        : L("Zeilen %@ wurden unsicher erkannt – bitte prüfen.", n)
                 case .langMismatch:
-                    ("Zeile {n} passt sprachlich nicht zu ihrer Spalte.", "Zeilen {n} passen sprachlich nicht zu ihrer Spalte.")
+                    one
+                        ? L("Zeile %@ passt sprachlich nicht zu ihrer Spalte.", n)
+                        : L("Zeilen %@ passen sprachlich nicht zu ihrer Spalte.", n)
                 case .missingTerm:
-                    ("Zeile {n}: Der Begriff fehlt.", "Zeilen {n}: Der Begriff fehlt.")
+                    one ? L("Zeile %@: Der Begriff fehlt.", n) : L("Zeilen %@: Der Begriff fehlt.", n)
                 case .missingDefinition:
-                    ("Zeile {n}: Die Definition fehlt.", "Zeilen {n}: Die Definition fehlt.")
+                    one ? L("Zeile %@: Die Definition fehlt.", n) : L("Zeilen %@: Die Definition fehlt.", n)
                 }
             }
         }
@@ -251,13 +260,12 @@ extension VocabParser {
             for kind in Kind.allCases {
                 let nos = (byKind[kind] ?? []).sorted()
                 if nos.isEmpty { continue }
-                let (one, many) = kind.texts
-                out.append((nos.count == 1 ? one : many).replacingOccurrences(of: "{n}", with: Self.listNumbers(nos)))
+                out.append(kind.text(one: nos.count == 1, Self.listNumbers(nos)))
             }
             if dups.count > 3 {
-                out.append("\(dups.count) Begriffe kommen mehrfach vor.")
+                out.append(L("%@ Begriffe kommen mehrfach vor.", "\(dups.count)"))
             } else {
-                for d in dups { out.append("«\(d.term)» kommt mehrfach vor (Zeilen \(Self.listNumbers(d.nos))).") }
+                for d in dups { out.append(L("«%@» kommt mehrfach vor (Zeilen %@).", d.term, Self.listNumbers(d.nos))) }
             }
             return out + extra
         }
@@ -265,9 +273,9 @@ extension VocabParser {
         static func listNumbers(_ nos: [Int]) -> String {
             let shown = nos.prefix(6).map(String.init)
             let more = nos.count - shown.count
-            if more > 0 { return "\(shown.joined(separator: ", ")) und \(more) weitere" }
+            if more > 0 { return L("%@ und %@ weitere", shown.joined(separator: ", "), "\(more)") }
             if shown.count == 1 { return shown[0] }
-            return "\(shown.dropLast().joined(separator: ", ")) und \(shown[shown.count - 1])"
+            return L("%@ und %@", shown.dropLast().joined(separator: ", "), shown[shown.count - 1])
         }
     }
 }

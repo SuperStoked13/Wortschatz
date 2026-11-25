@@ -1,7 +1,11 @@
+using static Wortschatz.Core.CoreText;
+
 namespace Wortschatz.Core;
 
 /// <summary>
-/// Port of TimeUtil.swift (src/lib/time.js): German date/time helpers. Timestamps are epoch
+/// Port of TimeUtil.swift (src/lib/time.js): date/time helpers. The display texts are German (the source language) and
+/// pass through <see cref="CoreText.L(string)"/>, so the app's language can reorder or reword them; <see cref="DateKey"/>
+/// is a key and never translated. Timestamps are epoch
 /// milliseconds as double (like JS). Local calendar logic takes an explicit time zone; the parity
 /// fixtures use Europe/Zurich. Calendar arithmetic is proleptic Gregorian, like JS <c>Date</c>.
 /// </summary>
@@ -28,12 +32,12 @@ public static class TimeUtil
         return $"{d.Year}-{Pad(d.Month)}-{Pad(d.Day)}";
     }
 
-    /// <summary>Local date "DD.MM.YYYY" ("" for null/invalid).</summary>
+    /// <summary>Local date "DD.MM.YYYY" ("" for null/invalid). Display only: the order and the separators come from L (day, month, year).</summary>
     public static string FormatDate(double? ms, TimeZoneInfo? timeZone = null)
     {
         if (ms is not { } m || JSCompat.TimeClip(m) is not { } t) return "";
         var d = LocalDateOf(t, timeZone ?? Local);
-        return $"{Pad(d.Day)}.{Pad(d.Month)}.{d.Year}";
+        return L($"{Pad(d.Day)}.{Pad(d.Month)}.{d.Year}");
     }
 
     /// <summary>Whole local calendar days from <paramref name="from"/> to <paramref name="to"/>.</summary>
@@ -50,21 +54,21 @@ public static class TimeUtil
         if (ms is not { } m || JSCompat.TimeClip(m) is not { } then || JSCompat.TimeClip(now ?? NowMs()) is not { } reference) return "";
         var tz = timeZone ?? Local;
         var diff = reference - then;
-        if (diff < MINUTE) return "gerade eben";
+        if (diff < MINUTE) return L("gerade eben");
         if (diff < HOUR)
         {
             var mins = Math.Floor(diff / MINUTE);
-            return mins == 1 ? "vor 1 Minute" : $"vor {JSCompat.NumberToString(mins)} Minuten";
+            return mins == 1 ? L("vor 1 Minute") : L($"vor {JSCompat.NumberToString(mins)} Minuten");
         }
         var days = CalendarDaysBetween(then, reference, tz);
         if (days <= 0)
         {
             var hrs = Math.Floor(diff / HOUR);
-            return hrs == 1 ? "vor 1 Stunde" : $"vor {JSCompat.NumberToString(hrs)} Stunden";
+            return hrs == 1 ? L("vor 1 Stunde") : L($"vor {JSCompat.NumberToString(hrs)} Stunden");
         }
-        if (days == 1) return "gestern";
-        if (days < 7) return $"vor {days} Tagen";
-        return $"am {FormatDate(then, tz)}";
+        if (days == 1) return L("gestern");
+        if (days < 7) return L($"vor {days} Tagen");
+        return L($"am {FormatDate(then, tz)}");
     }
 
     /// <summary>"1 Std. 5 Min." | "4 Min. 12 Sek." | "4 Min." | "45 Sek.".</summary>
@@ -72,14 +76,14 @@ public static class TimeUtil
     {
         var seconds = double.IsNaN(ms) ? 0 : JSCompat.Round(ms / 1000);
         var total = Math.Max(0, seconds);
-        if (!double.IsFinite(total)) return $"{JSCompat.NumberToString(total)} Sek.";
+        if (!double.IsFinite(total)) return L($"{JSCompat.NumberToString(total)} Sek.");
         var h = Math.Floor(total / 3600);
         var m = Math.Floor(total % 3600 / 60);
         var s = total % 60;
         string hs = JSCompat.NumberToString(h), mins = JSCompat.NumberToString(m), secs = JSCompat.NumberToString(s);
-        if (h > 0) return m > 0 ? $"{hs} Std. {mins} Min." : $"{hs} Std.";
-        if (m > 0) return s > 0 ? $"{mins} Min. {secs} Sek." : $"{mins} Min.";
-        return $"{secs} Sek.";
+        if (h > 0) return m > 0 ? L($"{hs} Std. {mins} Min.") : L($"{hs} Std.");
+        if (m > 0) return s > 0 ? L($"{mins} Min. {secs} Sek.") : L($"{mins} Min.");
+        return L($"{secs} Sek.");
     }
 
     // MARK: Local calendar helpers

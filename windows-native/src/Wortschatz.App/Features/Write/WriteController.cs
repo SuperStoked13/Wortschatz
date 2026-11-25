@@ -52,12 +52,13 @@ public sealed class WriteController
         var start = StudySessions.Effective(request);
         double? marker = ResultsMarkers.TryGetValue(request, out var box) ? box.Value : null;
         var (state, effects) = WriteFlow.Start(store.GetSet(request.SetId), store.GetStudyOptions(request.SetId), store.GetSessionJSON(request.SetId), Env(),
-            start.Subset, start.ForceNew, marker);
+            start.Subset, start.ForceNew, marker, model.Preferences.KeptOptionsOf("write", request.SetId));
         State = state;
         _pendingStart = effects;
+        model.PreloadSynonyms(store.GetSet(request.SetId));
     }
 
-    WriteFlow.Env Env() => new(TimeUtil.NowMs(), _rng, _model.Store.GetProgress(SetId));
+    WriteFlow.Env Env() => new(TimeUtil.NowMs(), _rng, _model.Store.GetProgress(SetId), _model.ExtraAnswers(SetId));
 
     /// <summary>The screen appeared. <paramref name="holdingToasts"/>: its toasts wait for ReleaseToasts.</summary>
     public void Activate(bool holdingToasts = false)
@@ -132,11 +133,36 @@ public sealed class WriteController
         var (next, effects) = WriteFlow.Reduce(State, e, Env());
         State = next;
         Perform(effects);
+        StopStaleTimers();
         RememberResults();
+        AskIfSameTerm();
         PlaySound(effects, previous);
         // Typing shows in the field already; the study clock (every 15 s, and its resuming) changes nothing on screen –
-        // a redraw would take the field away for a moment (on a phone the keyboard closes and opens again).
-        if (e is not (WriteFlow.Event.InputChanged or WriteFlow.Event.ClockResumed or WriteFlow.Event.ClockTick)) Changed?.Invoke();
+        // a redraw would take the field away for a moment (on a phone the keyboard closes and opens again). Unless it
+        // moved on – redrawn after the field's own TextChanged. (A typed-out copy no longer moves on here: it starts a
+        // short beat, CopyStep, whose timer moves on.)
+        bool quiet = e is WriteFlow.Event.InputChanged or WriteFlow.Event.ClockResumed or WriteFlow.Event.ClockTick;
+        if (!quiet) Changed?.Invoke();
+        else if (State.Phase.Kind != previous) Dispatcher.UIThread.Post(() => Changed?.Invoke());
+    }
+
+    WriteFlow.Feedback? _sameTermAsked;
+
+    /// <summary>
+    /// A wrong answer that is the answer of another card with the same word: asks what it counts as
+    /// (StudyChrome.AskSameTerm), once per answer.
+    /// </summary>
+    void AskIfSameTerm()
+    {
+        if (State.Feedback is not { IsCorrect: false, CanOverride: true } feedback || ReferenceEquals(feedback, _sameTermAsked)) return;
+        if (State.Question is not { } q || State.Set is not { } set || set.Cards.FirstOrDefault(c => c.Id == q.CardId) is not { } card) return;
+        _sameTermAsked = feedback;
+        if (SameTermCards.AnswerOfOtherCard(feedback.Given, card, set.Cards, q.Ask, State.Options.Tolerance, q.PromptLang, q.AnswerLang) is not { } other) return;
+        Avalonia.Threading.Dispatcher.UIThread.Post(() =>
+        {
+            if (_active && ReferenceEquals(State.Feedback, feedback))
+                StudyChrome.AskSameTerm(_model, SetId, card, other, q.Ask, q.PromptLang, q.AnswerLang, feedback.Given, () => Send(new WriteFlow.Event.Override()));
+        });
     }
 
     /// <summary>
@@ -183,21 +209,26 @@ public sealed class WriteController
 
     void Perform(List<WriteFlow.Effect> effects)
     {
-        var store = _model.Store;
+        // The step's store writes first, as one change (LibraryStore.Batch): the app reacts once per answer, not once
+        // for the answer and once more for the session (Mac: WriteController.perform, 24.11.2026).
+        var writes = effects.Where(WritesStore).ToList();
+        if (writes.Count > 0)
+        {
+            var store = _model.Store;
+            Write(() => store.Batch(() =>
+            {
+                foreach (var effect in writes) Apply(effect, store);
+            }));
+        }
         foreach (var effect in effects)
         {
             switch (effect)
             {
                 case WriteFlow.Effect.RecordAnswer r:
                     Streak.Record(r.Correct);
-                    Write(() => store.RecordAnswer(SetId, r.CardId, r.Correct, r.At));
                     break;
-                case WriteFlow.Effect.OverrideLastAnswer o:
+                case WriteFlow.Effect.OverrideLastAnswer:
                     Streak.OverrideMiss();
-                    Write(() => store.OverrideLastAnswer(SetId, o.CardId));
-                    break;
-                case WriteFlow.Effect.SaveSession s:
-                    Write(() => store.SaveSessionJSON(SetId, WriteFlow.StoredJSON(s.Session, s.Feedback)));
                     break;
                 case WriteFlow.Effect.Haptic h:
                     Services.Haptics.Play(h.Kind);
@@ -208,16 +239,6 @@ public sealed class WriteController
                     break;
                 case WriteFlow.Effect.ScheduleAutoAdvance a:
                     Schedule(a.Ms, a.Token);
-                    break;
-                case WriteFlow.Effect.UpdateCard u:
-                    Write(() => store.UpdateCard(SetId, u.Card.Id, new CardChanges(u.Card.Term, u.Card.Definition)));
-                    break;
-                case WriteFlow.Effect.ToggleStar t:
-                    Write(() =>
-                    {
-                        store.ToggleStar(SetId, t.CardId);
-                        _model.AnnounceStar(SetId, t.CardId);
-                    });
                     break;
                 case WriteFlow.Effect.Announce a:
                     Announcer.Announce(a.Text, important: State.Phase.IsMiss);
@@ -238,12 +259,43 @@ public sealed class WriteController
                         _model.Navigate(new Route.Editor(SetId));
                     });
                     break;
+                case WriteFlow.Effect.KeepOptions k:
+                    _model.Preferences.SaveKeptOptions("write", SetId, k.Kept);
+                    break;
                 case WriteFlow.Effect.Exit:
                     Dispatcher.UIThread.Post(() => _model.BackToSet(SetId));
                     break;
             }
         }
         _model.SaveSoon();
+    }
+
+    /// <summary>Effects that write to the library store (Apply).</summary>
+    static bool WritesStore(WriteFlow.Effect effect) => effect is WriteFlow.Effect.RecordAnswer or WriteFlow.Effect.OverrideLastAnswer
+        or WriteFlow.Effect.SaveSession or WriteFlow.Effect.UpdateCard or WriteFlow.Effect.ToggleStar;
+
+    /// <summary>Applies one store effect (WritesStore).</summary>
+    void Apply(WriteFlow.Effect effect, LibraryStore store)
+    {
+        switch (effect)
+        {
+            case WriteFlow.Effect.RecordAnswer r:
+                store.RecordAnswer(SetId, r.CardId, r.Correct, r.At);
+                break;
+            case WriteFlow.Effect.OverrideLastAnswer o:
+                store.OverrideLastAnswer(SetId, o.CardId);
+                break;
+            case WriteFlow.Effect.SaveSession s:
+                store.SaveSessionJSON(SetId, WriteFlow.StoredJSON(s.Session, s.Feedback));
+                break;
+            case WriteFlow.Effect.UpdateCard u:
+                store.UpdateCard(SetId, u.Card.Id, new CardChanges(u.Card.Term, u.Card.Definition));
+                break;
+            case WriteFlow.Effect.ToggleStar t:
+                store.ToggleStar(SetId, t.CardId);
+                _model.AnnounceStar(SetId, t.CardId);
+                break;
+        }
     }
 
     /// <summary>A store write; a failure shows as a message instead of ending the app (Mac: write → model.report).</summary>
@@ -267,6 +319,21 @@ public sealed class WriteController
 
     /// <summary>Reads the prompt or the answer aloud (the screen's 🔊 buttons and Ctrl+R).</summary>
     public void Speak(WriteFlow.SpeechTarget target) => Send(new WriteFlow.Event.Speak(target));
+
+    /// <summary>
+    /// Auto-advances whose token is no longer the state's (answered by key, a new question) can never move on: stopped
+    /// right away instead of firing for nothing (each firing redrew the screen while the next answer was typed, which
+    /// cut the prompt's glide short and, on a phone, closed and opened the keyboard). As in LearnController.
+    /// </summary>
+    void StopStaleTimers()
+    {
+        if (_timers.Count == 0) return;
+        foreach (var token in _timers.Keys.Where(t => t != State.AutoAdvance?.Token).ToList())
+        {
+            _timers[token].Stop();
+            _timers.Remove(token);
+        }
+    }
 
     void Schedule(int ms, int token)
     {

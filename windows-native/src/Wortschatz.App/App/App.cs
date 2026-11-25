@@ -1,7 +1,6 @@
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.ApplicationLifetimes;
-using Avalonia.Markup.Xaml.Styling;
 using Avalonia.Styling;
 using Avalonia.Themes.Simple;
 
@@ -16,12 +15,13 @@ public sealed class App : Application
     public override void Initialize()
     {
         Styles.Add(new SimpleTheme());
-        Styles.Add(DesignSystem.AppStyles.Create());
+        // The app's own styles come with the palette: MainView adds them (ApplyAppearance) before anything is shown.
         Name = "Wortschatz";
     }
 
     public override void OnFrameworkInitializationCompleted()
     {
+        MainView.TrackMenus();
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
         {
             var model = ModelFactory?.Invoke() ?? AppModel.OpenDefault();

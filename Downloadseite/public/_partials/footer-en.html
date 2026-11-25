@@ -1,0 +1,14 @@
+  <footer class="site-footer">
+    <div class="footer-inner">
+      <p class="footer-note">Wortschatz needs no account and no cloud. Your study sets stay on your computer, and this website uses {{#site.login}}only a cookie for signing in and no tracking.{{/site.login}}{{^site.login}}no cookies and no tracking.{{/site.login}}</p>
+      <nav class="footer-links" aria-label="More pages">
+        <a href="/en/whats-new">What’s new</a>
+        <a href="/en/privacy">Privacy</a>
+        <a href="/checksums.txt">Checksums</a>
+        {{#site.contactEmail}}<a href="{{site.mailto}}">Contact</a>{{/site.contactEmail}}
+        {{#site.login}}{{^login}}<form method="post" action="/en/logout"><button class="footer-logout" type="submit">Sign out</button></form>{{/login}}{{/site.login}}
+        <a href="{{page.other}}" hreflang="de" lang="de" data-lang-switch="de">Deutsch</a>
+      </nav>
+      <p class="footer-copy">© {{site.year}} Wortschatz{{#site.operator}}, {{site.operator}}{{/site.operator}}</p>
+    </div>
+  </footer>

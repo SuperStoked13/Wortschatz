@@ -37,13 +37,24 @@ struct ExamResultsView: View {
         let toPractise = result.cardIdsToPractise.count
         return ExamBar {
             SecondaryButton(
-                verbatim: isCompact ? "Neu" : "Neue Prüfung", systemImage: "arrow.counterclockwise",
+                verbatim: isCompact
+                    ? String(localized: "Neu", comment: "Button (compact): a new exam")
+                    : String(localized: "Neue Prüfung"),
+                systemImage: "arrow.counterclockwise",
                 key: .shiftCommand("R"), bindsShortcut: false, action: controller.requestNewExam)
         } trailing: {
             if toPractise > 0 {
-                SecondaryButton(verbatim: isCompact ? "Lernen" : "Falsche lernen", systemImage: "sparkles", action: controller.learnMistakes)
+                SecondaryButton(
+                    verbatim: isCompact
+                        ? String(localized: "Lernen", comment: "Button (compact): learn the wrong answers")
+                        : String(localized: "Falsche lernen"),
+                    systemImage: "sparkles", action: controller.learnMistakes)
                     .help("Die \(Labels.plural(toPractise, "Frage", "Fragen")) mit Fehlern in Lernen üben")
-                SecondaryButton(verbatim: isCompact ? "Prüfen" : "Falsche prüfen", systemImage: ExamSymbols.mode, action: controller.retakeMistakes)
+                SecondaryButton(
+                    verbatim: isCompact
+                        ? String(localized: "Prüfen", comment: "Button (compact): a new exam with only the wrong answers")
+                        : String(localized: "Falsche prüfen"),
+                    systemImage: ExamSymbols.mode, action: controller.retakeMistakes)
                     .help("Eine neue Prüfung nur mit den \(Labels.plural(toPractise, "Frage", "Fragen")) mit Fehlern")
             }
             PrimaryActionButton("Fertig", action: controller.exit)
@@ -109,7 +120,7 @@ private struct ExamGradeHero: View {
     /// "17.5 von 20 Punkten in 8:41" (the verdict says whether it passes).
     private var subtitle: String {
         let seconds = Int((result.elapsedMs / 1000).rounded())
-        return "\(ExamCopy.scoreLine(result)) in \(ExamTime.clock(seconds))"
+        return String(localized: "\(ExamCopy.scoreLine(result)) in \(ExamTime.clock(seconds))")
     }
 }
 
@@ -132,18 +143,18 @@ private struct ExamResultTiles: View {
         Grid(horizontalSpacing: Spacing.s, verticalSpacing: Spacing.s) {
             GridRow {
                 StatTile(
-                    "Richtig", value: "\(result.count(.correct))", systemImage: "checkmark", tint: Theme.success.fill,
-                    caption: "ganzer Punkt")
+                    String(localized: "Richtig"), value: "\(result.count(.correct))", systemImage: "checkmark",
+                    tint: Theme.success.fill, caption: String(localized: "ganzer Punkt"))
                 StatTile(
-                    "Kleine Fehler", value: "\(minor)", systemImage: "checkmark.seal", tint: Theme.info.fill,
+                    String(localized: "Kleine Fehler"), value: "\(minor)", systemImage: "checkmark.seal", tint: Theme.info.fill,
                     caption: minorCaption)
                 StatTile(
-                    "Falsch", value: "\(result.count(.wrong))", systemImage: "xmark", tint: Theme.failure.fill,
-                    caption: "kein Punkt")
+                    String(localized: "Falsch"), value: "\(result.count(.wrong))", systemImage: "xmark",
+                    tint: Theme.failure.fill, caption: String(localized: "kein Punkt"))
                 if blank > 0 {
                     StatTile(
-                        "Ohne Antwort", value: "\(blank)", systemImage: "minus", tint: Theme.new.fill,
-                        caption: "kein Punkt")
+                        String(localized: "Ohne Antwort"), value: "\(blank)", systemImage: "minus", tint: Theme.new.fill,
+                        caption: String(localized: "kein Punkt"))
                 }
             }
         }
@@ -151,9 +162,9 @@ private struct ExamResultTiles: View {
 
     private var minorCaption: String {
         switch result.tolerance {
-        case .strict: "kein Punkt"
-        case .half: "je ½ Punkt"
-        case .lenient: "ganzer Punkt"
+        case .strict: String(localized: "kein Punkt")
+        case .half: String(localized: "je ½ Punkt")
+        case .lenient: String(localized: "ganzer Punkt")
         }
     }
 }
@@ -190,7 +201,7 @@ private struct ExamAnswerList: View {
 
     private func promptLabel(_ question: ExamQuestion) -> String {
         if set.termLang == set.defLang || question.promptLang == .other {
-            return question.ask == .term ? "Definition" : "Begriff"
+            return question.ask == .term ? String(localized: "Definition") : String(localized: "Begriff")
         }
         return Labels.langName(question.promptLang)
     }
@@ -285,9 +296,9 @@ private struct ExamAnswerRow: View {
 
     private var pointsLabel: String {
         switch item.points {
-        case 1: "1 Punkt"
-        case 0.5: "ein halber Punkt"
-        default: "kein Punkt"
+        case 1: String(localized: "1 Punkt")
+        case 0.5: String(localized: "ein halber Punkt")
+        default: String(localized: "kein Punkt")
         }
     }
 

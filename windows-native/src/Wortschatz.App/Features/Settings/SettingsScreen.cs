@@ -9,7 +9,9 @@ using Avalonia.Media;
 using Avalonia.Platform.Storage;
 using Wortschatz.App.DesignSystem;
 using Wortschatz.App.Features.Study;
+using Wortschatz.App.Services;
 using Wortschatz.Core;
+using static Wortschatz.Core.CoreText;
 
 namespace Wortschatz.App.Features.Settings;
 
@@ -17,12 +19,14 @@ namespace Wortschatz.App.Features.Settings;
 /// Einstellungen (Mac: SettingsView.swift with SettingsGeneralTab, SettingsStudyTabs, SettingsDataTab): appearance,
 /// sounds and the voice per language; the study defaults of every set (Lernen, Schreiben, Toleranz); backups (export,
 /// import with a preview and the choice to merge or replace – the same file format as the web and Mac apps, so sets move
-/// between them, also by dropping a file on the Daten tab), where the data lives, and deleting everything. The open tab
+/// between them, also by dropping a file on the Daten tab), updates (SettingsUpdateSection.cs), where the data lives, and
+/// deleting everything. The open tab
 /// is remembered (Mac: @AppStorage settings.selectedTab).
 /// </summary>
-public sealed class SettingsScreen(AppModel model, MainView window) : Screen(model, window)
+public sealed partial class SettingsScreen(AppModel model, MainView window) : Screen(model, window)
 {
-    static readonly string[] Tabs = ["Allgemein", "Lernen", "Schreiben", "Toleranz", "Daten"];
+    /// <summary>The tab names (computed: they follow a change of the language).</summary>
+    static string[] Tabs => [L("Allgemein"), L("Lernen"), L("Schreiben"), L("Toleranz"), L("Daten")];
 
     int Tab
     {
@@ -52,7 +56,7 @@ public sealed class SettingsScreen(AppModel model, MainView window) : Screen(mod
             content.HorizontalAlignment = HorizontalAlignment.Stretch;
             content.Children.Add(tabRow);
         }
-        else content.Children.Add(Ui.V(14, Ui.V(4, Ui.Eyebrow("Wortschatz"), Ui.Title("Einstellungen")), tabRow));
+        else content.Children.Add(Ui.V(14, Ui.V(4, Ui.Eyebrow("Wortschatz"), Ui.Title(L("Einstellungen"))), tabRow));
         foreach (var section in tab switch
         {
             1 => LearnTab(),
@@ -66,7 +70,17 @@ public sealed class SettingsScreen(AppModel model, MainView window) : Screen(mod
         return tab == 4 ? BackupDropTarget(scroll) : scroll;
     }
 
-    public override void Deactivate() => Model.Speech.Stop();
+    public override void Activate()
+    {
+        AppUpdater.Shared.Changed += UpdaterChanged;
+        base.Activate();
+    }
+
+    public override void Deactivate()
+    {
+        AppUpdater.Shared.Changed -= UpdaterChanged;
+        Model.Speech.Stop();
+    }
 
     /// <summary>Writes a global default (Mac: SettingsWriter.update): a failure shows a toast.</summary>
     void UpdateSettings(SettingsPatch patch)
@@ -78,11 +92,11 @@ public sealed class SettingsScreen(AppModel model, MainView window) : Screen(mod
         }
         catch (LibraryStoreError e)
         {
-            Model.ShowToast(new ToastMessage(e.Message.Length > 0 ? e.Message : "Die Einstellung konnte nicht gespeichert werden.", ToastTone.Danger, DurationMs: 6000));
+            Model.ShowToast(new ToastMessage(e.Message.Length > 0 ? e.Message : L("Die Einstellung konnte nicht gespeichert werden."), ToastTone.Danger, DurationMs: 6000));
         }
         catch (Exception)
         {
-            Model.ShowToast(new ToastMessage("Die Einstellung konnte nicht gespeichert werden.", ToastTone.Danger, DurationMs: 6000));
+            Model.ShowToast(new ToastMessage(L("Die Einstellung konnte nicht gespeichert werden."), ToastTone.Danger, DurationMs: 6000));
         }
     }
 
@@ -98,28 +112,70 @@ public sealed class SettingsScreen(AppModel model, MainView window) : Screen(mod
             UpdateSettings(new SettingsPatch(v));
             Window.Rebuild();
         });
-        yield return Section("Darstellung", Row("Erscheinungsbild", theme, settings.Theme switch
+        bool systemIsDark = Application.Current?.ActualThemeVariant == Avalonia.Styling.ThemeVariant.Dark;
+        yield return Section(L("Darstellung"), Row(L("Erscheinungsbild"), theme, settings.Theme switch
         {
-            ThemeSetting.Light => "Immer helles Design.",
-            ThemeSetting.Dark => "Immer dunkles Design – angenehm am Abend.",
-            _ => $"Folgt {AppDevice.SystemName} – zurzeit {(Application.Current?.ActualThemeVariant == Avalonia.Styling.ThemeVariant.Dark ? "dunkel" : "hell")}.",
+            ThemeSetting.Light => L("Immer helles Design."),
+            ThemeSetting.Dark => L("Immer dunkles Design – angenehm am Abend."),
+            _ => systemIsDark ? L($"Folgt {AppDevice.SystemName} – zurzeit dunkel.") : L($"Folgt {AppDevice.SystemName} – zurzeit hell."),
         }));
 
-        var sounds = new WsSwitch(Model.Preferences.SoundEffects, "Soundeffekte");
+        yield return LanguageSection();
+
+        var sounds = new WsSwitch(Model.Preferences.SoundEffects, L("Soundeffekte"));
         sounds.Toggled += on =>
         {
             Model.Preferences.SoundEffects = on;
             if (on) Model.Sounds.Play(Services.SoundEffects.Sound.Correct);
         };
-        yield return Section("Töne", Row("Soundeffekte", sounds, "Leise Töne für richtige und falsche Antworten, Serien und geschaffte Runden."));
+        var synonyms = new WsSwitch(Model.Preferences.ExtendedSynonyms, L("Weitere Synonyme erkennen"));
+        synonyms.Toggled += on => Model.Preferences.ExtendedSynonyms = on;
+        // «Antworten» and «Töne» mean other things elsewhere (the button, the tones of Chinese): keys of their own, as on the Mac.
+        yield return Section(Ui.Meaning("Antworten", L("Antworten (Mehrzahl)")), Row(L("Weitere Synonyme erkennen"), synonyms,
+            L("Lässt bei geschriebenen Antworten auch gleichbedeutende Wörter gelten, die nicht im Lernset stehen – z. B. «Velo» für «Fahrrad» – und markiert sie als «Synonym – nicht im Set». Die Synonymwörterbücher für Deutsch, Englisch, Französisch, Spanisch und Italienisch sind in der App, es geht nichts ins Internet. Für ein einzelnes Lernset schaltest du sie in seinen Optionen unter «Toleranz» aus.")));
+
+        yield return Section(Ui.Meaning("Töne", L("Töne (Soundeffekte)")), Row(L("Soundeffekte"), sounds, L("Leise Töne für richtige und falsche Antworten, Serien und geschaffte Runden. Für ein einzelnes Lernset schaltest du sie in seinen Optionen aus.")));
 
         var rows = new List<Control>();
         foreach (var lang in VoiceLanguages) rows.Add(VoiceRow(lang));
-        var open = Ui.Secondary($"{AppDevice.SystemName}-Einstellungen öffnen", OpenSpeechSettings, IconName.Gear, height: 36);
-        rows.Add(Row("Weitere Stimmen", open, AppDevice.IsPhone
-            ? "Weitere Stimmen lädst du in den Android-Einstellungen unter Sprache › Sprachausgabe (Text-in-Sprache) herunter. Danach Wortschatz neu starten."
-            : "Weitere Stimmen fügst du in den Windows-Einstellungen unter Zeit und Sprache › Sprachausgabe › Stimmen hinzufügen. Danach Wortschatz neu starten."));
-        yield return Section("Stimmen zum Vorlesen", [.. rows]);
+        var open = Ui.Secondary(L($"{AppDevice.SystemName}-Einstellungen öffnen"), OpenSpeechSettings, IconName.Gear, height: 36);
+        rows.Add(Row(L("Weitere Stimmen"), open, AppDevice.IsPhone
+            ? L("Weitere Stimmen lädst du in den Android-Einstellungen unter Sprache › Sprachausgabe (Text-in-Sprache) herunter. Danach Wortschatz neu starten.")
+            : L("Weitere Stimmen fügst du in den Windows-Einstellungen unter Zeit und Sprache › Sprachausgabe › Stimmen hinzufügen. Danach Wortschatz neu starten.")));
+        yield return Section(L("Stimmen zum Vorlesen"), [.. rows]);
+    }
+
+    /// <summary>
+    /// Sprache (Mac: SettingsLanguageSection): System, Deutsch or English. Each language is named in its own language.
+    /// Unlike the Mac (a restart), the window is built again at once in the new language.
+    /// </summary>
+    Control LanguageSection()
+    {
+        var choice = Model.Preferences.Language;
+        var picker = new ComboBox { MinWidth = 180 };
+        picker.Items.Add(new ComboBoxItem { Content = L("System") });
+        picker.Items.Add(new ComboBoxItem { Content = "Deutsch" });
+        picker.Items.Add(new ComboBoxItem { Content = "English" });
+        picker.SelectedIndex = (int)choice;
+        AutomationProperties.SetName(picker, L("Sprache der App"));
+        picker.SelectionChanged += (_, _) =>
+        {
+            var chosen = (AppLanguageChoice)Math.Max(0, picker.SelectedIndex);
+            if (chosen == Model.Preferences.Language) return;
+            Model.Preferences.Language = chosen;
+            string before = AppLanguage.Current;
+            AppLanguage.Install(chosen);
+            // After the ComboBox has closed: rebuilding removes it.
+            Avalonia.Threading.Dispatcher.UIThread.Post(() =>
+            {
+                if (AppLanguage.Current != before) Window.Rebuild();
+                else Refresh();
+            });
+        };
+        string hint = choice == AppLanguageChoice.System
+            ? L($"Folgt der Sprache von {AppDevice.SystemName} – zurzeit {Labels.LangName(AppLanguage.SystemLanguage == "en" ? Lang.En : Lang.De)}.")
+            : L("Gilt nur für Wortschatz, unabhängig von der Sprache des Systems.");
+        return Section(L("Sprache"), Row(L("Sprache der App"), picker, hint));
     }
 
     /// <summary>The languages with a voice choice, in the order of the language pickers (without «Andere»).</summary>
@@ -139,7 +195,7 @@ public sealed class SettingsScreen(AppModel model, MainView window) : Screen(mod
         var chosenId = speech.PreferredVoiceIds.GetValueOrDefault(lang);
         int selected = Math.Max(0, options.FindIndex(v => v.Id == chosenId) + 1);
         var picker = new ComboBox { MinWidth = 260, MaxWidth = 340, IsEnabled = options.Count > 0 };
-        picker.Items.Add(new ComboBoxItem { Content = automatic is null ? "Keine Stimme installiert" : $"Automatisch ({automatic.Name})" });
+        picker.Items.Add(new ComboBoxItem { Content = automatic is null ? L("Keine Stimme installiert") : L($"Automatisch ({automatic.Name})") });
         foreach (var voice in options) picker.Items.Add(new ComboBoxItem { Content = SpeechText.DisplayName(voice) });
         picker.SelectedIndex = selected;
         picker.SelectionChanged += (_, _) =>
@@ -148,9 +204,9 @@ public sealed class SettingsScreen(AppModel model, MainView window) : Screen(mod
             selected = picker.SelectedIndex;
             speech.SetPreferredVoice(lang, selected == 0 ? null : options[selected - 1].Id);
         };
-        AutomationProperties.SetName(picker, $"Stimme für {name}");
-        var sample = Ui.IconButton(IconName.Speaker, "Probe hören", () => speech.Speak(VoiceSample(lang), lang), 34);
-        AutomationProperties.SetName(sample, $"Probe hören auf {name}");
+        AutomationProperties.SetName(picker, L($"Stimme für {name}"));
+        var sample = Ui.IconButton(IconName.Speaker, L("Probe hören"), () => speech.Speak(VoiceSample(lang), lang), 34);
+        AutomationProperties.SetName(sample, L($"Probe hören auf {name}"));
         sample.IsEnabled = options.Count > 0;
         Control control;
         if (!AppDevice.IsPhone) control = Ui.H(8, picker, sample);
@@ -167,7 +223,7 @@ public sealed class SettingsScreen(AppModel model, MainView window) : Screen(mod
             row.HorizontalAlignment = HorizontalAlignment.Stretch;
             control = row;
         }
-        var voiceRow = Row(name, control, options.Count == 0 ? "Keine Stimme installiert – wird nicht vorgelesen." : null);
+        var voiceRow = Row(name, control, options.Count == 0 ? L("Keine Stimme installiert – wird nicht vorgelesen.") : null);
         if (options.Count == 0 && voiceRow is Panel { Children: [StackPanel { Children: [_, TextBlock hint] }, ..] }) hint.Foreground = WsTheme.B(p.Warning.Text);
         if (AppDevice.IsPhone && voiceRow is StackPanel stacked && stacked.Children.Count > 1) stacked.Children[1].HorizontalAlignment = HorizontalAlignment.Stretch;
         return voiceRow;
@@ -190,7 +246,7 @@ public sealed class SettingsScreen(AppModel model, MainView window) : Screen(mod
         if (AppDevice.OpenSpeechSettings is { } open)
         {
             try { open(); }
-            catch (Exception) { Model.ShowToast(new ToastMessage("Die Einstellungen konnten nicht geöffnet werden.", ToastTone.Warning)); }
+            catch (Exception) { Model.ShowToast(new ToastMessage(L("Die Einstellungen konnten nicht geöffnet werden."), ToastTone.Warning)); }
             return;
         }
         try
@@ -199,7 +255,7 @@ public sealed class SettingsScreen(AppModel model, MainView window) : Screen(mod
         }
         catch (Exception)
         {
-            Model.ShowToast(new ToastMessage("Die Windows-Einstellungen konnten nicht geöffnet werden.", ToastTone.Warning));
+            Model.ShowToast(new ToastMessage(L("Die Windows-Einstellungen konnten nicht geöffnet werden."), ToastTone.Warning));
         }
     }
 
@@ -221,53 +277,60 @@ public sealed class SettingsScreen(AppModel model, MainView window) : Screen(mod
         var learn = options.Learn;
         var names = LearnOptionsCopy.SideNames(Lang.Other, SharedDefLang(Model.Sets));
         bool mcLocked = learn.Mc && !learn.Written, writtenLocked = learn.Written && !learn.Mc;
-        yield return Form.Section("Fragetypen",
+        yield return Form.Section(L("Fragetypen"),
         [
-            Form.Row("Multiple Choice", Switch(learn.Mc, v => UpdateStudy(new StudyOptionsPatch(Learn: new LearnOptionsPatch(Mc: v))), !mcLocked, LearnOptionsCopy.LockHint),
-                "Vier Antworten zur Auswahl"),
-            Form.Row("Schriftlich", Switch(learn.Written, v => UpdateStudy(new StudyOptionsPatch(Learn: new LearnOptionsPatch(Written: v))), !writtenLocked, LearnOptionsCopy.LockHint),
-                "Antwort selbst eintippen"),
+            Form.Row(L("Multiple Choice"), Switch(learn.Mc, v => UpdateStudy(new StudyOptionsPatch(Learn: new LearnOptionsPatch(Mc: v))), !mcLocked, LearnOptionsCopy.LockHint),
+                L("Vier Antworten zur Auswahl")),
+            Form.Row(L("Schriftlich"), Switch(learn.Written, v => UpdateStudy(new StudyOptionsPatch(Learn: new LearnOptionsPatch(Written: v))), !writtenLocked, LearnOptionsCopy.LockHint),
+                L("Antwort selbst eintippen")),
         ], LearnOptionsCopy.QuestionTypesHint(learn));
-        yield return Form.Section("Abfrage",
+        yield return Form.Section(L("Abfrage"),
         [
             Form.Row(LearnOptionsCopy.RoundSizeLabel, StudyChrome.Choice<int>(LearnOptionsCopy.RoundSizes(learn.RoundSize).Select(s => (s, $"{s}")).ToList(), learn.RoundSize,
                 v => UpdateStudy(new StudyOptionsPatch(Learn: new LearnOptionsPatch(RoundSize: v)))), LearnOptionsCopy.RoundSizeNote),
-            Form.Row("Antworten auf", StudyChrome.Choice<AnswerWith>([(AnswerWith.Term, names.Term.Label), (AnswerWith.Definition, names.Definition.Label), (AnswerWith.Both, "Beides")],
+            Form.Row(L("Antworten auf"), StudyChrome.Choice<AnswerWith>([(AnswerWith.Term, names.Term.Label), (AnswerWith.Definition, names.Definition.Label), (AnswerWith.Both, L("Beides"))],
                 options.AnswerWith, v => UpdateStudy(new StudyOptionsPatch(AnswerWith: v)))),
         ], DirectionText(options.AnswerWith, names));
         yield return Form.Section(null,
         [
-            Form.Row("Richtige Antwort abtippen", Switch(learn.Retype, v => UpdateStudy(new StudyOptionsPatch(Learn: new LearnOptionsPatch(Retype: v)))),
-                "Nach einem Fehler bei einer schriftlichen Frage tippst du die Lösung einmal ab."),
-            Form.Row("Vorlesen", Switch(options.Audio, v => UpdateStudy(new StudyOptionsPatch(Audio: v))),
-                "Begriffe in der Lernsprache automatisch vorlesen. Gilt auch für Schreiben."),
+            Form.Row(L("Richtige Antwort abtippen"), Switch(learn.Retype, v => UpdateStudy(new StudyOptionsPatch(Learn: new LearnOptionsPatch(Retype: v)))),
+                L("Nach einem Fehler bei einer schriftlichen Frage tippst du die Lösung einmal ab.")),
+            Form.Row(L("Vorlesen"), Switch(options.Audio, v => UpdateStudy(new StudyOptionsPatch(Audio: v))),
+                L("Begriffe in der Lernsprache automatisch vorlesen. Gilt auch für Schreiben.")),
         ]);
         // Wiederholungsfragen and Nachkontrolle hold for every set (also switchable in the options while learning).
         var preferences = Model.Preferences;
-        yield return Form.Section("Wiederholung",
+        yield return Form.Section(L("Wiederholung"),
         [
             Form.Row(LearnOptionsCopy.ReviewLabel, Switch(preferences.LearnReview, v => preferences.LearnReview = v), LearnOptionsCopy.ReviewNote),
             Form.Row(LearnOptionsCopy.RecheckLabel, Switch(preferences.LearnRecheck, v => preferences.LearnRecheck = v), LearnOptionsCopy.RecheckNote),
         ], LearnOptionsCopy.GlobalSwitchesFooter);
         var d = StudyOptions.Default;
-        yield return DefaultsFooter(options.AnswerWith == d.AnswerWith && options.Audio == d.Audio && options.Learn == d.Learn,
+        // The two switches above are on this tab too: their standard is off / on.
+        yield return DefaultsFooter(options.AnswerWith == d.AnswerWith && options.Audio == d.Audio && options.Learn == d.Learn
+                && !preferences.LearnReview && preferences.LearnRecheck,
             new StudyOptionsPatch(AnswerWith: d.AnswerWith, Audio: d.Audio,
-                Learn: new LearnOptionsPatch(d.Learn.RoundSize, d.Learn.Mc, d.Learn.Written, d.Learn.Retype)), "Lernen");
+                Learn: new LearnOptionsPatch(d.Learn.RoundSize, d.Learn.Mc, d.Learn.Written, d.Learn.Retype)), L("Lernen"),
+            () =>
+            {
+                preferences.LearnReview = false;
+                preferences.LearnRecheck = true;
+            });
     }
 
     /// <summary>Schreiben: shuffling, the copy step after a miss and auto-advance.</summary>
     IEnumerable<Control> WriteTab()
     {
         var options = Model.Store.GetSettings().Study;
-        yield return Form.Section("Jede Karte schriftlich",
+        yield return Form.Section(L("Jede Karte schriftlich"),
         [
-            Form.Row("Mischen", Switch(options.Shuffle, v => UpdateStudy(new StudyOptionsPatch(Shuffle: v))), "Karten in zufälliger Reihenfolge abfragen."),
-            Form.Row("Richtige Antwort abtippen", Switch(options.CopyAnswer, v => UpdateStudy(new StudyOptionsPatch(CopyAnswer: v))), "Nach einem Fehler tippst du die Lösung einmal ab."),
-            Form.Row("Automatisch weiter", Switch(options.AutoAdvance, v => UpdateStudy(new StudyOptionsPatch(AutoAdvance: v))), "Nach einer richtigen Antwort geht es von selbst weiter."),
+            Form.Row(L("Mischen"), Switch(options.Shuffle, v => UpdateStudy(new StudyOptionsPatch(Shuffle: v))), L("Karten in zufälliger Reihenfolge abfragen.")),
+            Form.Row(L("Richtige Antwort abtippen"), Switch(options.CopyAnswer, v => UpdateStudy(new StudyOptionsPatch(CopyAnswer: v))), L("Nach einem Fehler tippst du die Lösung einmal ab.")),
+            Form.Row(L("Automatisch weiter"), Switch(options.AutoAdvance, v => UpdateStudy(new StudyOptionsPatch(AutoAdvance: v))), L("Nach einer richtigen Antwort geht es von selbst weiter.")),
         ]);
         var d = StudyOptions.Default;
         yield return DefaultsFooter(options.Shuffle == d.Shuffle && options.CopyAnswer == d.CopyAnswer && options.AutoAdvance == d.AutoAdvance,
-            new StudyOptionsPatch(Shuffle: d.Shuffle, CopyAnswer: d.CopyAnswer, AutoAdvance: d.AutoAdvance), "Schreiben");
+            new StudyOptionsPatch(Shuffle: d.Shuffle, CopyAnswer: d.CopyAnswer, AutoAdvance: d.AutoAdvance), L("Schreiben"));
     }
 
     /// <summary>Toleranz: the seven grading switches, each with an example in the language all sets are learned in.</summary>
@@ -276,40 +339,48 @@ public sealed class SettingsScreen(AppModel model, MainView window) : Screen(mod
         var options = Model.Store.GetSettings().Study;
         var termLangs = Model.Sets.Select(s => s.TermLang).Distinct().ToList();
         var termLang = termLangs.Count == 1 ? termLangs[0] : Lang.Other;
-        yield return Form.Section("Was trotzdem als richtig zählt",
+        yield return Form.Section(L("Was trotzdem als richtig zählt"),
             LearnOptionsCopy.ToleranceItems(termLang).Select(item =>
                 Form.Row(item.Label, Switch(item.Get(options.Tolerance), v => UpdateStudy(new StudyOptionsPatch(Tolerance: item.Patch(v)))), item.Example)).ToList());
         var d = StudyOptions.Default.Tolerance;
         yield return DefaultsFooter(options.Tolerance == d,
-            new StudyOptionsPatch(Tolerance: new TolerancePatch(d.Articles, d.Abbreviations, d.MultipleAnswers, d.Parentheses, d.IgnoreCase, d.IgnoreAccents, d.Typos)), "Toleranz");
+            new StudyOptionsPatch(Tolerance: new TolerancePatch(d.Articles, d.Abbreviations, d.MultipleAnswers, d.Parentheses, d.IgnoreCase, d.IgnoreAccents, d.Typos)), L("Toleranz"));
     }
 
     /// <summary>
     /// The note under the study tabs with "Standard wiederherstellen", disabled while the tab already shows the defaults
-    /// (Mac: SettingsDefaultsFooter, SettingsWriter.restoreDefaults).
+    /// (Mac: SettingsDefaultsFooter, SettingsWriter.restoreDefaults). <paramref name="restoreMore"/>: what else the tab
+    /// shows that is not a study option (Lernen: Wiederholungsfragen and Nachkontrolle).
     /// </summary>
-    Control DefaultsFooter(bool isDefault, StudyOptionsPatch defaults, string scope)
+    Control DefaultsFooter(bool isDefault, StudyOptionsPatch defaults, string scope, Action? restoreMore = null)
     {
         var p = WsTheme.P;
-        var note = Ui.Text("Gilt für alle Lernsets. Was du in den Optionen eines Lernsets umstellst, gilt nur für dieses Lernset."
+        var note = Ui.Text(L("Gilt für alle Lernsets. Was du in den Optionen eines Lernsets umstellst, gilt nur für dieses Lernset.")
             + OwnOptionsText(), 13, color: p.TextSecondary, wrap: TextWrapping.Wrap);
         note.VerticalAlignment = VerticalAlignment.Center;
-        var restore = Ui.Secondary("Standard wiederherstellen", () =>
+        var restore = Ui.Secondary(L("Standard wiederherstellen"), () =>
         {
             try
             {
+                restoreMore?.Invoke();
                 Model.Store.UpdateSettings(new SettingsPatch(Study: defaults));
                 Model.Store.Save();
-                Model.ShowToast(new ToastMessage($"{scope}: Standardwerte wiederhergestellt", ToastTone.Success));
+                Model.ShowToast(new ToastMessage(L($"{scope}: Standardwerte wiederhergestellt"), ToastTone.Success));
             }
             catch (Exception)
             {
-                Model.ShowToast(new ToastMessage("Die Standardwerte konnten nicht wiederhergestellt werden.", ToastTone.Danger, DurationMs: 6000));
+                Model.ShowToast(new ToastMessage(L("Die Standardwerte konnten nicht wiederhergestellt werden."), ToastTone.Danger, DurationMs: 6000));
             }
         }, IconName.RotateCcw, height: 34);
         restore.IsEnabled = !isDefault;
-        ToolTip.SetTip(restore, isDefault ? "Es sind bereits die Standardwerte eingestellt." : "Setzt die Einstellungen dieses Bereichs auf die Standardwerte zurück.");
+        ToolTip.SetTip(restore, isDefault ? L("Es sind bereits die Standardwerte eingestellt.") : L("Setzt die Einstellungen dieses Bereichs auf die Standardwerte zurück."));
         ToolTip.SetShowOnDisabled(restore, true);
+        if (AppDevice.IsPhone)
+        {
+            // Phone: the note over the button – beside it the note was a column of one to three words (06.11.2026).
+            restore.HorizontalAlignment = HorizontalAlignment.Left;
+            return new StackPanel { Spacing = 10, Margin = new Thickness(14, 0), Children = { note, restore } };
+        }
         var row = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto"), ColumnSpacing = 16, Margin = new Thickness(14, 0) };
         row.Children.Add(note);
         Grid.SetColumn(restore, 1);
@@ -327,11 +398,17 @@ public sealed class SettingsScreen(AppModel model, MainView window) : Screen(mod
         var own = Model.Sets
             .Where(set => set.StudyOptions is not null && LearnOptionsCopy.Deviations(Model.Store.GetStudyOptions(set.Id), standard,
                 LearnOptionsCopy.SideNames(set.TermLang, set.DefLang), set.TermLang).Count > 0)
-            .Select(set => $"«{AppModel.ShortTitle(set.Title)}»")
+            .Select(set => L($"«{AppModel.ShortTitle(set.Title)}»"))
             .ToList();
         if (own.Count == 0) return "";
-        var list = own.Count <= 3 ? string.Join(", ", own) : $"{string.Join(", ", own.Take(3))} und {own.Count - 3} weitere";
-        return $" Eigene Optionen haben: {list}.";
+        if (own.Count <= 3)
+        {
+            var list = string.Join(", ", own);
+            return L($" Eigene Optionen haben: {list}.");
+        }
+        var firstThree = string.Join(", ", own.Take(3));
+        int more = own.Count - 3;
+        return L($" Eigene Optionen haben: {firstThree} und {more} weitere.");
     }
 
     /// <summary>The translation side is named by its language only when all sets share it (an empty library counts as
@@ -344,7 +421,7 @@ public sealed class SettingsScreen(AppModel model, MainView window) : Screen(mod
 
     /// <summary>What the learner sees and answers (Mac: SettingsCopy.directionText; "Beides" names both modes).</summary>
     static string DirectionText(AnswerWith answerWith, (LearnOptionsCopy.Side Term, LearnOptionsCopy.Side Definition) names) => answerWith == AnswerWith.Both
-        ? "Schreiben fragt jede Karte in beide Richtungen ab, Lernen wechselt die Richtung zufällig."
+        ? L("Schreiben fragt jede Karte in beide Richtungen ab, Lernen wechselt die Richtung zufällig.")
         : LearnOptionsCopy.DirectionText(answerWith, names);
 
     // MARK: Daten
@@ -356,47 +433,68 @@ public sealed class SettingsScreen(AppModel model, MainView window) : Screen(mod
         int? bytes = null;
         try { bytes = Backup.JsonData(Model.Store.ExportAll()).Length; }
         catch (Exception) { }
-        yield return Section("Backup",
+        yield return Section(L("Backup"),
         [
-            Row("Backup exportieren", Ui.Secondary("Exportieren …", () => _ = ExportBackup(Model, Window), IconName.Upload),
-                "Alle Lernsets, dein Fortschritt und deine Einstellungen als Datei."),
-            Row("Backup importieren", Ui.Secondary("Importieren …", () => _ = BackupImportSheet.Choose(Model, Window), IconName.Download),
-                AppDevice.IsPhone ? "Eine Backup-Datei (.json) wählen." : "Eine Backup-Datei (.json) wählen oder hierher ziehen."),
+            Row(L("Backup exportieren"), Ui.Secondary(L("Exportieren …"), () => _ = ExportBackup(Model, Window), IconName.Upload),
+                L("Alle Lernsets, dein Fortschritt und deine Einstellungen als Datei.")),
+            Row(L("Backup importieren"), Ui.Secondary(L("Importieren …"), () => _ = BackupImportSheet.Choose(Model, Window), IconName.Download),
+                AppDevice.IsPhone ? L("Eine Backup-Datei (.json) wählen.") : L("Eine Backup-Datei (.json) wählen oder hierher ziehen.")),
         ], LibrarySummary(sets, bytes));
+        // Updates of the Windows app of the download page (SettingsUpdateSection.cs; Mac: after the backup, too).
+        if (UpdateSection() is { } updates) yield return updates;
 
         var file = Model.Store.Backend is FileBackend f ? f.Path : null;
-        var reveal = Ui.Secondary("Im Explorer zeigen", RevealLibrary);
+        var reveal = Ui.Secondary(L("Im Explorer zeigen"), RevealLibrary);
         reveal.IsEnabled = file is not null;
-        AutomationProperties.SetName(reveal, "Speicherort im Explorer zeigen");
-        var folder = file is null ? "Diese Bibliothek liegt nur im Arbeitsspeicher und wird nicht gesichert." : System.IO.Path.GetDirectoryName(file) ?? file;
+        AutomationProperties.SetName(reveal, L("Speicherort im Explorer zeigen"));
+        var folder = file is null ? L("Diese Bibliothek liegt nur im Arbeitsspeicher und wird nicht gesichert.") : System.IO.Path.GetDirectoryName(file) ?? file;
         // Phone: the app's own folder, which no file manager shows; backups go through «Backup exportieren».
         var location = AppDevice.IsPhone
-            ? Row("Speicherort", new Border(), "Im Speicher der App auf diesem Gerät. Sichere deine Lernsets mit «Backup exportieren».")
-            : Row("Speicherort", reveal, folder);
+            ? Row(L("Speicherort"), new Border(), L("Im Speicher der App auf diesem Gerät. Sichere deine Lernsets mit «Backup exportieren»."))
+            : Row(L("Speicherort"), reveal, folder);
         if (file is not null) ToolTip.SetTip(location, file);
-        yield return Section(AppDevice.IsPhone ? "Auf diesem Gerät" : "Auf diesem Computer",
+        yield return Section(AppDevice.IsPhone ? L("Auf diesem Gerät") : L("Auf diesem Computer"),
             location,
-            Row("Neu beginnen", Ui.Danger("Alle Daten löschen …", () => SettingsWipeSheet.Show(Model, Window)), "Entfernt Lernsets, Fortschritt, Statistik und Einstellungen."));
-        yield return Section("Info",
-            Row("Version", Ui.Text(typeof(SettingsScreen).Assembly.GetName().Version?.ToString(3) ?? "", 14, FontWeight.SemiBold), AppDevice.AppLabel));
+            Row(L("Neu beginnen"), Ui.Danger(L("Alle Daten löschen …"), () => SettingsWipeSheet.Show(Model, Window)), L("Entfernt Lernsets, Fortschritt, Statistik und Einstellungen.")));
+        var version = new Border
+        {
+            Child = Ui.Text(typeof(SettingsScreen).Assembly.GetName().Version?.ToString(3) ?? "", 14, FontWeight.SemiBold),
+            Background = Brushes.Transparent,
+        };
+        // The synonym data asks for its sources to be named (CC BY-SA, CC BY; Core/SynonymData/README.md).
+        yield return Section(L("Info"), Row(L("Version"), version, AppDevice.AppLabel),
+            Row(L("Synonymwörterbücher"), new Border(), L("Aus OpenThesaurus und Wiktionary (CC BY-SA 4.0), Open English WordNet (CC BY 4.0), MultiWordNet und Multilingual Central Repository (CC BY 3.0), für Wortschatz ausgewählt und bearbeitet.")));
     }
+
 
     /// <summary>"Gespeichert: 3 Lernsets · 120 Begriffe · ca. 24 KB" (Mac: SettingsCopy.librarySummary, the size of a backup).</summary>
     public static string LibrarySummary(IReadOnlyList<VocabSet> sets, int? bytes)
     {
-        if (sets.Count == 0) return "Noch keine Lernsets gespeichert.";
-        var parts = new List<string> { Labels.Plural(sets.Count, "Lernset", "Lernsets"), Labels.Plural(sets.Sum(s => s.Cards.Count), "Begriff", "Begriffe") };
-        if (bytes is { } b) parts.Add(FormatBytes(b));
-        return "Gespeichert: " + string.Join(" · ", parts);
+        if (sets.Count == 0) return L("Noch keine Lernsets gespeichert.");
+        var setsText = Labels.Plural(sets.Count, "Lernset", "Lernsets");
+        var cardsText = Labels.Plural(sets.Sum(s => s.Cards.Count), "Begriff", "Begriffe");
+        if (bytes is { } b)
+        {
+            var size = FormatBytes(b);
+            return L($"Gespeichert: {setsText} · {cardsText} · {size}");
+        }
+        return L($"Gespeichert: {setsText} · {cardsText}");
     }
 
     /// <summary>"unter 1 KB", "ca. 24 KB", "ca. 1,2 MB" (Mac: SettingsCopy.formatBytes).</summary>
     public static string FormatBytes(int bytes)
     {
-        if (bytes < 1024) return "unter 1 KB";
-        if (bytes < 1024 * 1024) return $"ca. {(int)Math.Round(bytes / 1024.0, MidpointRounding.AwayFromZero)} KB";
+        if (bytes < 1024) return L("unter 1 KB");
+        if (bytes < 1024 * 1024)
+        {
+            int kilobytes = (int)Math.Round(bytes / 1024.0, MidpointRounding.AwayFromZero);
+            return L($"ca. {kilobytes} KB");
+        }
         var megabytes = Math.Round(bytes / (1024.0 * 1024) * 10, MidpointRounding.AwayFromZero) / 10;
-        return "ca. " + megabytes.ToString("0.0", System.Globalization.CultureInfo.InvariantCulture).Replace('.', ',') + " MB";
+        // German shows a decimal comma (like the web app); English the formatting culture's separator (Mac: the same).
+        string separator = AppLanguage.Current == "de" ? "," : AppLanguage.FormattingCulture.NumberFormat.NumberDecimalSeparator;
+        string number = megabytes.ToString("0.0", System.Globalization.CultureInfo.InvariantCulture).Replace(".", separator);
+        return L($"ca. {number} MB");
     }
 
     /// <summary>Shows the library file in the Explorer (its folder if nothing was saved yet). Mac: revealLibrary.</summary>
@@ -413,7 +511,7 @@ public sealed class SettingsScreen(AppModel model, MainView window) : Screen(mod
         }
         catch (Exception)
         {
-            Model.ShowToast(new ToastMessage("Der Speicherort konnte nicht geöffnet werden.", ToastTone.Warning));
+            Model.ShowToast(new ToastMessage(L("Der Speicherort konnte nicht geöffnet werden."), ToastTone.Warning));
         }
     }
 
@@ -426,7 +524,7 @@ public sealed class SettingsScreen(AppModel model, MainView window) : Screen(mod
         var p = WsTheme.P;
         var label = new Border
         {
-            Child = Ui.H(8, Icons.Icon(IconName.Download, 17, p.AccentText, 2), Ui.Text("Backup hier ablegen", 15, FontWeight.SemiBold, p.AccentText)),
+            Child = Ui.H(8, Icons.Icon(IconName.Download, 17, p.AccentText, 2), Ui.Text(L("Backup hier ablegen"), 15, FontWeight.SemiBold, p.AccentText)),
             Background = WsTheme.B(p.GlassStrong),
             CornerRadius = new CornerRadius(999),
             Padding = new Thickness(16, 8),
@@ -474,7 +572,7 @@ public sealed class SettingsScreen(AppModel model, MainView window) : Screen(mod
     {
         var p = WsTheme.P;
         var row = Ui.H(16);
-        foreach (var (theme, label) in new[] { (ThemeSetting.System, AppDevice.IsPhone ? "Wie System" : "Wie Windows"), (ThemeSetting.Light, "Hell"), (ThemeSetting.Dark, "Dunkel") })
+        foreach (var (theme, label) in new[] { (ThemeSetting.System, AppDevice.IsPhone ? L("Wie System") : L("Wie Windows")), (ThemeSetting.Light, L("Hell")), (ThemeSetting.Dark, L("Dunkel")) })
         {
             bool isSelected = theme == selected;
             var sketch = new AppearanceSketch(theme) { Width = 72, Height = 48 };
@@ -491,12 +589,12 @@ public sealed class SettingsScreen(AppModel model, MainView window) : Screen(mod
             var option = Ui.Clickable(Ui.V(6, frame, text), () => choose(theme), label, 12, padding: new Thickness(4));
             option.HorizontalAlignment = HorizontalAlignment.Left;
             option.Focusable = true;
-            AutomationProperties.SetItemStatus(option, isSelected ? "ausgewählt" : "");
+            AutomationProperties.SetItemStatus(option, isSelected ? L("ausgewählt") : "");
             ToolTip.SetTip(option, theme switch
             {
-                ThemeSetting.System => $"Folgt der {AppDevice.SystemName}-Einstellung (Hell oder Dunkel)",
-                ThemeSetting.Light => "Immer helles Design.",
-                _ => "Immer dunkles Design – angenehm am Abend.",
+                ThemeSetting.System => L($"Folgt der {AppDevice.SystemName}-Einstellung (Hell oder Dunkel)"),
+                ThemeSetting.Light => L("Immer helles Design."),
+                _ => L("Immer dunkles Design – angenehm am Abend."),
             });
             row.Children.Add(option);
         }
@@ -576,17 +674,17 @@ public sealed class SettingsScreen(AppModel model, MainView window) : Screen(mod
         }
         catch (Exception)
         {
-            model.ShowToast(new ToastMessage("Das Backup konnte nicht erstellt werden.", ToastTone.Danger, DurationMs: 6000));
+            model.ShowToast(new ToastMessage(L("Das Backup konnte nicht erstellt werden."), ToastTone.Danger, DurationMs: 6000));
             return;
         }
         try
         {
             var file = await window.StorageProvider.SaveFilePickerAsync(new FilePickerSaveOptions
             {
-                Title = "Backup exportieren",
+                Title = L("Backup exportieren"),
                 SuggestedFileName = Backup.BackupFileName(timeZone: model.Store.TimeZone),
                 DefaultExtension = "json",
-                FileTypeChoices = [new FilePickerFileType("Wortschatz-Backup") { Patterns = ["*.json"] }],
+                FileTypeChoices = [new FilePickerFileType(L("Wortschatz-Backup")) { Patterns = ["*.json"] }],
             });
             if (file is null) return;
             await using (var stream = await file.OpenWriteAsync())
@@ -594,11 +692,11 @@ public sealed class SettingsScreen(AppModel model, MainView window) : Screen(mod
                 if (stream.CanSeek) stream.SetLength(0);
                 await stream.WriteAsync(data);
             }
-            model.ShowToast(new ToastMessage($"Backup gespeichert: {file.Name}", ToastTone.Success));
+            model.ShowToast(new ToastMessage(L($"Backup gespeichert: {file.Name}"), ToastTone.Success));
         }
         catch (Exception)
         {
-            model.ShowToast(new ToastMessage("Das Backup konnte nicht gespeichert werden.", ToastTone.Danger, DurationMs: 6000));
+            model.ShowToast(new ToastMessage(L("Das Backup konnte nicht gespeichert werden."), ToastTone.Danger, DurationMs: 6000));
         }
     }
 

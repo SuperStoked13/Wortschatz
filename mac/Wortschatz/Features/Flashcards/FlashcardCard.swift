@@ -144,10 +144,12 @@ nonisolated enum FlashcardMetrics {
     static let peekInset: CGFloat = 18
     /// Room below the card for the peeking edges.
     static let stackDepth: CGFloat = peekDrop * 2
-    /// The card's height for the room the stage has: an index-card shape, between 240 and 440 pt.
+    /// The card's height for the room the stage has: an index-card shape (0.58 of its width), at
+    /// least 240 pt.
     static func cardHeight(width: CGFloat, availableHeight: CGFloat) -> CGFloat {
+        // The index-card shape at any width (a fixed 440 pt cap stretched wider cards).
         let shaped = width * 0.58
-        return max(240, min(440, min(shaped, availableHeight)))
+        return max(240, min(shaped, availableHeight))
     }
 
     /// The card edge of the stack `level` steps below the card (0 is the next card): how far
@@ -168,7 +170,7 @@ extension FlashcardVerdict {
     }
 
     var title: String {
-        self == .know ? "Weiss ich" : "Lerne ich noch"
+        self == .know ? String(localized: "Weiss ich") : String(localized: "Lerne ich noch")
     }
 
     /// Sideways direction of the sorted card: "Weiss ich" to the right, "Lerne ich noch" to the left.
@@ -690,6 +692,7 @@ private struct FlashcardSheen: View {
 /// the card green or amber and settles the verdict's seal behind the text (a sorted card on its
 /// way out).
 struct FlashcardFace<Tools: View>: View {
+    @Environment(\.studyScale) private var studyScale
     let side: FlashcardSide
     let height: CGFloat
     var verdict: FlashcardVerdict?
@@ -739,13 +742,14 @@ struct FlashcardFace<Tools: View>: View {
     @ViewBuilder
     private var text: some View {
         if LearnText.hasText(side.text) {
-            Text(LearnText.spoken(side.text, lang: side.lang))
-                .font(Typography.flashcard(for: side.text))
+            // Long words: smaller only down to about 70 %, then broken at syllables; the scale
+            // factor is left for texts longer than seven lines.
+            let metrics = Typography.flashcardMetrics(for: side.text)
+            LongWordText(text: side.text, lang: side.lang, size: metrics.size * StudyScale.widthFactor(studyScale), weight: metrics.weight, alignment: .center)
                 .foregroundStyle(.primary)
                 .multilineTextAlignment(.center)
                 .lineLimit(7)
                 .minimumScaleFactor(0.55)
-                .frame(maxWidth: .infinity)
                 .cardTextDirection(side.lang)
                 .padding(.horizontal, Spacing.l)
                 .accessibilityLabel(Text(LearnText.labeled(side.label, side.text, lang: side.lang)))
@@ -846,11 +850,13 @@ struct FlashcardTools: View {
     var body: some View {
         HStack(spacing: Spacing.xxs) {
             if isInteractive {
-                LearnIconButton(label: "Vorlesen", help: "Vorlesen (⌘R)", systemImage: "speaker.wave.2.fill", action: onSpeak)
+                LearnIconButton(
+                    label: String(localized: "Vorlesen"), help: String(localized: "Vorlesen (⌘R)"),
+                    systemImage: "speaker.wave.2.fill", action: onSpeak)
                     .symbolEffect(.variableColor.iterative, isActive: isSpeaking && !reduceMotion)
                 LearnIconButton(
-                    label: starred ? "Markierung entfernen" : "Markieren",
-                    help: starred ? "Markierung entfernen (⌘D)" : "Markieren (⌘D)",
+                    label: starred ? String(localized: "Markierung entfernen") : String(localized: "Markieren"),
+                    help: starred ? String(localized: "Markierung entfernen (⌘D)") : String(localized: "Markieren (⌘D)"),
                     systemImage: starred ? "star.fill" : "star",
                     tint: starred ? Theme.star : nil,
                     action: onStar
@@ -858,7 +864,8 @@ struct FlashcardTools: View {
                 .symbolEffect(.bounce, options: .nonRepeating, value: starred)
                 // ⌘E wins over the Lernset menu's ⌘E while a card is on screen: it edits this card.
                 LearnIconButton(
-                    label: "Karte bearbeiten", help: "Karte bearbeiten (⌘E)", systemImage: "square.and.pencil",
+                    label: String(localized: "Karte bearbeiten"), help: String(localized: "Karte bearbeiten (⌘E)"),
+                    systemImage: "square.and.pencil",
                     shortcut: KeyboardShortcut("e", modifiers: .command), action: onEdit)
             } else {
                 icon("speaker.wave.2.fill")

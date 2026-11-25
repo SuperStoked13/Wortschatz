@@ -18,12 +18,12 @@ enum TermFilter: String, CaseIterable, Identifiable, Sendable {
 
     var label: String {
         switch self {
-        case .all: "Alle"
+        case .all: String(localized: "Alle", comment: "Term filter: all terms")
         case .new: CardStatus.new.label
         case .learning: CardStatus.learning.label
         case .mastered: CardStatus.mastered.label
-        case .starred: "Markiert"
-        case .difficult: "Schwierig"
+        case .starred: String(localized: "Markiert", comment: "Term filter: starred terms")
+        case .difficult: String(localized: "Schwierig", comment: "Term filter: terms answered wrong often")
         }
     }
 
@@ -53,15 +53,23 @@ enum TermFilter: String, CaseIterable, Identifiable, Sendable {
     var emptyState: (symbol: String, title: String, text: String) {
         switch self {
         case .all, .new:
-            ("sparkles", "Keine neuen Begriffe", "Du hast jeden Begriff schon mindestens einmal geübt.")
+            ("sparkles", String(localized: "Keine neuen Begriffe"),
+             String(localized: "Du hast jeden Begriff schon mindestens einmal geübt."))
         case .learning:
-            ("book", "Gerade nichts am Lernen", "Hier erscheinen Begriffe, die du schon geübt, aber noch nicht gemeistert hast.")
+            ("book", String(localized: "Gerade nichts am Lernen"),
+             String(localized: "Hier erscheinen Begriffe, die du schon geübt, aber noch nicht gemeistert hast."))
         case .mastered:
-            ("trophy", "Noch nichts gemeistert", "Ein Begriff gilt als gemeistert, wenn du ihn zweimal hintereinander richtig beantwortest.")
+            ("trophy", String(localized: "Noch nichts gemeistert"),
+             String(localized: "Ein Begriff gilt als gemeistert, wenn du ihn zweimal hintereinander richtig beantwortest."))
         case .starred:
-            ("star", "Keine markierten Begriffe", "Klicke bei einem Begriff auf den Stern, um ihn später gezielt zu üben.")
+            ("star", String(localized: "Keine markierten Begriffe"),
+             String(localized: "Klicke bei einem Begriff auf den Stern, um ihn später gezielt zu üben."))
         case .difficult:
-            ("flame", "Keine schwierigen Begriffe", "Hier erscheinen Begriffe, die du mindestens \(SetSummary.difficultMistakes)× falsch beantwortet hast.")
+            ("flame", String(localized: "Keine schwierigen Begriffe"),
+             String(
+                localized:
+                    "Hier erscheinen Begriffe, die du mindestens \(SetSummary.difficultMistakes)× falsch beantwortet hast."
+             ))
         }
     }
 }
@@ -77,8 +85,11 @@ struct SetTermRow: Identifiable, Hashable {
     let position: Int
     /// How often the card was answered wrong (in total).
     let mistakes: Int
-    /// "3× richtig · 1× falsch".
-    let progressTitle: String
+    /// The card's stored progress (for `progressTitle`).
+    let progress: CardProgress?
+
+    /// "3× richtig · 1× falsch" (built by the visible cells only).
+    var progressTitle: String { SetDetailCopy.progressTitle(progress) }
 
     /// Sorts starred cards first.
     var starRank: Int { starred ? 0 : 1 }
@@ -103,7 +114,6 @@ struct SetTermsSection: View {
     @State private var search = ""
     @State private var selection = Set<SetTermRow.ID>()
     @State private var sortOrder: [KeyPathComparator<SetTermRow>] = []
-    @FocusState private var searchFocused: Bool
 
     var body: some View {
         VStack(spacing: 0) {
@@ -146,7 +156,7 @@ struct SetTermsSection: View {
             .fixedSize()
             Spacer(minLength: Spacing.s)
             filter()
-            searchField
+            TermSearchField(search: $search)
                 .frame(width: searchWidth)
         }
     }
@@ -174,35 +184,6 @@ struct SetTermsSection: View {
         .fixedSize()
     }
 
-    private var searchField: some View {
-        HStack(spacing: 6) {
-            Image(systemName: "magnifyingglass")
-                .foregroundStyle(.secondary)
-                .accessibilityHidden(true)
-            TextField("Begriffe suchen", text: $search)
-                .textFieldStyle(.plain)
-                .focused($searchFocused)
-                .onExitCommand { search = "" }
-                .accessibilityLabel("Begriffe durchsuchen")
-            if !search.isEmpty {
-                Button {
-                    search = ""
-                } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .foregroundStyle(.secondary)
-                }
-                .buttonStyle(.borderless)
-                .accessibilityLabel("Suche löschen")
-            }
-        }
-        .padding(.horizontal, Spacing.xs)
-        .padding(.vertical, 5)
-        .background(.background.opacity(0.7), in: Capsule())
-        .overlay {
-            Capsule().strokeBorder(searchFocused ? Theme.accent.opacity(0.8) : Theme.hairline, lineWidth: searchFocused ? 2 : 1)
-        }
-    }
-
     // MARK: Table
 
     private var rows: [SetTermRow] {
@@ -226,8 +207,7 @@ struct SetTermsSection: View {
             }
             rows.append(SetTermRow(
                 id: card.id, term: card.term, definition: card.definition, starred: card.starred, status: status,
-                position: index, mistakes: mistakes,
-                progressTitle: SetDetailCopy.progressTitle(summary.progress[card.id])))
+                position: index, mistakes: mistakes, progress: summary.progress[card.id]))
         }
         if !sortOrder.isEmpty {
             rows.sort(using: sortOrder)
@@ -282,6 +262,11 @@ struct SetTermsSection: View {
         .tableStyle(.inset)
         .alternatingRowBackgrounds(.disabled)
         .scrollContentBackground(.hidden)
+        // The columns always fit (dragging a divider only shares out the width), yet AppKit let
+        // the table rubber-band sideways and kept a horizontal scroller: it scrolls up and down
+        // only.
+        .scrollBounceBehavior(.basedOnSize, axes: .horizontal)
+        .scrollIndicators(.never, axes: .horizontal)
         .contextMenu(forSelectionType: SetTermRow.ID.self) { ids in
             rowMenu(ids)
         } primaryAction: { _ in
@@ -365,8 +350,8 @@ private struct CellText: View {
     }
 }
 
-/// The ★ toggle of a row.
-private struct StarToggle: View {
+/// The ★ toggle of a row (also in the lists "Am häufigsten falsch").
+struct StarToggle: View {
     let isStarred: Bool
     let toggle: () -> Void
 
@@ -382,5 +367,40 @@ private struct StarToggle: View {
         .help(isStarred ? "Markierung entfernen" : "Markieren")
         .accessibilityLabel(isStarred ? "Markierung entfernen" : "Markieren")
         .accessibilityValue(isStarred ? "markiert" : "nicht markiert")
+    }
+}
+
+/// The terms' search field. Its own view, so focusing it (the ring) does not rebuild the table.
+private struct TermSearchField: View {
+    @Binding var search: String
+    @FocusState private var searchFocused: Bool
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "magnifyingglass")
+                .foregroundStyle(.secondary)
+                .accessibilityHidden(true)
+            TextField("Begriffe suchen", text: $search)
+                .textFieldStyle(.plain)
+                .focused($searchFocused)
+                .onExitCommand { search = "" }
+                .accessibilityLabel("Begriffe durchsuchen")
+            if !search.isEmpty {
+                Button {
+                    search = ""
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.borderless)
+                .accessibilityLabel("Suche löschen")
+            }
+        }
+        .padding(.horizontal, Spacing.xs)
+        .padding(.vertical, 5)
+        .background(.background.opacity(0.7), in: Capsule())
+        .overlay {
+            Capsule().strokeBorder(searchFocused ? Theme.accent.opacity(0.8) : Theme.hairline, lineWidth: searchFocused ? 2 : 1)
+        }
     }
 }

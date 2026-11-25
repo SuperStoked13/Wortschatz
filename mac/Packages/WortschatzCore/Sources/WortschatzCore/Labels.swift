@@ -2,7 +2,8 @@ import Foundation
 
 /// Display data of a language (`LANGS` entry of src/lib/labels.js).
 public struct LangInfo: Codable, Sendable, Equatable, Hashable {
-    /// German name, e.g. "Französisch".
+    /// German name, e.g. "Französisch" (raw data; for display use `Labels.langName`, which
+    /// translates it).
     public var name: String
     /// Short code, e.g. "FR" ("—" for other).
     public var short: String
@@ -33,44 +34,52 @@ public enum Labels {
     /// Display order for language pickers.
     public static let LANG_ORDER: [Lang] = [.fr, .en, .es, .it, .ar, .zh, .de, .other]
 
-    public static let STATUS: [CardStatus: String] = [
-        .new: "Neu",
-        .learning: "Am Lernen",
-        .mastered: "Gemeistert",
-    ]
+    /// Display labels in the app's language (computed: `CoreText.translate` is set at launch).
+    public static var STATUS: [CardStatus: String] {
+        [
+            .new: L("Neu"),
+            .learning: L("Am Lernen"),
+            .mastered: L("Gemeistert"),
+        ]
+    }
 
-    public static let NOTE_LABELS: [GradeNote: String] = [
-        .article: "Artikel fehlte",
-        .pronoun: "Pronomen fehlte",
-        .abbreviation: "Abkürzung",
-        .partial: "Teilantwort",
-        .parentheses: "Klammerinhalt weggelassen",
-        .pinyin: "Nur Pinyin",
-        .letterCase: "Gross-/Kleinschreibung",
-        .accents: "Akzente",
-        .tones: "Töne",
-        .variant: "Schreibvariante",
-        .typo: "Tippfehler",
-        .order: "Reihenfolge",
-        // The answer of another card with the same prompt (Synonyms).
-        .synonym: "Anderes Wort mit gleicher Bedeutung",
-        // A word with the same meaning that is not in the set (ExtendedSynonyms).
-        .extendedSynonym: "Synonym – nicht im Set",
-    ]
+    public static var NOTE_LABELS: [GradeNote: String] {
+        [
+            .article: L("Artikel fehlte"),
+            .pronoun: L("Pronomen fehlte"),
+            .abbreviation: L("Abkürzung"),
+            .partial: L("Teilantwort"),
+            .parentheses: L("Klammerinhalt weggelassen"),
+            .pinyin: L("Nur Pinyin"),
+            .letterCase: L("Gross-/Kleinschreibung"),
+            .accents: L("Akzente"),
+            .tones: L("Töne"),
+            .variant: L("Schreibvariante"),
+            .typo: L("Tippfehler"),
+            .order: L("Reihenfolge"),
+            // The answer of another card with the same prompt (Synonyms).
+            .synonym: L("Anderes Wort mit gleicher Bedeutung"),
+            // A word with the same meaning that is not in the set (ExtendedSynonyms).
+            .extendedSynonym: L("Synonym – nicht im Set"),
+        ]
+    }
 
-    public static let HINT_LABELS: [GradeHint: String] = [
-        .wrongArticle: "Falscher Artikel",
-        .missingArticle: "Artikel fehlt",
-        .accentsOnly: "Nur die Akzente stimmen nicht",
-        .tonesOnly: "Nur die Töne fehlen",
-        .caseOnly: "Nur Gross-/Kleinschreibung falsch",
-        .typo: "Fast – ein kleiner Tippfehler",
-        .almost: "Knapp daneben",
-    ]
+    public static var HINT_LABELS: [GradeHint: String] {
+        [
+            .wrongArticle: L("Falscher Artikel"),
+            .missingArticle: L("Artikel fehlt"),
+            .accentsOnly: L("Nur die Akzente stimmen nicht"),
+            .tonesOnly: L("Nur die Töne fehlen"),
+            .caseOnly: L("Nur Gross-/Kleinschreibung falsch"),
+            .typo: L("Fast – ein kleiner Tippfehler"),
+            .almost: L("Knapp daneben"),
+        ]
+    }
 
-    /// `plural(3, "Begriff", "Begriffe")` → "3 Begriffe".
+    /// `plural(3, "Begriff", "Begriffe")` → "3 Begriffe". Translated as "%@ Begriff" / "%@ Begriffe"
+    /// (so a counter's word can differ from the same word as a heading); callers pass literals.
     public static func plural(_ n: Int, _ one: String, _ other: String) -> String {
-        "\(n) \(n == 1 ? one : other)"
+        L("%@ " + (n == 1 ? one : other), "\(n)")
     }
 
     public static func info(_ code: Lang?) -> LangInfo {
@@ -82,8 +91,22 @@ public enum Labels {
         info(code.flatMap(Lang.init(rawValue:)))
     }
 
-    public static func langName(_ code: Lang?) -> String { info(code).name }
-    public static func langName(_ code: String?) -> String { info(code).name }
+    /// The language's name in the app's language (`LANGS[code].name` translated). Display only:
+    /// nothing parses it back.
+    public static func langName(_ code: Lang?) -> String {
+        switch code ?? .other {
+        case .fr: L("Französisch")
+        case .en: L("Englisch")
+        case .es: L("Spanisch")
+        case .it: L("Italienisch")
+        case .ar: L("Arabisch")
+        case .zh: L("Chinesisch")
+        case .de: L("Deutsch")
+        case .other: L("Andere")
+        }
+    }
+
+    public static func langName(_ code: String?) -> String { langName(code.flatMap(Lang.init(rawValue:))) }
 
     public static func langShort(_ code: Lang?) -> String { info(code).short }
     public static func langShort(_ code: String?) -> String { info(code).short }

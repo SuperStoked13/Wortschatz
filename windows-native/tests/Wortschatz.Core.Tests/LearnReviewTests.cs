@@ -195,13 +195,13 @@ public class LearnReviewTests
             first = false;
             return result;
         });
-        // The miss sent it to stage 0; the next round learns it again: multiple choice, then written (the only card
-        // left, so it may come right after itself).
+        // The miss sent it to stage 0; the next round learns it again: written twice (answered right before; the only
+        // card left, so it may come right after itself).
         Assert.Equal(0, s.Stage[missed]);
         Assert.False(LearnEngine.IsFinished(s));
         s = LearnEngine.NextRound(s, cards, Rand.Mulberry32(9u), T0 + 60_000);
         Assert.Equal([$"2.1:{missed}", $"2.1.2:{missed}"], s.Queue.Select(q => q.Qid));
-        Assert.Equal([QuestionType.Mc, QuestionType.Written], s.Queue.Select(q => q.Type));
+        Assert.Equal([QuestionType.Written, QuestionType.Written], s.Queue.Select(q => q.Type));
         s = Play(s, _ => true, T0 + 60_000);
         Assert.True(LearnEngine.IsFinished(s));
         Assert.Equal(3, LearnEngine.FinalStatsOf(s).AlreadyMastered);
@@ -346,20 +346,20 @@ public class LearnReviewTests
         Assert.Equal(CardStatus.Learning, Mastery.CardStatusOf(progress[cardId]));
     }
 
+    /// <summary>Since 24.11.2026 the switch applies to the running session (before: «Neu starten?»).</summary>
     [Fact]
-    public void SwitchingTheOptionAsksToRestart()
+    public void SwitchingTheOptionAppliesAtOnce()
     {
         var cards = MakeCards(6);
-        var (start, _) = LearnFlow.Start(Set(cards), new Dictionary<string, CardProgress>(), StudyOptions.Default, rng: Rand.Mulberry32(2u), now: T0);
-        var env = new LearnFlow.Env(Rand.Mulberry32(2u), T0 + 1000);
+        var progress = Mastered(cards.Take(2));
+        var (start, _) = LearnFlow.Start(Set(cards), progress, StudyOptions.Default, rng: Rand.Mulberry32(2u), now: T0);
+        var env = new LearnFlow.Env(Rand.Mulberry32(2u), T0 + 1000, progress);
         var (s, _) = LearnFlow.Reduce(start, new LearnFlow.Event.OverlayPresented(LearnFlow.Overlay.Options), env);
         (s, _) = LearnFlow.Reduce(s, new LearnFlow.Event.ReviewChanged(true), env);
         (s, _) = LearnFlow.Reduce(s, new LearnFlow.Event.OverlayDismissed(), env);
-        Assert.Equal(new LearnFlow.Prompt.RestartForOptions([LearnFlow.SettingsChange.Review]), s.Prompt);
-        Assert.StartsWith("Die Einstellung für Wiederholungsfragen gilt ab einem Neustart.", LearnFlow.RestartMessage([LearnFlow.SettingsChange.Review]));
-        var (restarted, _) = LearnFlow.Reduce(s, new LearnFlow.Event.PromptAnswered(true), env);
-        Assert.NotNull(restarted.Session?.Review);
-        Assert.True(LearnFlow.SessionSettingsOf(restarted.Session!).Review);
+        Assert.Null(s.Prompt);
+        Assert.NotNull(s.Session?.Review);
+        Assert.True(LearnFlow.SessionSettingsOf(s.Session!).Review);
     }
 
     [Fact]

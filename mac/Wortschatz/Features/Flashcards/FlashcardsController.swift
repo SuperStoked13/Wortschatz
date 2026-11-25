@@ -249,7 +249,7 @@ final class FlashcardsController {
         persist()
         guard isLive else { return }
         Haptics.selection()
-        Announcer.announce(verdict == .know ? "Weiss ich" : "Lerne ich noch")
+        Announcer.announce(verdict == .know ? String(localized: "Weiss ich") : String(localized: "Lerne ich noch"))
         // The round's fanfare replaces the card's own sound, as in Lernen.
         switch phase {
         case .roundDone: SoundEffects.shared.play(.roundDone)
@@ -297,7 +297,8 @@ final class FlashcardsController {
             return
         }
         model.confirm(ConfirmationRequest(
-            title: "Karteikarten neu starten?", message: FlashcardCopy.restartMessage(deck), confirmLabel: "Neu starten"
+            title: String(localized: "Karteikarten neu starten?"), message: FlashcardCopy.restartMessage(deck),
+            confirmLabel: String(localized: "Neu starten")
         ) { [weak self] in
             self?.restart()
         })
@@ -404,7 +405,7 @@ final class FlashcardsController {
         do {
             _ = try store.updateCard(setID, card.id, CardChanges(term: card.term, definition: card.definition))
         } catch {
-            model.report(error, fallback: "Die Karte konnte nicht gespeichert werden.")
+            model.report(error, fallback: String(localized: "Die Karte konnte nicht gespeichert werden."))
         }
     }
 

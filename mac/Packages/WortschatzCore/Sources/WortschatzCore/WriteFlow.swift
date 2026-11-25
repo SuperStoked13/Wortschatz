@@ -39,7 +39,7 @@ public enum WriteFlow {
     /// lock ends. Presses closer than this to the answer count as the answering press itself.
     public static let skipMinGapMs: Double = 50
     /// Praise after an exact answer; never the same twice in a row (`PRAISE`).
-    public static let praise = ["Richtig!", "Super!", "Genau!", "Stark!"]
+    public static var praise: [String] { [L("Richtig!"), L("Super!"), L("Genau!"), L("Stark!")] }
     /// How often the app should send `.clockTick` while the window is visible (write-clock.js).
     public static let clockTickMs: Double = 15_000
     /// After this long without input the app stops ticking and sends `.clockResumed` on the next
@@ -130,13 +130,13 @@ public enum WriteFlow {
         /// "Super!" after a correct answer, "Nicht ganz." after a miss and
         /// "Kein Problem – merk dir das:" after "Weiss ich nicht".
         public var title: String {
-            if isCorrect { return praise ?? "Richtig!" }
-            return dontKnow ? "Kein Problem – merk dir das:" : "Nicht ganz."
+            if isCorrect { return praise ?? L("Richtig!") }
+            return dontKnow ? L("Kein Problem – merk dir das:") : L("Nicht ganz.")
         }
 
         /// Introduces `result.expectedDisplay` after a tolerated answer: "Genau:", or
         /// "Gesucht war:" for a synonym.
-        public var exactLabel: String { synonym ? "Gesucht war:" : "Genau:" }
+        public var exactLabel: String { synonym ? L("Gesucht war:") : L("Genau:") }
 
         /// A tolerated (not exact) correct answer shows the exact answer under `exactLabel`.
         public var showsExact: Bool {
@@ -165,10 +165,10 @@ public enum WriteFlow {
         public var canOverride: Bool { !dontKnow && WriteFlow.hasText(given) }
 
         /// "Als richtig zählen" after an edit made the answer correct, else "Ich hatte recht".
-        public var overrideLabel: String { editedCorrect ? "Als richtig zählen" : "Ich hatte recht" }
+        public var overrideLabel: String { editedCorrect ? L("Als richtig zählen") : L("Ich hatte recht") }
 
         /// The note under the answers after such an edit.
-        public var editedNote: String? { editedCorrect ? "Mit deiner Korrektur stimmt deine Antwort jetzt." : nil }
+        public var editedNote: String? { editedCorrect ? L("Mit deiner Korrektur stimmt deine Antwort jetzt.") : nil }
     }
 
     /// A note chip after a correct answer.
@@ -225,8 +225,6 @@ public enum WriteFlow {
     public enum Prompt: Codable, Sendable, Equatable, Hashable {
         /// "Neu starten?" (sidebar button, menu or the options sheet's "Neu starten").
         case restart(resumesTimer: Bool)
-        /// The direction or order changed in the options and differs from the running session.
-        case restartForOptions(directionChanged: Bool, resumesTimer: Bool, copyChanged: Bool)
         /// A subset was requested while an answered round of another subset is stored.
         case replaceRound(wanted: StudySubset, saved: SessionState, feedback: PendingFeedback?)
     }
@@ -242,9 +240,9 @@ public enum WriteFlow {
 
         public var message: String {
             switch self {
-            case .welcomeBack: "Willkommen zurück – weiter geht's"
-            case .countedAsCorrect: "Als richtig gezählt"
-            case .cardSaved: "Karte gespeichert"
+            case .welcomeBack: L("Willkommen zurück – weiter geht's")
+            case .countedAsCorrect: L("Als richtig gezählt")
+            case .cardSaved: L("Karte gespeichert")
             }
         }
 
@@ -498,7 +496,11 @@ public enum WriteFlow {
             var s = state
             s.input = text
             s.inputInvalid = false
-            return (s, [])
+            // The copy typed out continues by itself after a short beat, like Return (`CopyStep`).
+            guard s.phase == .copy else { return (s, []) }
+            var m = Machine(s, env)
+            m.continueTypedOutCopy()
+            return m.finish()
         }
         var m = Machine(state, env)
         m.handle(event)
@@ -510,11 +512,11 @@ public enum WriteFlow {
         if state.isBlocked { return nil }
         switch state.phase {
         case .starting: return nil
-        case .question: return "Antworten"
-        case .feedback, .copy: return "Weiter"
+        case .question: return L("Antworten")
+        case .feedback, .copy: return L("Weiter")
         case .summary:
-            return "Weiter zu Runde \((state.summary?.round ?? state.session?.round ?? 1) + 1)"
-        case .results: return state.results?.canRetry == true ? "Falsche nochmal üben" : "Fertig"
+            return L("Weiter zu Runde %@", "\((state.summary?.round ?? state.session?.round ?? 1) + 1)")
+        case .results: return state.results?.canRetry == true ? L("Falsche nochmal üben") : L("Fertig")
         case .empty: return emptyMessage(for: state.emptySubset ?? .all).primaryLabel
         case .missing: return missingMessage.primaryLabel
         }
@@ -525,9 +527,9 @@ public enum WriteFlow {
     public static func returnHint(_ state: State) -> String? {
         if state.isBlocked { return nil }
         switch state.phase {
-        case .question: return "zum Antworten"
-        case .feedback(.correct): return state.autoAdvance != nil ? "Weiter mit beliebiger Taste" : "zum Weitermachen"
-        case .copy: return "zum Prüfen"
+        case .question: return L("zum Antworten")
+        case .feedback(.correct): return state.autoAdvance != nil ? L("Weiter mit beliebiger Taste") : L("zum Weitermachen")
+        case .copy: return L("zum Prüfen")
         default: return nil
         }
     }
@@ -548,5 +550,16 @@ public enum WriteFlow {
     public static func editorCard(_ state: State) -> Card? {
         guard case let .editor(question, _, _)? = state.overlay else { return nil }
         return state.set?.cards.first { $0.id == question.cardId }
+    }
+}
+
+extension WriteFlow.State {
+    /// Whether `other` differs from this state in the answer field's text (`input`) alone: the
+    /// app then updates only the field instead of every view that shows the state.
+    public func differsOnlyInInput(from other: Self) -> Bool {
+        guard input != other.input else { return false }
+        var same = other
+        same.input = input
+        return same == self
     }
 }

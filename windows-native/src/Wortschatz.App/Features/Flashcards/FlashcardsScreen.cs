@@ -3,11 +3,11 @@ using Avalonia.Automation;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Interactivity;
-using Avalonia.Layout;
 using Avalonia.Media;
 using Wortschatz.App.DesignSystem;
 using Wortschatz.App.Features.Study;
 using Wortschatz.Core;
+using static Wortschatz.Core.CoreText;
 using DeckPhase = Wortschatz.Core.FlashcardDeck.DeckPhase;
 
 namespace Wortschatz.App.Features.Flashcards;
@@ -106,10 +106,10 @@ public sealed class FlashcardsScreen : Screen
         var capsule = Ui.Glass(Ui.H(16, _roundText, _line, _countText), 999, new Thickness(18, 0), strong: true, shadow: false);
         capsule.Height = 40;
         _progress = capsule;
-        _optionsButton = Ui.IconButton(IconName.Sliders, "Optionen (Ctrl+K)", ShowOptions);
-        _restartButton = Ui.IconButton(IconName.RotateCcw, "Neu starten (Ctrl+Shift+R)", _c.RequestRestart);
+        _optionsButton = Ui.IconButton(IconName.Sliders, L("Optionen (Ctrl+K)"), ShowOptions);
+        _restartButton = Ui.IconButton(IconName.RotateCcw, L("Neu starten (Ctrl+Shift+R)"), _c.RequestRestart);
         foreach (var b in new[] { _optionsButton, _restartButton }) b.Focusable = false;
-        return StudyChrome.TopRow(StudyChrome.BackPill(_c.Set.Title is { Length: > 0 } t ? t : "Zurück", _c.Exit), capsule, Ui.H(8, _optionsButton, _restartButton));
+        return StudyChrome.TopRow(StudyChrome.BackPill(_c.Set.Title is { Length: > 0 } t ? t : L("Zurück"), _c.Exit), capsule, Ui.H(8, _optionsButton, _restartButton));
     }
 
     /// <summary>"Runde 2", how far the round is and "5/12" (Mac: FlashcardsToolbarProgress).</summary>
@@ -119,11 +119,11 @@ public sealed class FlashcardsScreen : Screen
         if (_progress is null || _line is null || _roundText is null || _countText is null) return;
         _progress.IsVisible = Phase != DeckPhase.Empty;
         int shown = Math.Min(deck.SortedInRound + (Phase == DeckPhase.Card ? 1 : 0), deck.RoundSize);
-        _roundText.Text = $"Runde {deck.Round}";
+        _roundText.Text = L($"Runde {deck.Round}");
         _countText.Text = $"{shown}/{deck.RoundSize}";
         _line.SetValue(deck.RoundSize > 0 ? (double)deck.SortedInRound / deck.RoundSize : 0, Motion.Snappy);
-        ToolTip.SetTip(_progress, $"Runde {deck.Round} · {deck.SortedInRound} von {FlashcardCopy.Cards(deck.RoundSize)} sortiert");
-        AutomationProperties.SetName(_progress, $"Fortschritt: Runde {deck.Round}, Karte {shown} von {deck.RoundSize}");
+        ToolTip.SetTip(_progress, L($"Runde {deck.Round} · {deck.SortedInRound} von {FlashcardCopy.Cards(deck.RoundSize)} sortiert"));
+        AutomationProperties.SetName(_progress, L($"Fortschritt: Runde {deck.Round}, Karte {shown} von {deck.RoundSize}"));
         if (_optionsButton is not null) _optionsButton.IsEnabled = Phase != DeckPhase.Empty;
         if (_restartButton is not null) _restartButton.IsEnabled = deck.HasProgress;
     }
@@ -188,7 +188,7 @@ public sealed class FlashcardsScreen : Screen
             CloseOverlay();
             if (yes) action();
         };
-        Show(OverlayKind.Confirm, StudyChrome.PromptCard(title, message, confirm, "Abbrechen", false, yes => _confirm?.Invoke(yes)), () => _confirm?.Invoke(false));
+        Show(OverlayKind.Confirm, StudyChrome.PromptCard(title, message, confirm, L("Abbrechen"), false, yes => _confirm?.Invoke(yes)), () => _confirm?.Invoke(false));
     }
 
     // MARK: Keys

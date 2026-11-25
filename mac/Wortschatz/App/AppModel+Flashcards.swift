@@ -25,7 +25,8 @@ extension AppModel {
         }
         let subset: StudySubset? = deck.starredOnly ? .starred : nil
         confirm(ConfirmationRequest(
-            title: "Karteikarten neu starten?", message: FlashcardCopy.restartMessage(deck), confirmLabel: "Neu starten"
+            title: String(localized: "Karteikarten neu starten?"), message: FlashcardCopy.restartMessage(deck),
+            confirmLabel: String(localized: "Neu starten")
         ) { [weak self] in
             self?.study(.flashcards, setID: setID, subset: subset, forceNew: true)
         })
@@ -74,19 +75,39 @@ extension AppModel {
         flashcardsSaveTask = Task { [weak self] in
             try? await Task.sleep(for: Self.flashcardsSaveDelay)
             guard !Task.isCancelled, let self else { return }
-            self.saveFlashcardsNow()
+            self.writeFlashcards(waiting: false)
         }
     }
 
     /// Writes the decks now, if a change is waiting (also called by `save()`, so quitting keeps
     /// the last sort). A failure is not worth an alert: the decks stay in memory.
     func saveFlashcardsNow() {
+        writeFlashcards(waiting: true)
+        // A delayed write handed to the queue a moment ago may still be under way: wait for it
+        // too, or quitting right after a sort could end the app in the middle of it.
+        Self.flashcardsWriter.sync {}
+    }
+
+    /// Encodes and writes the decks on `flashcardsWriter`, after any write still under way; waits
+    /// for it when `waiting` (quitting). The delayed save does not wait: on the main thread it cost
+    /// the next card's animation frames, 400 ms after each sorted card.
+    private func writeFlashcards(waiting: Bool) {
         guard let task = flashcardsSaveTask else { return }
         task.cancel()
         flashcardsSaveTask = nil
         guard let url = flashcardsFileURL else { return }
         let decks = flashcardDecks.filter { store.getSet($0.key) != nil }
-        guard let data = try? JSONEncoder().encode(decks) else { return }
-        try? data.write(to: url, options: .atomic)
+        let write: @Sendable () -> Void = {
+            guard let data = try? JSONEncoder().encode(decks) else { return }
+            try? data.write(to: url, options: .atomic)
+        }
+        if waiting {
+            Self.flashcardsWriter.sync(execute: write)
+        } else {
+            Self.flashcardsWriter.async(execute: write)
+        }
     }
+
+    /// One write after the other, so an older one never lands after a newer one.
+    nonisolated static let flashcardsWriter = DispatchQueue(label: "Wortschatz.flashcards", qos: .utility)
 }

@@ -57,7 +57,9 @@ public struct PDFTextExtractor: Sendable {
         var textShare = 1.0
         for i in 0..<n {
             try Task.checkImportCancellation()
-            report(Double(i) / Double(n) * textShare, n > 1 ? "Seite \(i + 1) von \(n) wird gelesen …" : ImportMessages.readingPDF)
+            report(
+                Double(i) / Double(n) * textShare,
+                n > 1 ? L("Seite %@ von %@ wird gelesen …", "\(i + 1)", "\(n)") : ImportMessages.readingPDF)
             guard let page = document.page(at: i) else { continue }
             let items = PDFPageText.items(of: page)
             chars[i] = PDFPageText.visibleCharacterCount(items)
@@ -90,7 +92,7 @@ public struct PDFTextExtractor: Sendable {
             var done = Set<Int>()
             try await recognize(
                 ocrPages, of: document, into: &texts, done: &done, languages: languages,
-                report: report, start: textShare, label: "PDF enthält keinen Text")
+                report: report, start: textShare, label: L("PDF enthält keinen Text"))
         } else if !ocrPages.isEmpty {
             // Mixed document: scanned inserts are a bonus. If their recognition fails (or there are
             // too many), keep the text that was read and tell the learner which pages are missing.
@@ -102,7 +104,7 @@ public struct PDFTextExtractor: Sendable {
                 do throws(ImportError) {
                     try await recognize(
                         ocrPages, of: document, into: &texts, done: &done, languages: languages,
-                        report: report, start: 0.95, label: "Gescannte Seiten")
+                        report: report, start: 0.95, label: L("Gescannte Seiten"))
                 } catch {
                     if error.code == .aborted { throw error }
                     failure = error
@@ -133,7 +135,7 @@ public struct PDFTextExtractor: Sendable {
         for (k, index) in pages.enumerated() {
             try Task.checkImportCancellation()
             let width = span / Double(pages.count)
-            let prefix = pages.count > 1 ? "Seite \(k + 1) von \(pages.count) – " : ""
+            let prefix = pages.count > 1 ? L("Seite %@ von %@", "\(k + 1)", "\(pages.count)") + " – " : ""
             let pageReport = report.slice(from: start + span * Double(k) / Double(pages.count), width: width, prefix: prefix)
             guard let page = document.page(at: index), let image = PDFPageRenderer.render(page) else {
                 throw ImportError(.ocrFailed, ImportMessages.ocrFailed)
@@ -147,19 +149,22 @@ public struct PDFTextExtractor: Sendable {
 
     /// Shown when scanned pages (1-based numbers) of an otherwise readable PDF could not be recognised.
     static func skippedPagesMessage(_ pages: [Int], cause: ImportError) -> String {
-        let which: String
+        let missing: String
         switch pages.count {
         case 1:
-            which = "Seite \(pages[0]) ist gescannt und konnte"
+            missing = L("Seite %@ ist gescannt und konnte nicht gelesen werden – die Vokabeln darauf fehlen.", "\(pages[0])")
         case 2...6:
             let head = pages.dropLast().map(String.init).joined(separator: ", ")
-            which = "Die Seiten \(head) und \(pages[pages.count - 1]) sind gescannt und konnten"
+            missing = L(
+                "Die Seiten %@ und %@ sind gescannt und konnten nicht gelesen werden – die Vokabeln darauf fehlen.", head,
+                "\(pages[pages.count - 1])")
         default:
-            which = "\(pages.count) Seiten sind gescannt und konnten"
+            missing = L(
+                "%@ Seiten sind gescannt und konnten nicht gelesen werden – die Vokabeln darauf fehlen.", "\(pages.count)")
         }
         let reason = cause.code == .pdfTooManyPages
-            ? "Die Texterkennung ist auf \(maxOCRPages) Seiten beschränkt – teile die Datei bitte auf."
-            : "Versuche es später noch einmal."
-        return "\(which) nicht gelesen werden – die Vokabeln darauf fehlen. \(reason)"
+            ? L("Die Texterkennung ist auf %@ Seiten beschränkt – teile die Datei bitte auf.", "\(maxOCRPages)")
+            : L("Versuche es später noch einmal.")
+        return "\(missing) \(reason)"
     }
 }

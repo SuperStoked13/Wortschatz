@@ -358,7 +358,8 @@ extension VocabParser {
         var pairs: [Pair] = []
         for (left, right, m) in columns {
             if left.count != right.count {
-                ctx.warnings.add("Die beiden Spalten sind unterschiedlich lang (\(left.count) und \(right.count) Zeilen).")
+                ctx.warnings.add(
+                    L("Die beiden Spalten sind unterschiedlich lang (%@ und %@ Zeilen).", "\(left.count)", "\(right.count)"))
             }
             for k in 0..<m {
                 let (p, q) = (items[left[k]], items[right[k]])

@@ -176,12 +176,18 @@ public sealed class JSONValue
     };
 
     /// <summary>JSON text like <c>JSON.stringify</c> (integral numbers without fraction; NaN/∞ → null).</summary>
-    public string ToJsonString(bool indented = false, bool sortedKeys = false)
+    public string ToJsonString(bool indented = false, bool sortedKeys = false) => Encoding.UTF8.GetString(ToJsonBytes(indented, sortedKeys));
+
+    /// <summary>
+    /// <see cref="ToJsonString"/> as UTF-8, without the detour through a string (a saved library is written as bytes).
+    /// The same bytes: the writer escapes what is not valid UTF-16 (a lone surrogate becomes <c>\uFFFD</c>).
+    /// </summary>
+    public byte[] ToJsonBytes(bool indented = false, bool sortedKeys = false)
     {
         using var stream = new MemoryStream();
         using (var w = new Utf8JsonWriter(stream, WriterOptions with { Indented = indented }))
             Write(w, sortedKeys);
-        return Encoding.UTF8.GetString(stream.ToArray());
+        return stream.ToArray();
     }
 
     void Write(Utf8JsonWriter w, bool sortedKeys)

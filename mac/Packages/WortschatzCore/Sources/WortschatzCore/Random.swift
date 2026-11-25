@@ -41,6 +41,3 @@ public func mulberry32(seed: Int) -> RNG {
 public func systemRNG() -> RNG {
     { Double.random(in: 0..<1) }
 }
-
-/// The system random source (spec name); same as `systemRNG()`.
-public var SystemRNG: RNG { systemRNG() }

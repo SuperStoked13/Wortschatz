@@ -1,3 +1,5 @@
+using static Wortschatz.Core.CoreText;
+
 namespace Wortschatz.Core;
 
 // Port of WriteFlow.swift: Write mode ("Schreiben") as a pure reducer (spec §6), a port of the state
@@ -31,7 +33,7 @@ public static partial class WriteFlow
     /// <summary>After a correct answer, Return within the lock moves on when the lock ends; closer presses count as the answering press.</summary>
     public const double SkipMinGapMs = 50;
     /// <summary>Praise after an exact answer; never the same twice in a row (<c>PRAISE</c>).</summary>
-    public static readonly string[] Praise = ["Richtig!", "Super!", "Genau!", "Stark!"];
+    public static string[] Praise => [L("Richtig!"), L("Super!"), L("Genau!"), L("Stark!")];
     /// <summary>How often the app should send ClockTick while the window is visible (write-clock.js).</summary>
     public const double ClockTickMs = 15_000;
     /// <summary>After this long without input the app stops ticking and sends ClockResumed on the next input.</summary>
@@ -104,10 +106,10 @@ public static partial class WriteFlow
         public bool IsCorrect => Result?.Correct == true;
 
         /// <summary>"Super!" after a correct answer, "Nicht ganz." after a miss and "Kein Problem – merk dir das:" after "Weiss ich nicht".</summary>
-        public string Title => IsCorrect ? Praise ?? "Richtig!" : DontKnow ? "Kein Problem – merk dir das:" : "Nicht ganz.";
+        public string Title => IsCorrect ? Praise ?? L("Richtig!") : DontKnow ? L("Kein Problem – merk dir das:") : L("Nicht ganz.");
 
         /// <summary>Introduces Result.ExpectedDisplay after a tolerated answer: "Genau:", or "Gesucht war:" for a synonym.</summary>
-        public string ExactLabel => Synonym ? "Gesucht war:" : "Genau:";
+        public string ExactLabel => Synonym ? L("Gesucht war:") : L("Genau:");
 
         /// <summary>A tolerated (not exact) correct answer shows the exact answer under ExactLabel.</summary>
         public bool ShowsExact => Result is { } r && IsCorrect && !r.Exact && r.ExpectedDisplay.Length > 0;
@@ -131,10 +133,10 @@ public static partial class WriteFlow
         public bool CanOverride => !DontKnow && HasText(Given);
 
         /// <summary>"Als richtig zählen" after an edit made the answer correct, else "Ich hatte recht".</summary>
-        public string OverrideLabel => EditedCorrect ? "Als richtig zählen" : "Ich hatte recht";
+        public string OverrideLabel => EditedCorrect ? L("Als richtig zählen") : L("Ich hatte recht");
 
         /// <summary>The note under the answers after such an edit.</summary>
-        public string? EditedNote => EditedCorrect ? "Mit deiner Korrektur stimmt deine Antwort jetzt." : null;
+        public string? EditedNote => EditedCorrect ? L("Mit deiner Korrektur stimmt deine Antwort jetzt.") : null;
     }
 
     /// <summary>A note chip after a correct answer.</summary>
@@ -237,6 +239,8 @@ public static partial class WriteFlow
         public Prompt? Prompt { get; internal set; }
         /// <summary>Return-family keys are ignored before this time (epoch ms).</summary>
         public double LockUntil { get; internal set; }
+        /// <summary>«Später» on «Neu starten?» for changed options: the session goes on with its own settings (Windows only).</summary>
+        public KeptOptions? Kept { get; internal set; }
         internal string LastPraise { get; set; } = "";
         internal int NextToken { get; set; }
 
@@ -343,12 +347,14 @@ public static partial class WriteFlow
         public sealed record EditSet : Effect;
         /// <summary>Leave Write mode: back to the set, or to the overview when the set is gone.</summary>
         public sealed record Exit : Effect;
+        /// <summary>«Später» on «Neu starten?»: store it for the set on this device (Start's kept). Windows only.</summary>
+        public sealed record KeepOptions(KeptOptions Kept) : Effect;
     }
 
     /// <summary>
     /// The world the reducer reads: time, randomness and the set's current progress (read when a session is
     /// created for the "Nicht gemeistert" / "Falsch beantwortet" subsets). ExtraAnswers: words with the same
-    /// meaning that are not in the set (Windows has no system language model: none by default).
+    /// meaning that are not in the set (the app: AppModel.ExtraAnswers, from the built-in thesauri).
     /// </summary>
     public sealed class Env
     {
@@ -373,22 +379,24 @@ public static partial class WriteFlow
     /// Opens Write mode for set (null: the set does not exist). A stored session (saved, with the open miss
     /// savedFeedback) is resumed unless forceNew, it is finished, or another named subset was requested. A
     /// requested subset that would drop an answered round asks first (Prompt.ReplaceRound). A finished session
-    /// is shown again when resultsMarker is its startedAt (State.ResultsMarker).
+    /// is shown again when resultsMarker is its startedAt (State.ResultsMarker). A direction or «Mischen» changed since the
+    /// session started asks «Neu starten?» unless <paramref name="kept"/> says «Später» was answered for it (Windows, issue #7).
     /// </summary>
     public static (State State, List<Effect> Effects) Start(VocabSet? set, StudyOptions options, SessionState? saved, Env env,
-        PendingFeedback? savedFeedback = null, StudySubset? subset = null, bool forceNew = false, double? resultsMarker = null)
+        PendingFeedback? savedFeedback = null, StudySubset? subset = null, bool forceNew = false, double? resultsMarker = null,
+        KeptOptions? kept = null)
     {
-        var m = new Machine(new State(set, options), env);
+        var m = new Machine(new State(set, options) { Kept = kept }, env);
         if (set is not null) m.Boot(saved, savedFeedback, subset, forceNew, resultsMarker);
         return m.Finish();
     }
 
     /// <summary>Start with the stored JSON of LibraryStore.GetSessionJSON (session plus feedback).</summary>
     public static (State State, List<Effect> Effects) Start(VocabSet? set, StudyOptions options, JSONValue? stored, Env env,
-        StudySubset? subset = null, bool forceNew = false, double? resultsMarker = null)
+        StudySubset? subset = null, bool forceNew = false, double? resultsMarker = null, KeptOptions? kept = null)
     {
         var decoded = DecodeStored(stored);
-        return Start(set, options, decoded?.Session, env, decoded?.Feedback, subset, forceNew, resultsMarker);
+        return Start(set, options, decoded?.Session, env, decoded?.Feedback, subset, forceNew, resultsMarker, kept);
     }
 
     /// <summary>Applies one event.</summary>
@@ -401,7 +409,11 @@ public static partial class WriteFlow
             var s = state.Clone();
             s.Input = changed.Text;
             s.InputInvalid = false;
-            return (s, []);
+            // The copy typed out continues by itself after a short beat, like Enter (CopyStep).
+            if (s.Phase != Phase.Copy) return (s, []);
+            var copy = new Machine(s, env);
+            copy.ContinueTypedOutCopy();
+            return copy.Finish();
         }
         var m = new Machine(state, env);
         m.Handle(e);
@@ -415,10 +427,10 @@ public static partial class WriteFlow
         return state.Phase.Kind switch
         {
             PhaseKind.Starting => null,
-            PhaseKind.Question => "Antworten",
-            PhaseKind.Feedback or PhaseKind.Copy => "Weiter",
-            PhaseKind.Summary => $"Weiter zu Runde {(state.Summary?.Round ?? state.Session?.Round ?? 1) + 1}",
-            PhaseKind.Results => state.Results?.CanRetry == true ? "Falsche nochmal üben" : "Fertig",
+            PhaseKind.Question => L("Antworten"),
+            PhaseKind.Feedback or PhaseKind.Copy => L("Weiter"),
+            PhaseKind.Summary => L($"Weiter zu Runde {(state.Summary?.Round ?? state.Session?.Round ?? 1) + 1}"),
+            PhaseKind.Results => state.Results?.CanRetry == true ? L("Falsche nochmal üben") : L("Fertig"),
             PhaseKind.Empty => EmptyMessage(state.EmptySubset ?? StudySubset.All).PrimaryLabel,
             _ => MissingMessage.PrimaryLabel,
         };
@@ -428,9 +440,9 @@ public static partial class WriteFlow
     public static string? ReturnHint(State state)
     {
         if (state.IsBlocked) return null;
-        if (state.Phase == Phase.Question) return "zum Antworten";
-        if (state.Phase == Phase.FeedbackOf(FeedbackKind.Correct)) return state.AutoAdvance is not null ? "Weiter mit beliebiger Taste" : "zum Weitermachen";
-        if (state.Phase == Phase.Copy) return "zum Prüfen";
+        if (state.Phase == Phase.Question) return L("zum Antworten");
+        if (state.Phase == Phase.FeedbackOf(FeedbackKind.Correct)) return state.AutoAdvance is not null ? L("Weiter mit beliebiger Taste") : L("zum Weitermachen");
+        if (state.Phase == Phase.Copy) return L("zum Prüfen");
         return null;
     }
 
@@ -451,9 +463,9 @@ public static class WriteFlowToastExtensions
 {
     public static string Message(this WriteFlow.Toast toast) => toast switch
     {
-        WriteFlow.Toast.WelcomeBack => "Willkommen zurück – weiter geht's",
-        WriteFlow.Toast.CountedAsCorrect => "Als richtig gezählt",
-        _ => "Karte gespeichert",
+        WriteFlow.Toast.WelcomeBack => L("Willkommen zurück – weiter geht's"),
+        WriteFlow.Toast.CountedAsCorrect => L("Als richtig gezählt"),
+        _ => L("Karte gespeichert"),
     };
 
     /// <summary>Success tone (green) instead of the neutral one.</summary>

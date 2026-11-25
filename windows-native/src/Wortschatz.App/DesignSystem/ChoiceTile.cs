@@ -5,6 +5,7 @@ using Avalonia.Layout;
 using Avalonia.Media;
 using Wortschatz.App.Features.Study;
 using Wortschatz.Core;
+using static Wortschatz.Core.CoreText;
 
 namespace Wortschatz.App.DesignSystem;
 
@@ -92,10 +93,10 @@ public static class ChoiceTile
         AutomationProperties.SetName(tile, text);
         AutomationProperties.SetHelpText(tile, state switch
         {
-            ChoiceTileState.Correct => "Richtige Antwort",
-            ChoiceTileState.Wrong => "Deine Antwort, falsch",
+            ChoiceTileState.Correct => L("Richtige Antwort"),
+            ChoiceTileState.Wrong => L("Deine Antwort, falsch"),
             ChoiceTileState.Dimmed => "",
-            _ => $"Antwort {number}, Taste {number}",
+            _ => L($"Antwort {number}, Taste {number}"),
         });
         if (previous is { } before && before != state && state is ChoiceTileState.Correct or ChoiceTileState.Wrong)
         {

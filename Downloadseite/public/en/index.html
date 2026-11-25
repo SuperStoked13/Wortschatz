@@ -1,0 +1,494 @@
+<!doctype html>
+<html lang="en">
+<head>
+{{> head}}
+  <script src="{{@asset /assets/js/backdrop.js}}" defer></script>
+  <script src="{{@asset /assets/js/demo.js}}" defer></script>
+  <title>Wortschatz: a vocabulary trainer for Mac and Windows</title>
+  <meta name="description" content="Wortschatz is a vocabulary trainer for Mac and Windows: multiple choice and typing, flashcards, tests with a Swiss grade and import from lists, PDFs and photos. Free, no account, offline. {{appLanguages.note}}">
+  <link rel="canonical" href="{{site.origin}}/en">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="Wortschatz">
+  <meta property="og:title" content="Wortschatz">
+  <meta property="og:description" content="Learn vocabulary until it sticks. For Mac and Windows, free and without an account.">
+  <meta property="og:url" content="{{site.origin}}/en">
+  <meta property="og:image" content="{{site.origin}}{{@asset /assets/img/og.png}}">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="The Wortschatz icon next to a study card from the app">
+  <meta property="og:locale" content="en_GB">
+  <meta property="og:locale:alternate" content="de_CH">
+  <meta name="twitter:card" content="summary_large_image">
+</head>
+<body class="home">
+{{> sprite}}
+{{> nav-en}}
+  <div class="page-backdrop" aria-hidden="true">
+    <canvas data-backdrop data-intensity="1"></canvas>
+  </div>
+
+  <main id="inhalt">
+    <section class="hero" aria-labelledby="hero-title">
+      <img class="hero-icon" src="{{@asset /assets/img/icon-256.png}}" srcset="{{@asset /assets/img/icon-256.png}} 1x, {{@asset /assets/img/icon-512.png}} 2x" alt="" width="148" height="148">
+      <h1 class="hero-title" id="hero-title">Wortschatz</h1>
+      <p class="hero-lead">Learn vocabulary until it sticks.</p>
+      <p class="hero-text">New words come up as multiple choice first, then you type them yourself. Everything runs on the Return key, and your study sets stay on your computer.</p>
+
+      <div class="hero-actions" data-hero-actions>
+        {{#mac.available}}
+        {{#mac.url}}
+        <a class="btn btn-primary btn-large dl-link" href="{{mac.url}}" data-platform="mac" data-file="{{mac.file}}" data-size="{{mac.size}}">
+          <span class="btn-label">Download for macOS</span>
+          <kbd class="keycap" data-return-hint title="Return works too">↩</kbd>
+        </a>
+        {{/mac.url}}
+        {{^mac.url}}
+        <form class="dl-form" method="post" action="/download/mac" data-platform="mac">
+          <input class="hp" type="text" name="website" value="" tabindex="-1" autocomplete="off" aria-hidden="true">
+          <button class="btn btn-primary btn-large" type="submit">
+            <span class="btn-label">Download for macOS</span>
+            <kbd class="keycap" data-return-hint title="Return works too">↩</kbd>
+          </button>
+        </form>
+        {{/mac.url}}
+        {{/mac.available}}
+        {{^mac.available}}
+        <span class="btn btn-glass btn-large is-unavailable" data-platform="mac">macOS version coming soon</span>
+        {{/mac.available}}
+        {{#windows.available}}
+        {{#windows.url}}
+        <a class="btn btn-glass btn-large dl-link" href="{{windows.url}}" data-platform="windows" data-file="{{windows.file}}" data-size="{{windows.size}}">
+          <span class="btn-label">Download for Windows</span>
+          <kbd class="keycap" data-return-hint title="Return works too" hidden>↩</kbd>
+        </a>
+        {{/windows.url}}
+        {{^windows.url}}
+        <form class="dl-form" method="post" action="/download/windows" data-platform="windows">
+          <input class="hp" type="text" name="website" value="" tabindex="-1" autocomplete="off" aria-hidden="true">
+          <button class="btn btn-glass btn-large" type="submit">
+            <span class="btn-label">Download for Windows</span>
+            <kbd class="keycap" data-return-hint title="Return works too" hidden>↩</kbd>
+          </button>
+        </form>
+        {{/windows.url}}
+        {{/windows.available}}
+        {{^windows.available}}
+        <span class="btn btn-glass btn-large is-unavailable" data-platform="windows">Windows version coming soon</span>
+        {{/windows.available}}
+      </div>
+      <p class="hero-note" data-hero-note>{{#version}}Version {{version}}, free and without an account. {{appLanguages.note}}{{/version}}{{^version}}Free and without an account. {{appLanguages.note}}{{/version}}{{#updates.latest}} <a href="/en/whats-new">What’s new?</a>{{/updates.latest}}</p>
+      <p class="hero-note hero-note-mobile" data-mobile-note hidden>Wortschatz is for Mac and Windows. Open this page on a computer to download the app.</p>
+{{> coffee-en}}
+    </section>
+
+    <section class="showcase" id="features" aria-labelledby="features-title">
+      <h2 class="visually-hidden" id="features-title">Features</h2>
+      <div class="demo" data-demo>
+        <div class="window" aria-hidden="true" lang="de">
+          <canvas class="window-backdrop" data-backdrop data-intensity="1.1"></canvas>
+          <div class="traffic"><i></i><i></i><i></i></div>
+
+          <!-- Lernen: Multiple Choice, dann schriftlich -->
+          <div class="scene scene-learn is-active" data-scene="learn" data-step="mc">
+            <div class="scene-bar">
+              <span class="tb-pill tb-back"><svg class="i"><use href="#i-chevron-left"/></svg>Lernsets</span>
+              <span class="tb-center">
+                <span class="tb-round">Runde 1</span>
+                <span class="capsule">
+                  <span class="status-bar"><i class="seg seg-mastered" data-seg="mastered"></i><i class="seg seg-learning" data-seg="learning"></i><i class="seg seg-new" data-seg="new"></i></span>
+                  <span class="legend"><i class="dot dot-new"></i><b data-count="new">8</b><span class="legend-label">Neu</span></span>
+                  <span class="legend"><i class="dot dot-learning"></i><b data-count="learning">0</b><span class="legend-label">Am Lernen</span></span>
+                  <span class="legend"><i class="dot dot-mastered"></i><b data-count="mastered">0</b><span class="legend-label">Gemeistert</span></span>
+                </span>
+              </span>
+              <span class="tb-pill tb-icon"><svg class="i"><use href="#i-sliders"/></svg></span>
+            </div>
+            <div class="study">
+              <div class="study-card glass" data-el="card">
+                <div class="card-head">
+                  <span class="eyebrow" data-el="lang">Französisch</span>
+                  <span class="card-tools"><svg class="i"><use href="#i-speaker"/></svg><svg class="i"><use href="#i-star"/></svg><svg class="i"><use href="#i-edit"/></svg></span>
+                </div>
+                <p class="prompt" data-el="prompt">la maison</p>
+                <div class="written" data-el="written">
+                  <div class="answer-box" data-el="answer"><span class="answer-text" data-el="answer-text"></span><span class="caret"></span><span class="answer-placeholder" data-el="placeholder">Antwort auf Deutsch</span><svg class="answer-check"><use href="#i-check-circle"/></svg></div>
+                  <div class="charbar"><span>ä</span><span>ö</span><span>ü</span><span>Ä</span><span>Ö</span><span>Ü</span></div>
+                </div>
+              </div>
+              <div class="choices" data-el="choices">
+                <div class="tile glass" data-tile><span class="badge">1</span><span class="tile-text">der Garten</span><svg class="tile-mark tile-mark-ok"><use href="#i-check-circle"/></svg></div>
+                <div class="tile glass" data-tile><span class="badge">2</span><span class="tile-text">das Haus</span><svg class="tile-mark tile-mark-ok"><use href="#i-check-circle"/></svg></div>
+                <div class="tile glass" data-tile><span class="badge">3</span><span class="tile-text">die Strasse</span><svg class="tile-mark tile-mark-ok"><use href="#i-check-circle"/></svg></div>
+                <div class="tile glass" data-tile><span class="badge">4</span><span class="tile-text">das Fenster</span><svg class="tile-mark tile-mark-ok"><use href="#i-check-circle"/></svg></div>
+              </div>
+            </div>
+            <div class="actionbar">
+              <div class="pill glass" data-el="pill" data-kind="keys">
+                <span class="pill-keys"><kbd>1</kbd><span class="pill-dash">-</span><kbd>4</kbd> wählen<span class="pill-gap"></span><kbd class="wide">↑↓←→</kbd> markieren</span>
+                <span class="pill-typing"><svg class="i"><use href="#i-keyboard"/></svg>Antwort schreiben</span>
+                <span class="pill-feedback"><svg class="pill-symbol"><use href="#i-check-circle"/></svg><b data-el="praise">Super!</b></span>
+                <span class="pill-streak"><svg class="i"><use href="#i-flame"/></svg><b data-el="streak">3</b></span>
+                <i class="pill-countdown"></i>
+              </div>
+              <span class="bar-spacer"></span>
+              <span class="g-btn glass" data-el="secondary">Weiss ich nicht?<kbd>⌥↩</kbd></span>
+              <span class="g-btn prominent" data-el="primary"><span data-el="primary-label">Antworten</span><kbd>↩</kbd></span>
+            </div>
+          </div>
+
+          <!-- Schreiben: Toleranz und Sonderzeichen -->
+          <div class="scene scene-write" data-scene="write" data-state="asking">
+            <div class="scene-bar">
+              <span class="tb-pill tb-back"><svg class="i"><use href="#i-chevron-left"/></svg>Lernsets</span>
+              <span class="tb-center">
+                <span class="tb-round">Runde 1</span>
+                <span class="counters">
+                  <span><b data-count="left">6</b> Verbleibend</span>
+                  <span class="counter-wrong"><b data-count="wrong">0</b> Falsch</span>
+                  <span class="counter-right"><b data-count="right">2</b> Richtig</span>
+                </span>
+              </span>
+              <span class="tb-pill tb-icon"><svg class="i"><use href="#i-sliders"/></svg></span>
+            </div>
+            <div class="study">
+              <div class="study-card glass">
+                <div class="card-head">
+                  <span class="eyebrow">Deutsch</span>
+                  <span class="card-tools"><svg class="i"><use href="#i-speaker"/></svg><svg class="i"><use href="#i-star"/></svg><svg class="i"><use href="#i-edit"/></svg></span>
+                </div>
+                <p class="prompt" data-el="prompt">das Fenster</p>
+                <div class="answer-box" data-el="answer"><span class="answer-text" data-el="answer-text"></span><span class="caret"></span><span class="answer-placeholder">Antwort auf Französisch</span><svg class="answer-check"><use href="#i-check-circle"/></svg></div>
+                <div class="charbar charbar-fr" data-el="charbar"><span>é</span><span>è</span><span data-char="ê">ê</span><span>ë</span><span>à</span><span>â</span><span>ç</span><span>î</span><span>ï</span><span>ô</span><span>û</span><span>ù</span><span>œ</span></div>
+                <div class="accepted" data-el="accepted">
+                  <p class="exact">Genau: <b data-el="exact">la fenêtre</b></p>
+                  <span class="chip chip-info" data-el="note">Artikel fehlte</span>
+                </div>
+                <div class="missed" data-el="missed">
+                  <div class="miss-row">
+                    <span class="eyebrow">Deine Antwort</span><span class="chip chip-warning">Nur die Akzente stimmen nicht</span>
+                    <p class="miss-given">t<del>o</del><ins>ô</ins>t</p>
+                  </div>
+                  <div class="miss-row">
+                    <span class="eyebrow">Richtige Antwort</span>
+                    <p class="miss-expected">tôt</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="actionbar">
+              <div class="pill glass" data-el="pill" data-kind="typing">
+                <span class="pill-typing"><svg class="i"><use href="#i-keyboard"/></svg>Antwort schreiben</span>
+                <span class="pill-feedback"><svg class="pill-symbol"><use href="#i-check-circle"/></svg><b>Richtig!</b></span>
+                <span class="pill-miss"><svg class="pill-symbol"><use href="#i-x-circle"/></svg><b>Nicht ganz</b></span>
+              </div>
+              <span class="bar-spacer"></span>
+              <span class="g-btn glass" data-el="secondary">Weiss ich nicht?<kbd>⌥↩</kbd></span>
+              <span class="g-btn glass" data-el="override"><svg class="i"><use href="#i-check"/></svg>Ich hatte recht<kbd>⌘↩</kbd></span>
+              <span class="g-btn prominent" data-el="primary"><span data-el="primary-label">Antworten</span><kbd>↩</kbd></span>
+            </div>
+          </div>
+
+          <!-- Karteikarten: umdrehen und sortieren -->
+          <div class="scene scene-cards" data-scene="cards">
+            <div class="scene-bar">
+              <span class="tb-pill tb-back"><svg class="i"><use href="#i-chevron-left"/></svg>Lernsets</span>
+              <span class="tb-center">
+                <span class="tb-round">Karteikarten</span>
+                <span class="round-progress"><i data-el="progress"></i></span>
+                <span class="tb-count"><b data-el="position">3</b> von 8</span>
+              </span>
+              <span class="tb-pill tb-icon"><svg class="i"><use href="#i-sliders"/></svg></span>
+            </div>
+            <div class="deck" data-el="deck">
+              <div class="deck-edge deck-edge-2"></div>
+              <div class="deck-edge deck-edge-1"></div>
+              <div class="flashcard" data-el="card" data-side="front">
+                <div class="flashcard-turn" data-el="turn">
+                  <div class="face face-front">
+                    <span class="face-wash"></span>
+                    <svg class="seal seal-know"><use href="#i-seal-know"/></svg>
+                    <svg class="seal seal-learning"><use href="#i-seal-again"/></svg>
+                    <span class="eyebrow" data-el="front-lang">Französisch</span>
+                    <span class="card-tools"><svg class="i"><use href="#i-speaker"/></svg><svg class="i"><use href="#i-star"/></svg></span>
+                    <p class="face-text" data-el="front">le chemin</p>
+                    <span class="face-hint"><kbd>␣</kbd> Umdrehen</span>
+                  </div>
+                  <div class="face face-back">
+                    <span class="face-wash"></span>
+                    <svg class="seal seal-know"><use href="#i-seal-know"/></svg>
+                    <svg class="seal seal-learning"><use href="#i-seal-again"/></svg>
+                    <span class="eyebrow">Deutsch</span>
+                    <span class="card-tools"><svg class="i"><use href="#i-speaker"/></svg><svg class="i"><use href="#i-star"/></svg></span>
+                    <p class="face-text" data-el="back">der Weg</p>
+                    <span class="face-hint"><kbd>␣</kbd> Umdrehen</span>
+                  </div>
+                </div>
+                <div class="sheen" data-el="sheen"></div>
+              </div>
+            </div>
+            <div class="actionbar actionbar-cards">
+              <span class="g-btn glass g-btn-icon"><svg class="i"><use href="#i-undo"/></svg></span>
+              <span class="g-btn glass" data-el="learning-btn"><svg class="i"><use href="#i-arrow-left"/></svg><svg class="i"><use href="#i-again"/></svg>Lerne ich noch<b class="count count-learning" data-el="learning">1</b></span>
+              <span class="g-btn glass" data-el="know-btn"><svg class="i"><use href="#i-check"/></svg>Weiss ich<b class="count count-know" data-el="know">2</b><svg class="i"><use href="#i-arrow-right"/></svg></span>
+              <span class="g-btn prominent">Umdrehen<kbd>↩</kbd></span>
+            </div>
+          </div>
+
+          <!-- Prüfung: alles auf einem Blatt, Note von 1 bis 6 -->
+          <div class="scene scene-exam" data-scene="exam" data-state="sheet">
+            <div class="scene-bar">
+              <span class="tb-pill tb-back"><svg class="i"><use href="#i-chevron-left"/></svg>Lernsets</span>
+              <span class="tb-center">
+                <span class="tb-round"><svg class="i"><use href="#i-clock"/></svg><b data-el="timer">6:12</b></span>
+                <span class="tb-count"><b data-el="answered">6</b>/8</span>
+              </span>
+              <span class="tb-pill tb-text" data-el="handin">Abgeben<kbd>⌘↩</kbd></span>
+            </div>
+            <div class="sheet panel" data-el="sheet">
+              <div class="sheet-row is-done sheet-row-first"><span class="row-no">4</span><span class="row-prompt"><small>Französisch</small>le voisin</span><span class="row-field">der Nachbar</span></div>
+              <div class="sheet-row is-done"><span class="row-no">5</span><span class="row-prompt"><small>Französisch</small>la maison</span><span class="row-field">das Haus</span></div>
+              <div class="sheet-row is-done"><span class="row-no">6</span><span class="row-prompt"><small>Französisch</small>le jardin</span><span class="row-field">der Garten</span></div>
+              <div class="sheet-row" data-row="7"><span class="row-no">7</span><span class="row-prompt"><small>Französisch</small>la fenêtre</span><span class="row-field"><span data-el="field-7"></span><span class="caret"></span></span></div>
+              <div class="sheet-row" data-row="8"><span class="row-no">8</span><span class="row-prompt"><small>Französisch</small>le chemin</span><span class="row-field"><span data-el="field-8"></span><span class="caret"></span></span></div>
+            </div>
+            <div class="result" data-el="result">
+              <div class="grade" data-el="grade">
+                <svg class="grade-ring" viewBox="0 0 120 120"><circle class="grade-track" cx="60" cy="60" r="52"/><circle class="grade-fill" data-el="ring" cx="60" cy="60" r="52" pathLength="100"/></svg>
+                <b class="grade-value" data-el="grade-value">5.7</b>
+              </div>
+              <div class="result-text">
+                <p class="verdict">Hervorragend!</p>
+                <p class="result-line">7.5 von 8 Punkten in 3:48</p>
+                <div class="result-tiles">
+                  <span class="r-tile glass"><b>7</b>Richtig</span>
+                  <span class="r-tile glass"><b>1</b>Kleiner Fehler</span>
+                  <span class="r-tile glass"><b>0</b>Falsch</span>
+                </div>
+              </div>
+            </div>
+            <div class="actionbar">
+              <div class="pill glass exam-hints"><span class="pill-keys"><kbd>↩</kbd> nächste Frage<span class="pill-gap"></span><kbd>⌘↩</kbd> abgeben</span></div>
+              <span class="bar-spacer"></span>
+              <span class="g-btn glass exam-result-btn">Neue Prüfung</span>
+              <span class="g-btn prominent exam-result-btn" data-el="done">Fertig<kbd>↩</kbd></span>
+            </div>
+          </div>
+
+          <!-- Import: Liste einfügen, Wortschatz erkennt die Paare -->
+          <div class="scene scene-import" data-scene="import" data-state="empty">
+            <div class="scene-bar">
+              <span class="tb-pill tb-text">Abbrechen</span>
+              <span class="tb-center"><span class="tb-title">Neues Lernset</span></span>
+              <span class="tb-pill tb-text tb-save" data-el="save">Sichern<kbd>⌘↩</kbd></span>
+            </div>
+            <div class="editor">
+              <div class="editor-meta panel">
+                <span class="field-label">Titel</span>
+                <span class="field-value">Französisch, Unité 3</span>
+                <span class="lang-pair"><span class="lang-capsule">Französisch</span><svg class="i"><use href="#i-arrow-right"/></svg><span class="lang-capsule">Deutsch</span></span>
+              </div>
+              <div class="editor-main">
+                <div class="paste panel" data-el="paste">
+                  <span class="paste-placeholder">Füge deine Vokabelliste hier ein, oder zieh eine Datei, ein PDF oder ein Foto hierher.</span>
+                  <ol class="paste-lines" data-el="lines">
+                    <li>la maison</li><li>das Haus</li><li>le jardin</li><li>der Garten</li><li>la fenêtre</li><li>das Fenster</li><li>le chemin</li><li>der Weg</li>
+                  </ol>
+                </div>
+                <div class="detect">
+                  <div class="detect-bar panel" data-el="detect">
+                    <svg class="i detect-icon"><use href="#i-sparkles"/></svg>
+                    <b>4 Paare erkannt</b>
+                    <span class="detect-meta">Abwechselnde Zeilen</span>
+                    <span class="detect-meta">Französisch <svg class="i"><use href="#i-arrow-right"/></svg> Deutsch</span>
+                  </div>
+                  <div class="preview panel" data-el="preview">
+                    <div class="preview-head"><span>Begriff</span><span>Definition</span></div>
+                    <div class="preview-row"><span>la maison</span><span>das Haus</span></div>
+                    <div class="preview-row"><span>le jardin</span><span>der Garten</span></div>
+                    <div class="preview-row"><span>la fenêtre</span><span>das Fenster</span></div>
+                    <div class="preview-row"><span>le chemin</span><span>der Weg</span></div>
+                  </div>
+                  <span class="g-btn prominent take" data-el="take">4 Karten übernehmen</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="keycast" data-keycast></div>
+        </div>
+
+        <div class="demo-controls">
+          <div class="segmented glass" role="tablist" aria-label="What Wortschatz can do">
+            <span class="segmented-thumb" aria-hidden="true"></span>
+            <button type="button" role="tab" id="tab-learn" data-mode="learn" aria-selected="true" aria-controls="demo-caption">Learn</button>
+            <button type="button" role="tab" id="tab-write" data-mode="write" aria-selected="false" aria-controls="demo-caption" tabindex="-1">Write</button>
+            <button type="button" role="tab" id="tab-cards" data-mode="cards" aria-selected="false" aria-controls="demo-caption" tabindex="-1"><span class="long">Flashcards</span><span class="short" aria-hidden="true">Cards</span></button>
+            <button type="button" role="tab" id="tab-exam" data-mode="exam" aria-selected="false" aria-controls="demo-caption" tabindex="-1">Test</button>
+            <button type="button" role="tab" id="tab-import" data-mode="import" aria-selected="false" aria-controls="demo-caption" tabindex="-1">Import</button>
+          </div>
+          <button type="button" class="demo-toggle glass glass-live" data-demo-toggle aria-pressed="false">
+            <svg class="i i-pause" aria-hidden="true"><use href="#i-pause"/></svg>
+            <svg class="i i-play" aria-hidden="true"><use href="#i-play"/></svg>
+            <span class="visually-hidden" data-toggle-label>Pause animation</span>
+          </button>
+        </div>
+
+        <div class="demo-caption" id="demo-caption" role="tabpanel" aria-labelledby="tab-learn" tabindex="0">
+          <p class="is-active" data-caption="learn">New words come up as multiple choice first; next time, you type them. Get a word right twice in a row and you’ve mastered it.</p>
+          <p data-caption="write" hidden>You see a word and type the translation. If only the article or the pronoun is missing, the answer still counts. Accents are one click away.</p>
+          <p data-caption="cards" hidden>Flip with the space bar, sort with the arrow keys. Whatever you’re still learning comes back in the next round.</p>
+          <p data-caption="exam" hidden>All questions on one sheet, with a time limit if you like. Small mistakes cost half a point, and at the end you get a Swiss grade from 1 to 6 (6 is best).</p>
+          <p data-caption="import" hidden>Paste a list, drop in a file or take a photo of a vocabulary page. Wortschatz works out which part is the word and which is the translation.</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="keys" id="keyboard" aria-labelledby="keyboard-title">
+      <div class="keys-intro">
+        <kbd class="big-key" data-big-key aria-hidden="true">↩</kbd>
+        <h2 id="keyboard-title">One key for what matters most</h2>
+        <p>Every screen has exactly one main action, and it sits on the Return key: answer, continue, next round. Wortschatz shows you the other keys right next to the buttons.</p>
+      </div>
+      <div class="shortcuts-wrap">
+        <dl class="shortcuts">
+          <div class="shortcut"><dt><kbd>↩</kbd></dt><dd>Answer and continue</dd></div>
+          <div class="shortcut"><dt><kbd>1</kbd><span class="kbd-sep">to</span><kbd>4</kbd></dt><dd>Choose an answer</dd></div>
+          <div class="shortcut"><dt><kbd>d</kbd><kbd>a</kbd><kbd>s</kbd></dt><dd>Type the beginning to highlight the matching answer</dd></div>
+          <div class="shortcut"><dt><kbd class="wide">space</kbd></dt><dd>Flip a flashcard</dd></div>
+          <div class="shortcut"><dt><kbd>←</kbd><kbd>→</kbd></dt><dd>Sort a flashcard</dd></div>
+          <div class="shortcut"><dt><kbd class="wide">esc</kbd></dt><dd>Back</dd></div>
+        </dl>
+        <p class="shortcuts-note">On the Mac, also <span class="combo"><kbd>⌥</kbd><kbd>↩</kbd> for “Weiss ich nicht” (I don’t know)</span> and <span class="combo"><kbd>⌘</kbd><kbd>↩</kbd> for “Ich hatte recht” (I was right)</span>.</p>
+      </div>
+    </section>
+
+    <section class="download" id="download" aria-labelledby="download-title">
+      <div class="section-head">
+        <h2 id="download-title">Download Wortschatz</h2>
+        <p>Free, without an account and without ads. You can export your study sets as a backup at any time and import them again on another computer.</p>
+        <p>{{appLanguages.text}} Your study sets can be in French, English, Spanish, Italian, Arabic, Chinese or German.</p>
+      </div>
+
+      <div class="platforms">
+        <article class="platform panel" data-platform-card="mac" aria-labelledby="mac-title">
+          <h3 id="mac-title">Mac</h3>
+          <p class="platform-text">The app for macOS, built with SwiftUI and Liquid Glass.</p>
+          {{#mac.available}}
+          <dl class="facts">
+            <div><dt>Version</dt><dd>{{mac.versionLabel}}</dd></div>
+            <div><dt>Size</dt><dd>{{mac.sizeLabel}}</dd></div>
+            {{#mac.requirement}}<div><dt>System</dt><dd>{{mac.requirement}}</dd></div>{{/mac.requirement}}
+            {{#mac.architecture}}<div><dt>Processor</dt><dd>{{mac.architecture}}</dd></div>{{/mac.architecture}}
+            <div><dt>Language</dt><dd>{{mac.languages}}</dd></div>
+            {{#mac.releasedLabel}}<div><dt>Released</dt><dd>{{mac.releasedLabel}}</dd></div>{{/mac.releasedLabel}}
+          </dl>
+          <div class="checksum">
+            <span class="checksum-label">SHA-256</span>
+            <code class="checksum-value" data-checksum>{{mac.sha256}}</code>
+            <button type="button" class="copy-btn" data-copy="{{mac.sha256}}" aria-label="Copy the checksum of the Mac version"><svg class="i" aria-hidden="true"><use href="#i-copy"/></svg><span data-copy-label>Copy</span></button>
+          </div>
+          {{#mac.url}}
+          <a class="btn btn-primary dl-link" href="{{mac.url}}" data-platform="mac" data-file="{{mac.file}}" data-size="{{mac.size}}"><span class="btn-label">Download for macOS</span></a>
+          {{/mac.url}}
+          {{^mac.url}}
+          <form class="dl-form" method="post" action="/download/mac" data-platform="mac">
+            <input class="hp" type="text" name="website" value="" tabindex="-1" autocomplete="off" aria-hidden="true">
+            <button class="btn btn-primary" type="submit"><span class="btn-label">Download for macOS</span></button>
+          </form>
+          {{/mac.url}}
+          {{/mac.available}}
+          {{^mac.available}}
+          <p class="platform-soon">The Mac version is being prepared and will be here shortly.</p>
+          {{/mac.available}}
+        </article>
+
+        <article class="platform panel" data-platform-card="windows" aria-labelledby="windows-title">
+          <h3 id="windows-title">Windows</h3>
+          <p class="platform-text">A single file, nothing to install. With every mode, from learning to tests.</p>
+          {{#windows.available}}
+          <dl class="facts">
+            <div><dt>Version</dt><dd>{{windows.versionLabel}}</dd></div>
+            <div><dt>Size</dt><dd>{{windows.sizeLabel}}</dd></div>
+            {{#windows.requirement}}<div><dt>System</dt><dd>{{windows.requirement}}</dd></div>{{/windows.requirement}}
+            {{#windows.architecture}}<div><dt>Processor</dt><dd>{{windows.architecture}}</dd></div>{{/windows.architecture}}
+            <div><dt>Language</dt><dd>{{windows.languages}}</dd></div>
+            {{#windows.releasedLabel}}<div><dt>Released</dt><dd>{{windows.releasedLabel}}</dd></div>{{/windows.releasedLabel}}
+          </dl>
+          <div class="checksum">
+            <span class="checksum-label">SHA-256</span>
+            <code class="checksum-value" data-checksum>{{windows.sha256}}</code>
+            <button type="button" class="copy-btn" data-copy="{{windows.sha256}}" aria-label="Copy the checksum of the Windows version"><svg class="i" aria-hidden="true"><use href="#i-copy"/></svg><span data-copy-label>Copy</span></button>
+          </div>
+          {{#windows.url}}
+          <a class="btn btn-glass dl-link" href="{{windows.url}}" data-platform="windows" data-file="{{windows.file}}" data-size="{{windows.size}}"><span class="btn-label">Download for Windows</span></a>
+          {{/windows.url}}
+          {{^windows.url}}
+          <form class="dl-form" method="post" action="/download/windows" data-platform="windows">
+            <input class="hp" type="text" name="website" value="" tabindex="-1" autocomplete="off" aria-hidden="true">
+            <button class="btn btn-glass" type="submit"><span class="btn-label">Download for Windows</span></button>
+          </form>
+          {{/windows.url}}
+          {{/windows.available}}
+          {{^windows.available}}
+          <p class="platform-soon">The Windows version is being prepared and will be here shortly.</p>
+          {{/windows.available}}
+        </article>
+      </div>
+
+      <div class="help" id="help">
+        <details class="help-item" id="help-mac" data-help="mac">
+          <summary>First launch on a Mac<svg class="i" aria-hidden="true"><use href="#i-chevron-down"/></svg></summary>
+          <div class="help-body">
+            <ol>
+              <li>Open the downloaded file and drag Wortschatz into the Applications folder.</li>
+              <li>Open Wortschatz. macOS says that Apple could not verify that Wortschatz is free of malware. Click “Done”, not “Move to Trash”.</li>
+              <li>Open <a href="x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension">Privacy &amp; Security</a> in System Settings and scroll down to “Security”. Next to ““Wortschatz” was blocked to protect your Mac”, click “Open Anyway”, click it again in the next window, and confirm with your password or Touch ID.</li>
+            </ol>
+            <p>You only need to do this the first time. The “Open Anyway” button only appears after you’ve tried to open the app, and it stays for about an hour. Wortschatz isn’t notarized by Apple because that requires a paid developer account. The app runs in the macOS sandbox{{^macUpdates}} and doesn’t need internet access{{/macUpdates}}{{#macUpdates}}; it only goes online to ask GitHub for new versions, which it then installs by itself, without these steps{{/macUpdates}}.</p>
+            <p>It’s quicker in Terminal: instead of steps 2 and 3, paste this command and press Return. It unblocks Wortschatz and opens the app.</p>
+            <div class="checksum">
+              <span class="checksum-label">Mac, in Terminal</span>
+              <code class="checksum-value" data-checksum>xattr -dr com.apple.quarantine /Applications/Wortschatz.app &amp;&amp; open /Applications/Wortschatz.app</code>
+              <button type="button" class="copy-btn" data-copy="xattr -dr com.apple.quarantine /Applications/Wortschatz.app &amp;&amp; open /Applications/Wortschatz.app" aria-label="Copy the Terminal command"><svg class="i" aria-hidden="true"><use href="#i-copy"/></svg><span data-copy-label>Copy</span></button>
+            </div>
+          </div>
+        </details>
+        <details class="help-item" id="help-windows" data-help="windows">
+          <summary>First launch on Windows<svg class="i" aria-hidden="true"><use href="#i-chevron-down"/></svg></summary>
+          <div class="help-body">
+            <ol>
+              <li>If your browser warns while downloading that the file isn’t commonly downloaded, choose “Keep”.</li>
+              <li>Put the downloaded file somewhere permanent, for example on the desktop, and double-click it.</li>
+              <li>If “Windows protected your PC” appears, click “More info” and then “Run anyway”.</li>
+            </ol>
+            <p>If Smart App Control in Windows 11 blocks the app, there’s no exception for it: Wortschatz only starts once it’s turned off under “Windows Security”, “App &amp; browser control”. It protects against unknown programs; whether you turn it off is up to you.</p>
+            <p>The warnings appear because Wortschatz isn’t signed with a paid certificate. Wortschatz needs nothing else: the file contains everything. Your study sets live in the folder %LOCALAPPDATA%\Wortschatz and stay when you replace the file with a newer one.{{#windowsUpdates}} Wortschatz gets new versions by itself: about once a day it asks GitHub and replaces the file when you quit the app – without these steps.{{/windowsUpdates}} On first launch, Wortschatz takes over everything from the previous Windows app (up to version 1.1) and then removes it; a backup of its study sets stays in the same folder.</p>
+          </div>
+        </details>
+        <details class="help-item" id="help-verify" data-help="verify">
+          <summary>Verify the download<svg class="i" aria-hidden="true"><use href="#i-chevron-down"/></svg></summary>
+          <div class="help-body">
+            <p>The checksum shows whether the downloaded file is complete and unchanged. Calculate it on your computer and compare it with the checksum above.</p>
+            <p class="command"><span>Mac, in Terminal</span><code>shasum -a 256 ~/Downloads/{{#mac.available}}{{mac.file}}{{/mac.available}}{{^mac.available}}Wortschatz.dmg{{/mac.available}}</code></p>
+            <p class="command"><span>Windows, in PowerShell</span><code>Get-FileHash $HOME\Downloads\{{#windows.available}}{{windows.file}}{{/windows.available}}{{^windows.available}}Wortschatz.exe{{/windows.available}}</code></p>
+          </div>
+        </details>
+      </div>
+    </section>
+
+    <section class="support" id="support" aria-labelledby="support-title">
+      <div class="support-cup" aria-hidden="true">{{> cup}}</div>
+      <h2 id="support-title">Support Wortschatz</h2>
+      <p class="support-text">Wortschatz is free, with no ads and no account, and it’s meant to stay that way. If the app helps you learn, you can buy me a coffee. Every donation gives me more time for new features and improvements, and it shows me the work is worth it.</p>
+      <div class="support-actions">
+        <a class="btn btn-primary btn-large" href="https://ko-fi.com/anthonybuilds13" target="_blank" rel="noopener"><svg class="i" aria-hidden="true"><use href="#i-heart"/></svg>Support on Ko-fi</a>
+        <button type="button" class="btn btn-glass btn-large" data-copy="{{site.origin}}/en" data-copy-page><svg class="i" aria-hidden="true"><use href="#i-copy"/></svg><span data-copy-label>Copy link to this page</span></button>
+      </div>
+      <p class="support-note">Wortschatz stays free, with or without a donation. Telling a friend helps too.</p>
+    </section>
+  </main>
+
+{{> footer-en}}
+  <div class="toasts" data-toasts role="status" aria-live="polite"></div>
+</body>
+</html>

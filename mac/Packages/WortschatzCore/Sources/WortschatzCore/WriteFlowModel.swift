@@ -55,9 +55,6 @@ extension WriteFlow {
         public var sessionQuestion: SessionQuestion { SessionQuestion(qid: qid, cardId: cardId, ask: ask) }
     }
 
-    /// The named subsets a link or menu can ask for (`NAMED_SUBSETS`).
-    public static let namedSubsets: [StudySubset] = [.all, .starred, .learning, .missed]
-
     /// `hasText`: a string with at least one non-whitespace character (JS `trim`).
     public static func hasText(_ value: String?) -> Bool {
         guard let value else { return false }
@@ -93,9 +90,9 @@ extension WriteFlow {
             promptLang: promptLang,
             answerLang: answerLang,
             promptLabel: sameLang || promptLang == .other
-                ? (askTerm ? "Definition" : "Begriff") : Labels.langName(promptLang),
-            placeholder: plainAnswer ? "Antwort eingeben" : "Antwort auf \(Labels.langName(answerLang)) eingeben",
-            placeholderShort: plainAnswer ? "Antwort eingeben" : "Auf \(Labels.langName(answerLang)) …",
+                ? (askTerm ? L("Definition") : L("Begriff")) : Labels.langName(promptLang),
+            placeholder: plainAnswer ? L("Antwort eingeben") : L("Antwort auf %@ eingeben", Labels.langName(answerLang)),
+            placeholderShort: plainAnswer ? L("Antwort eingeben") : L("Auf %@ …", Labels.langName(answerLang)),
             starred: card.starred)
     }
 
@@ -262,9 +259,9 @@ extension WriteFlow {
         let h = total / 3600
         let m = (total % 3600) / 60
         let ss = twoDigits(total % 60)
-        if h > 0 { return CompactDuration(value: "\(h):\(twoDigits(m)):\(ss)", label: "Zeit (Std.)") }
-        if m > 0 { return CompactDuration(value: "\(m):\(ss)", label: "Zeit (Min.)") }
-        return CompactDuration(value: "\(total) Sek.", label: "Zeit")
+        if h > 0 { return CompactDuration(value: "\(h):\(twoDigits(m)):\(ss)", label: L("Zeit (Std.)")) }
+        if m > 0 { return CompactDuration(value: "\(m):\(ss)", label: L("Zeit (Min.)")) }
+        return CompactDuration(value: L("%@ Sek.", "\(total)"), label: L("Zeit"))
     }
 
     /// `charColumns(count, perRow)`: the column count for special-character keys laid out in the
@@ -307,7 +304,7 @@ extension WriteFlow {
         }
 
         /// "2× falsch" (results rows).
-        public var missesLabel: String? { misses.map { "\($0)× falsch" } }
+        public var missesLabel: String? { misses.map { L("%@× falsch", "\($0)") } }
     }
 
     /// The card of each id like the JS `Map` of write.js (the last card with an id wins).

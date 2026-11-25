@@ -308,6 +308,31 @@ public class WriteFlowTests
         Assert.Equal(["Deutsch: lieb"], d.Announcements(next));
     }
 
+    // A copy typed out continues without Enter after a short beat (Mac 24.11.2026).
+    [Fact]
+    public void CopyTypedOut()
+    {
+        var d = Driver(copy: true);
+        d.Answer("x");
+        Assert.Equal(Phase.Copy, d.Phase);
+        Assert.Equal("a", d.Question?.CardId);
+        // Accepted like an answer (without its article): the beat starts…
+        d.Type("chat");
+        Assert.Equal(Phase.Copy, d.Phase);
+        Assert.Equal(Wortschatz.Core.CopyStep.AdvanceMs, d.State.AutoAdvance?.Ms);
+        var spoiled = d.Timers[^1].Token;
+        // …and typing on so that it is no longer right stops it.
+        d.Type("le cha");
+        Assert.Null(d.State.AutoAdvance);
+        d.Send(new Event.AutoAdvanceFired(spoiled), after: 0);
+        Assert.Equal(Phase.Copy, d.Phase);
+        d.Type("le chat");
+        Assert.Equal(Phase.Copy, d.Phase);
+        d.FireTimer();
+        Assert.Equal(Phase.Question, d.Phase);
+        Assert.NotEqual("a", d.Question?.CardId);
+    }
+
     [Fact]
     public void Override()
     {

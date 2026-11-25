@@ -158,8 +158,12 @@ final class ExamController {
         startTimer()
         if isLive {
             Announcer.announce(
-                "Prüfung gestartet: \(Labels.plural(sheet.count, "Frage", "Fragen"))"
-                    + (settings.minutes > 0 ? ", \(ExamCopy.minutes(settings.minutes))." : "."))
+                settings.minutes > 0
+                    ? String(
+                        localized:
+                            "Prüfung gestartet: \(Labels.plural(sheet.count, "Frage", "Fragen")), \(ExamCopy.minutes(settings.minutes)).")
+                    : String(localized: "Prüfung gestartet: \(Labels.plural(sheet.count, "Frage", "Fragen")).")
+            )
         }
     }
 
@@ -177,11 +181,11 @@ final class ExamController {
             return
         }
         model.confirm(ConfirmationRequest(
-            title: "Prüfung abgeben?",
+            title: String(localized: "Prüfung abgeben?"),
             message: open == 1
-                ? "Eine Frage ist noch offen. Sie zählt als falsch."
-                : "\(open) Fragen sind noch offen. Sie zählen als falsch.",
-            confirmLabel: "Abgeben"
+                ? String(localized: "Eine Frage ist noch offen. Sie zählt als falsch.")
+                : String(localized: "\(open) Fragen sind noch offen. Sie zählen als falsch."),
+            confirmLabel: String(localized: "Abgeben")
         ) { [weak self] in
             self?.submit()
         })
@@ -208,9 +212,11 @@ final class ExamController {
         passed ? Haptics.success() : Haptics.failure()
         SoundEffects.shared.play(passed ? .finished : .roundDone)
         if timedOut {
-            model.toasts.show("Die Zeit ist um. Deine Prüfung wurde abgegeben.", tone: .warning, systemImage: "clock.badge.exclamationmark")
+            model.toasts.show(
+                String(localized: "Die Zeit ist um. Deine Prüfung wurde abgegeben."), tone: .warning,
+                systemImage: "clock.badge.exclamationmark")
         }
-        Announcer.announce("Note \(Exam.gradeText(marked.grade)). \(ExamCopy.scoreLine(marked)).")
+        Announcer.announce(String(localized: "Note \(Exam.gradeText(marked.grade)). \(ExamCopy.scoreLine(marked))."))
     }
 
     /// "Falsche nochmals prüfen": a new sheet with only the words to practise.
@@ -228,8 +234,9 @@ final class ExamController {
             return
         }
         model.confirm(ConfirmationRequest(
-            title: "Prüfung beenden?", message: "Die Prüfung wird nicht bewertet, deine Antworten gehen verloren.",
-            confirmLabel: "Beenden", isDestructive: true
+            title: String(localized: "Prüfung beenden?"),
+            message: String(localized: "Die Prüfung wird nicht bewertet, deine Antworten gehen verloren."),
+            confirmLabel: String(localized: "Beenden"), isDestructive: true
         ) { [weak self] in
             self?.newExam()
         })
@@ -263,8 +270,9 @@ final class ExamController {
     private func askBeforeLeaving(_ leave: @escaping () -> Void) -> Bool {
         guard phase == .running, answeredCount > 0 else { return false }
         model.confirm(ConfirmationRequest(
-            title: "Prüfung beenden?", message: "Die Prüfung wird nicht bewertet, deine Antworten gehen verloren.",
-            confirmLabel: "Beenden", isDestructive: true
+            title: String(localized: "Prüfung beenden?"),
+            message: String(localized: "Die Prüfung wird nicht bewertet, deine Antworten gehen verloren."),
+            confirmLabel: String(localized: "Beenden"), isDestructive: true
         ) { [weak self] in
             self?.deactivate()
             leave()
@@ -319,8 +327,8 @@ final class ExamController {
             if total > 120 {
                 try? await Task.sleep(for: .seconds(total - 60))
                 guard !Task.isCancelled, let self, sheetID == sheet, phase == .running, isCurrent else { return }
-                model.toasts.show("Noch eine Minute", tone: .warning, systemImage: "clock")
-                Announcer.announce("Noch eine Minute")
+                model.toasts.show(String(localized: "Noch eine Minute"), tone: .warning, systemImage: "clock")
+                Announcer.announce(String(localized: "Noch eine Minute"))
             }
             try? await Task.sleep(for: .seconds(max(0, deadline.timeIntervalSinceNow)))
             // Not after the screen was left (it dissolves for a moment): no sound or toast there.

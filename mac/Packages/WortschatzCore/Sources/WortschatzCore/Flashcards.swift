@@ -313,7 +313,7 @@ public struct FlashcardDeck: Codable, Sendable, Equatable {
 
 // MARK: - Copy
 
-/// German texts of the flashcards screen.
+/// Texts of the flashcards screen (German source, translated with `L`).
 public enum FlashcardCopy {
     /// "1 Karte", "12 Karten".
     public static func cards(_ n: Int) -> String {
@@ -322,19 +322,19 @@ public enum FlashcardCopy {
 
     /// The set page's line under a running deck: "Runde 2 · 8 von 12 gewusst".
     public static func runningDetail(_ deck: FlashcardDeck) -> String {
-        let round = deck.phase == .roundDone ? "Runde \(deck.round) geschafft" : "Runde \(deck.round)"
-        var parts = [round, "\(deck.knownCount) von \(deck.total) gewusst"]
-        if deck.starredOnly { parts.insert("Nur markierte", at: 0) }
+        let round = deck.phase == .roundDone ? L("Runde %@ geschafft", "\(deck.round)") : L("Runde %@", "\(deck.round)")
+        var parts = [round, L("%@ von %@ gewusst", "\(deck.knownCount)", "\(deck.total)")]
+        if deck.starredOnly { parts.insert(L("Nur markierte"), at: 0) }
         return parts.joined(separator: " · ")
     }
 
     /// The Return action after a round: "Weiter mit 4 Karten".
     public static func nextRoundAction(_ deck: FlashcardDeck) -> String {
-        "Weiter mit \(cards(deck.learningCount))"
+        L("Weiter mit %@", cards(deck.learningCount))
     }
 
     public static func roundDoneTitle(_ deck: FlashcardDeck) -> String {
-        deck.knownInRound == 0 ? "Bleib dran!" : "Du machst Fortschritte!"
+        deck.knownInRound == 0 ? L("Bleib dran!") : L("Du machst Fortschritte!")
     }
 
     /// "Du kennst 8 von 12 Karten. Die 4 Karten, die du noch lernst, kommen jetzt nochmal."
@@ -342,22 +342,28 @@ public enum FlashcardCopy {
         let learning = deck.learningCount
         let again =
             learning == 1
-            ? "Die Karte, die du noch lernst, kommt jetzt nochmal."
-            : "Die \(learning) Karten, die du noch lernst, kommen jetzt nochmal."
-        return "Du kennst \(deck.knownCount) von \(cards(deck.total)). \(again)"
+            ? L("Die Karte, die du noch lernst, kommt jetzt nochmal.")
+            : L("Die %@ Karten, die du noch lernst, kommen jetzt nochmal.", "\(learning)")
+        let known = L("Du kennst %@ von %@.", "\(deck.knownCount)", cards(deck.total))
+        return "\(known) \(again)"
     }
 
     public static func finishedTitle(_ deck: FlashcardDeck) -> String {
-        deck.total == 1 ? "Super, du kennst die Karte!" : "Super, du kennst alle \(deck.total) Karten!"
+        deck.total == 1 ? L("Super, du kennst die Karte!") : L("Super, du kennst alle %@ Karten!", "\(deck.total)")
     }
 
     public static func finishedText(_ deck: FlashcardDeck) -> String {
-        let rounds = deck.round == 1 ? "Gleich in der ersten Runde – stark." : "Geschafft in \(deck.round) Runden."
-        return "\(rounds) Teste dich jetzt in «Lernen», damit sie auch als gemeistert zählen."
+        let rounds =
+            deck.round == 1 ? L("Gleich in der ersten Runde – stark.") : L("Geschafft in %@ Runden.", "\(deck.round)")
+        let test =
+            deck.total == 1
+            ? L("Teste dich jetzt in «Lernen», damit sie auch als gemeistert zählt.")
+            : L("Teste dich jetzt in «Lernen», damit sie auch als gemeistert zählen.")
+        return "\(rounds) \(test)"
     }
 
     /// The confirmation before starting over.
     public static func restartMessage(_ deck: FlashcardDeck) -> String {
-        "Deine Sortierung (\(runningDetail(deck))) beginnt von vorne. Dein Lernfortschritt bleibt erhalten."
+        L("Deine Sortierung (%@) beginnt von vorne. Dein Lernfortschritt bleibt erhalten.", runningDetail(deck))
     }
 }

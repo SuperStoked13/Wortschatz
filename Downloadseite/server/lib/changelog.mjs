@@ -6,11 +6,16 @@
 //   - Behoben (Windows): …          a platform in brackets when only one app changes
 //   ## 1.1 – 2026-10-20             a released version (tools/release-*.sh writes these)
 //   ## 1.0 – 2026-10-14             a version without entries: only the starting point, not shown
+//   - Neu: Arabisch …               an indented line «EN: …» under an entry is its English text for
+//     EN: Arabic …                  /en/whats-new (without one, the English page shows the German text)
 //
 // Lenient on purpose: a typo never takes the site down. Lines it cannot read are skipped and
 // reported as problems (the server logs them).
 
+import { formatDate } from './lang.mjs';
+
 const KINDS = Object.freeze({ neu: 'Neu', verbessert: 'Verbessert', behoben: 'Behoben' });
+const KINDS_EN = Object.freeze({ neu: 'New', verbessert: 'Improved', behoben: 'Fixed' });
 const PLATFORM_NAMES = Object.freeze({ mac: 'mac', macos: 'mac', windows: 'windows' });
 const PLATFORM_LABELS = Object.freeze({ mac: 'Mac', windows: 'Windows' });
 const ALL_PLATFORMS = Object.freeze(['mac', 'windows']);
@@ -21,8 +26,7 @@ const ISO_DATE_RE = /\b(\d{4})-(\d{2})-(\d{2})\b/;
 const SWISS_DATE_RE = /\b(\d{1,2})\.(\d{1,2})\.(\d{4})\b/;
 const ITEM_RE = /^[-*]\s+(.*)$/;
 const KIND_RE = /^([\p{L}]+)\s*(?:\(([^)]*)\))?\s*:\s*(.+)$/u;
-
-const dateFormat = new Intl.DateTimeFormat('de-CH', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' });
+const ENGLISH_RE = /^en\s*:\s*(.*)$/i;
 
 /** Compares "1.10" and "1.9.2" by their numbers; missing parts count as 0. */
 export function compareVersions(a, b) {
@@ -48,9 +52,8 @@ function isoDate(text) {
   return !Number.isNaN(date.getTime()) && date.toISOString().startsWith(iso) ? iso : '';
 }
 
-export function dateLabel(iso) {
-  const date = new Date(`${iso}T00:00:00Z`);
-  return iso && !Number.isNaN(date.getTime()) ? dateFormat.format(date) : '';
+export function dateLabel(iso, lang = 'de') {
+  return formatDate(iso, lang);
 }
 
 /** "Neu (Mac): Text" → { kind, platforms, text }. Unknown kinds or platforms stay part of the text. */
@@ -82,6 +85,7 @@ export function parseChangelog(source) {
   const result = { upcoming: [], versions: [], problems: [] };
   let section; // { changes, note } of the current heading; undefined before the first one, null after an unknown one
   let last = null; // the change that indented lines continue
+  let field = 'text'; // and which of its texts: the German one or, after «EN:», the English one
   const problem = (index, message) => result.problems.push({ line: index + 1, message });
 
   lines.forEach((raw, index) => {
@@ -118,12 +122,21 @@ export function parseChangelog(source) {
       if (!known) problem(index, `Art fehlt oder unbekannt (Neu, Verbessert, Behoben; Plattform Mac oder Windows): «${item[1].trim()}».`);
       section.changes.push(change);
       last = change;
+      field = 'text';
       return;
     }
     if (last && /^\s/.test(raw)) {
-      last.text = `${last.text} ${line}`;
+      const english = ENGLISH_RE.exec(line);
+      if (english) {
+        field = 'textEn';
+        last.textEn = english[1].trim();
+        if (!last.textEn) problem(index, 'Leere Zeile «EN:».');
+        return;
+      }
+      last[field] = last[field] ? `${last[field]} ${line}` : line;
       return;
     }
+    if (last && ENGLISH_RE.test(line)) problem(index, '«EN:» gehört eingerückt unter seinen Eintrag.');
     last = null;
     section.note.push(line);
   });
@@ -132,12 +145,15 @@ export function parseChangelog(source) {
   return result;
 }
 
-function changeView(change) {
+function changeView(change, lang) {
+  const english = lang === 'en';
   return {
     kind: change.kind,
-    kindLabel: KINDS[change.kind] ?? '',
+    kindLabel: (english ? KINDS_EN : KINDS)[change.kind] ?? '',
     platformLabel: change.platforms.map((platform) => PLATFORM_LABELS[platform]).join(', '),
-    text: change.text,
+    text: english && change.textEn ? change.textEn : change.text,
+    // The English page falls back to the German text; screen readers should read it as German.
+    textLang: english && !change.textEn ? 'de' : '',
   };
 }
 
@@ -147,8 +163,9 @@ function changeView(change) {
  * newest version in the file is online for their platform (when nobody numbered them at release).
  * @param {ReturnType<typeof parseChangelog>} changelog
  * @param {{mac?: {version: string, released: string} | null, windows?: {version: string, released: string} | null}} releases
+ * @param {'de' | 'en'} lang
  */
-export function changelogView(changelog, releases = {}) {
+export function changelogView(changelog, releases = {}, lang = 'de') {
   const versions = changelog.versions.map((entry) => ({ ...entry, changes: [...entry.changes] }));
   const newest = versions.reduce((max, entry) => (!max || compareVersions(entry.version, max) > 0 ? entry.version : max), '');
   const newer = ALL_PLATFORMS.map((platform) => releases[platform]).filter(
@@ -178,16 +195,16 @@ export function changelogView(changelog, releases = {}) {
         version: entry.version,
         anchor: `v${entry.version.replaceAll('.', '-')}`,
         date,
-        dateLabel: dateLabel(date),
+        dateLabel: dateLabel(date, lang),
         note: entry.note,
         hasChanges: entry.changes.length > 0,
-        changes: entry.changes.map(changeView),
+        changes: entry.changes.map((change) => changeView(change, lang)),
       };
     });
 
   return {
     any: shown.length > 0 || coming.length > 0,
-    upcoming: coming.length ? { changes: coming.map(changeView) } : null,
+    upcoming: coming.length ? { changes: coming.map((change) => changeView(change, lang)) } : null,
     versions: shown,
     latest: shown[0] ?? null,
   };

@@ -12,23 +12,36 @@ import { LinkSigner, randomId } from './tokens.mjs';
 import { PLATFORMS, checksumsText, loadReleases, releasesSignature } from './releases.mjs';
 import { loadSite, makeEntry } from './site.mjs';
 import { changelogView, parseChangelog } from './changelog.mjs';
+import { compareVersions, languagesView } from './languages.mjs';
+import { englishLabel, errorText, formatDate, languageOfPath, message, preferredLanguage } from './lang.mjs';
 import { escapeHtml } from './templates.mjs';
 import { parseRange, securityHeaders, send, sendEntry, sendJson, wantsJson } from './http.mjs';
 import { createStats } from './stats.mjs';
 
+/** The last Mac version that never went online (no update check). */
+const MAC_WITHOUT_UPDATES_UP_TO = '1.7.1';
+/** The last Windows version without the update check (AppUpdater came after it). */
+const WINDOWS_WITHOUT_UPDATES_UP_TO = '1.7.1';
+
 const METHODS = new Set(['GET', 'HEAD', 'POST']);
+// Every page in German and in English: its template, its language and the same page in the other one.
 const PAGES = new Map([
-  ['/', 'index'],
-  ['/datenschutz', 'datenschutz'],
-  ['/neuigkeiten', 'neuigkeiten'],
+  ['/', { name: 'index', lang: 'de', other: '/en' }],
+  ['/datenschutz', { name: 'datenschutz', lang: 'de', other: '/en/privacy' }],
+  ['/neuigkeiten', { name: 'neuigkeiten', lang: 'de', other: '/en/whats-new' }],
+  ['/en', { name: 'en/index', lang: 'en', other: '/' }],
+  ['/en/privacy', { name: 'en/privacy', lang: 'en', other: '/datenschutz' }],
+  ['/en/whats-new', { name: 'en/whats-new', lang: 'en', other: '/neuigkeiten' }],
 ]);
+const HOME = Object.freeze({ de: '/', en: '/en' });
+const LOGIN = Object.freeze({ de: '/login', en: '/en/login' });
 const CHANGELOG = '_neuigkeiten.md';
 const DEV_HOST = /^(?:localhost|127\.0\.0\.1|\[::1\])(?::\d{1,5})?$/;
 const PLATFORM_PATH = /^\/download\/(mac|windows)$/;
 const LINK_PATH = /^\/dl\/([A-Za-z0-9_-]{8,700}\.[A-Za-z0-9_-]{43})$/;
 // With SITE_PASSWORD: what is open without signing in (the login page needs the static files),
 // and how long a browser stays signed in.
-const OPEN_PATHS = new Set(['/login', '/healthz', '/datenschutz']);
+const OPEN_PATHS = new Set(['/login', '/en/login', '/healthz', '/datenschutz', '/en/privacy']);
 const LOGIN_DAYS = 90;
 
 // What a response costs on top of its body: the headers.
@@ -40,21 +53,6 @@ const TOO_MANY = 'Zu viele Anfragen. Bitte kurz warten.\n';
 const BUSY = 'Der Server ist ausgelastet. Bitte kurz warten.\n';
 const NOT_ALLOWED = 'Nicht erlaubt.\n';
 
-const ERRORS = Object.freeze({
-  400: ['Ungültige Anfrage', 'Diese Adresse kann der Server nicht verarbeiten.'],
-  401: ['Anmeldung nötig', 'Diese Seite ist passwortgeschützt. Melde dich auf der Startseite mit dem Passwort an.'],
-  403: ['Kein Zugriff', 'Diese Anfrage ist nicht erlaubt.'],
-  404: ['Seite nicht gefunden', 'Diese Seite gibt es nicht. Prüf die Adresse oder geh zur Startseite.'],
-  405: ['Nicht erlaubt', 'Diese Art von Anfrage wird hier nicht unterstützt.'],
-  410: ['Nicht mehr gültig', 'Dieser Link gilt nicht mehr. Lade Wortschatz über die Website.'],
-  413: ['Anfrage zu gross', 'Die Anfrage ist zu gross.'],
-  414: ['Adresse zu lang', 'Die Adresse ist zu lang.'],
-  415: ['Format nicht unterstützt', 'Dieses Format nimmt der Server nicht an.'],
-  421: ['Falsche Adresse', 'Diese Website ist unter einer anderen Adresse erreichbar.'],
-  429: ['Zu viele Anfragen', 'Von deiner Internetadresse kamen sehr viele Anfragen. Warte einen Moment und versuch es dann nochmals.'],
-  500: ['Serverfehler', 'Etwas ist schiefgelaufen. Versuch es in einem Moment nochmals.'],
-  503: ['Gerade ausgelastet', 'Der Server ist im Moment ausgelastet. Versuch es gleich nochmals.'],
-});
 
 const sha256 = (text) => crypto.createHash('sha256').update(text, 'utf8').digest();
 
@@ -94,10 +92,6 @@ function readBody(req, limit) {
   });
 }
 
-function seconds(n) {
-  return n % 60 === 0 ? `${n / 60} ${n === 60 ? 'Minute' : 'Minuten'}` : `${n} Sekunden`;
-}
-
 /** A byte allowance per second with `burstSeconds` of it in reserve; 0 = no limit. */
 function bytesBucket(bytesPerSecond, burstSeconds) {
   return new TokenBucket({ capacity: bytesPerSecond ? bytesPerSecond * burstSeconds : Infinity, perSecond: bytesPerSecond });
@@ -116,8 +110,32 @@ function requestedByOtherWebsite(req) {
   return (mode !== undefined && mode !== 'navigate') || (dest !== undefined && dest !== 'document');
 }
 
-/** The values the templates see. */
-function viewModel(releases, config, changelog) {
+/** The same page in the other language ("/neuigkeiten" ↔ "/en/whats-new"); unknown paths stay. */
+function counterpart(path) {
+  return PAGES.get(path)?.other ?? path;
+}
+
+/** A page in the wanted language: "/" in English is "/en", "/en" in English stays. */
+function inLanguage(path, lang) {
+  const page = PAGES.get(path);
+  return page && page.lang !== lang ? page.other : path;
+}
+
+/** The values the templates see, in German or English. */
+/** Which live apps look for updates on GitHub (macUpdates/windowsUpdates for the help, appUpdates for the privacy page). */
+function updatesView(releases) {
+  const mac = Boolean(releases.mac && compareVersions(releases.mac.version, MAC_WITHOUT_UPDATES_UP_TO) > 0);
+  const windows = Boolean(releases.windows && compareVersions(releases.windows.version, WINDOWS_WITHOUT_UPDATES_UP_TO) > 0);
+  return {
+    macUpdates: mac,
+    windowsUpdates: windows,
+    appUpdates: { any: mac || windows, both: mac && windows, macOnly: mac && !windows, windowsOnly: windows && !mac },
+  };
+}
+
+function viewModel(releases, config, changelog, lang) {
+  const english = lang === 'en';
+  const languages = languagesView(releases, lang);
   const pick = (release) =>
     release
       ? {
@@ -127,14 +145,19 @@ function viewModel(releases, config, changelog) {
           file: release.file,
           sizeLabel: release.sizeLabel,
           sha256: release.sha256,
-          requirement: release.requirement,
-          architecture: release.architecture,
+          requirement: english ? englishLabel(release.requirement) : release.requirement,
+          architecture: english ? englishLabel(release.architecture) : release.architecture,
           released: release.released,
-          releasedLabel: release.releasedLabel,
+          releasedLabel: english ? formatDate(release.released, 'en') : release.releasedLabel,
+          size: release.size,
+          // On GitHub: the page links straight to the file there instead of asking this server.
+          url: release.external ? release.url : '',
+          languages: languages.label(release.platform),
         }
       : { available: false };
   const mac = pick(releases.mac);
   const windows = pick(releases.windows);
+  const present = [releases.mac, releases.windows].filter(Boolean);
   return {
     site: {
       origin: config.origin,
@@ -148,8 +171,28 @@ function viewModel(releases, config, changelog) {
     mac,
     windows,
     anyAvailable: mac.available || windows.available,
+    // Where the files come from, for the privacy page: this server, GitHub or both.
+    downloads: { local: present.some((r) => !r.external), github: present.some((r) => r.external) },
     version: mac.version || windows.version || '',
-    updates: changelogView(changelog, releases),
+    // What the live apps speak (German; English since the first release after Mac 1.6.2 / Windows 1.4).
+    appLanguages: { english: languages.english, note: languages.note, text: languages.text },
+    // The live apps ask GitHub for updates (Mac: Sparkle, Windows: AppUpdater, each from the first release
+    // after 1.7.1): the privacy page and the help of each app say so.
+    ...updatesView(releases),
+    updates: changelogView(changelog, releases, lang),
+  };
+}
+
+/**
+ * What the head, nav and footer need to know about a page: its language and where it is in the
+ * other one (the language switch), and for pages that exist in both, both addresses (lang.js).
+ */
+function pageView(lang, other, alternates = null) {
+  return {
+    lang,
+    other,
+    otherLang: lang === 'en' ? 'de' : 'en',
+    alternates: alternates ? { de: alternates.de, en: alternates.en } : null,
   };
 }
 
@@ -200,18 +243,25 @@ export async function createApp(config, log) {
   };
 
   async function build() {
-    const [site, releases] = await Promise.all([loadSite(config.publicDir), loadReleases(config.releasesDir, log)]);
+    const [site, releases] = await Promise.all([loadSite(config.publicDir), loadReleases(config.releasesDir, log, { repo: config.downloadRepo })]);
     const changelog = parseChangelog(site.text(CHANGELOG));
     for (const { line, message } of changelog.problems) log.warn('changelog', { file: CHANGELOG, line, message });
-    const model = viewModel(releases, config, changelog);
+    const models = { de: viewModel(releases, config, changelog, 'de'), en: viewModel(releases, config, changelog, 'en') };
     const pages = new Map();
-    for (const [route, name] of PAGES) pages.set(route, site.renderPage(name, model));
-    site.renderHtml('_error', { ...model, error: { status: 404, title: 'Test', message: 'Test' } });
-    site.renderHtml('_login', { ...model, login: { next: '/', error: '' } });
+    for (const [route, { name, lang, other }] of PAGES) {
+      const alternates = lang === 'de' ? { de: route, en: other } : { de: other, en: route };
+      pages.set(route, site.renderPage(name, { ...models[lang], page: pageView(lang, other, alternates) }));
+    }
+    // Templates that are rendered per request: fail now, at start or reload, rather than then.
+    for (const lang of ['de', 'en']) {
+      const prefix = lang === 'en' ? 'en/' : '';
+      site.renderHtml(`${prefix}_error`, { ...models[lang], page: pageView(lang, HOME.de), error: { status: 404, title: 'Test', message: 'Test' } });
+      site.renderHtml(`${prefix}_login`, { ...models[lang], page: pageView(lang, LOGIN.de, LOGIN), login: { next: '/', wrong: false } });
+    }
     const checksums = makeEntry(Buffer.from(checksumsText(releases, config.origin), 'utf8'), 'text/plain; charset=utf-8', {
       cacheControl: 'no-cache',
     });
-    return { site, releases, model, pages, checksums };
+    return { site, releases, models, pages, checksums };
   }
 
   let state = await build();
@@ -266,9 +316,35 @@ export async function createApp(config, log) {
 
   const isPrivate = (ip) => Boolean(ip) && privateNets.check(ip, ip.includes(':') ? 'ipv6' : 'ipv4');
 
-  function fail(req, res, status, { title, message, retryAfter, headers = {} } = {}) {
-    const [defaultTitle, defaultMessage] = ERRORS[status] ?? ERRORS[500];
-    const error = { status, title: title ?? defaultTitle, message: message ?? defaultMessage };
+  /**
+   * The language of what the server says by itself: that of the page asked for or the page the
+   * request came from (English below /en), otherwise the browser's (Accept-Language, which the
+   * page script sets to the page's language).
+   */
+  function languageOf(req) {
+    const url = req.url || '';
+    if (languageOfPath(url.split('?')[0]) === 'en') return 'en';
+    const referer = String(req.headers.referer || '');
+    if (referer) {
+      try {
+        const from = new URL(referer);
+        if (from.host === String(req.headers.host || '').toLowerCase() && languageOfPath(from.pathname) === 'en') return 'en';
+      } catch {
+        // not a URL: ignore
+      }
+    }
+    return preferredLanguage(req.headers['accept-language']);
+  }
+
+  /**
+   * An error page (or JSON for the page script). `say` names one of the messages in lang.mjs,
+   * otherwise the status gives title and text.
+   */
+  function fail(req, res, status, { say, values, retryAfter, headers = {} } = {}) {
+    const lang = languageOf(req);
+    const [defaultTitle, defaultMessage] = errorText(status, lang);
+    const said = say ? message(say, lang, values) : null;
+    const error = { status, title: said?.title ?? defaultTitle, message: said?.message ?? defaultMessage };
     res.removeHeader('Content-Disposition');
     res.setHeader('Cache-Control', 'no-store');
     if (retryAfter) res.setHeader('Retry-After', String(retryAfter));
@@ -279,14 +355,15 @@ export async function createApp(config, log) {
     }
     let html;
     try {
-      html = state.site.renderHtml('_error', {
-        ...state.model,
+      html = state.site.renderHtml(lang === 'en' ? 'en/_error' : '_error', {
+        ...state.models[lang],
+        page: pageView(lang, lang === 'en' ? HOME.de : HOME.en),
         error: { ...error, retry: status === 429 || status === 503 },
       });
     } catch {
       html = `<!doctype html><meta charset="utf-8"><title>${status}</title><p>${escapeHtml(error.message)}</p>`;
     }
-    send(req, res, status, { 'Content-Type': 'text/html; charset=utf-8' }, html);
+    send(req, res, status, { 'Content-Type': 'text/html; charset=utf-8', 'Content-Language': lang, Vary: 'Accept-Language' }, html);
   }
 
   /**
@@ -420,25 +497,35 @@ export async function createApp(config, log) {
       wrongPassword(ctx);
     }
     if ((req.method === 'GET' || req.method === 'HEAD') && (PAGES.has(path) || path === '/index.html')) {
-      redirect(req, res, 303, path === '/' || path === '/index.html' ? '/login' : `/login?weiter=${encodeURIComponent(path)}`);
+      const lang = languageOfPath(path);
+      const home = path === HOME[lang] || path === '/index.html';
+      redirect(req, res, 303, home ? LOGIN[lang] : `${LOGIN[lang]}?weiter=${encodeURIComponent(path)}`);
       return false;
     }
     fail(req, res, 401);
     return false;
   }
 
-  function loginPage(req, res, status, next, error = '') {
-    const html = state.site.renderHtml('_login', { ...state.model, login: { next, error } });
-    send(req, res, status, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' }, html);
+  function loginPage(req, res, lang, status, next, wrong = false) {
+    const other = lang === 'en' ? 'de' : 'en';
+    const html = state.site.renderHtml(lang === 'en' ? 'en/_login' : '_login', {
+      ...state.models[lang],
+      page: pageView(lang, `${LOGIN[other]}?weiter=${encodeURIComponent(counterpart(next))}`, LOGIN),
+      login: { next, wrong },
+    });
+    send(req, res, status, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store', 'Content-Language': lang }, html);
   }
 
-  /** GET shows the password form; POST checks the password and sets the login cookie. */
-  async function login(req, res, ctx, query) {
-    const wanted = (value) => (PAGES.has(value) ? value : '/');
-    if (!passwordHash) return redirect(req, res, 303, '/');
+  /**
+   * GET shows the password form; POST checks the password and sets the login cookie. The login
+   * page exists in German (/login) and English (/en/login); after it come the pages of its language.
+   */
+  async function login(req, res, ctx, lang, query) {
+    const wanted = (value) => (PAGES.has(value) ? inLanguage(value, lang) : HOME[lang]);
+    if (!passwordHash) return redirect(req, res, 303, HOME[lang]);
     if (req.method !== 'POST') {
       const next = wanted(query.get('weiter'));
-      return hasLoginCookie(req) ? redirect(req, res, 303, next) : loginPage(req, res, 200, next);
+      return hasLoginCookie(req) ? redirect(req, res, 303, next) : loginPage(req, res, lang, 200, next);
     }
     // Only this website's own form may sign in.
     if (!ownForm(req)) return fail(req, res, 403);
@@ -452,7 +539,7 @@ export async function createApp(config, log) {
     if (!limit.ok) return fail(req, res, 429, { retryAfter: limit.retryAfter });
     if (!passwordMatches(form.get('passwort') ?? '')) {
       wrongPassword(ctx);
-      return loginPage(req, res, 401, next, 'Das Passwort stimmt nicht.');
+      return loginPage(req, res, lang, 401, next, true);
     }
     const maxAge = LOGIN_DAYS * 86_400;
     const token = loginToken(Math.floor(Date.now() / 1000) + maxAge);
@@ -465,19 +552,15 @@ export async function createApp(config, log) {
   }
 
   /** Signs out of this browser, for shared computers. Only by the website's own form. */
-  function logout(req, res) {
-    if (!passwordHash || req.method !== 'POST') return redirect(req, res, 303, '/');
+  function logout(req, res, lang) {
+    if (!passwordHash || req.method !== 'POST') return redirect(req, res, 303, HOME[lang]);
     if (!ownForm(req)) return fail(req, res, 403);
     res.setHeader('Set-Cookie', `${loginCookie}=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax${config.secure ? '; Secure' : ''}`);
-    return redirect(req, res, 303, '/login');
+    return redirect(req, res, 303, LOGIN[lang]);
   }
 
   function busy(req, res) {
-    return fail(req, res, 503, {
-      retryAfter: 15,
-      title: 'Gerade viel los',
-      message: 'Im Moment laufen viele Downloads gleichzeitig. Versuch es in ein paar Sekunden nochmals.',
-    });
+    return fail(req, res, 503, { retryAfter: 15, say: 'busy' });
   }
 
   async function issueLink(req, res, ctx, platform) {
@@ -485,7 +568,7 @@ export async function createApp(config, log) {
 
     // Only this website's own page may ask for a link: no hotlinking, no forms elsewhere.
     if (!ownForm(req)) {
-      return fail(req, res, 403, { title: 'Download nicht möglich', message: 'Lade Wortschatz bitte direkt über die Website.' });
+      return fail(req, res, 403, { say: 'refused' });
     }
 
     const type = String(req.headers['content-type'] || '').split(';')[0].trim().toLowerCase();
@@ -495,16 +578,15 @@ export async function createApp(config, log) {
 
     // A field people never see: only bots fill it in.
     if (new URLSearchParams(body).get('website')) {
-      return fail(req, res, 403, { title: 'Download nicht möglich', message: 'Lade Wortschatz bitte direkt über die Website.' });
+      return fail(req, res, 403, { say: 'refused' });
     }
 
     const release = state.releases[platform];
     if (!release) {
-      return fail(req, res, 404, {
-        title: 'Noch nicht verfügbar',
-        message: `Die Version für ${PLATFORMS[platform].label} wird gerade vorbereitet.`,
-      });
+      return fail(req, res, 404, { say: 'notYet', values: { platform: PLATFORMS[platform].label } });
     }
+    // On GitHub: the page links there; only a page from before the switch still posts here.
+    if (release.external) return fail(req, res, 410, { say: 'moved' });
 
     // Answer "busy" here, on the page, rather than after the browser has left it for the file.
     if (!gate.hasRoom(ctx.key)) return busy(req, res);
@@ -554,23 +636,19 @@ export async function createApp(config, log) {
       typeof link.a !== 'string' ||
       typeof link.n !== 'string'
     ) {
-      return fail(req, res, 404, { title: 'Link ungültig', message: 'Dieser Download-Link ist ungültig. Lade Wortschatz über die Website.' });
+      return fail(req, res, 404, { say: 'invalidLink' });
     }
     if (link.x < Date.now() / 1000) {
-      return fail(req, res, 410, {
-        title: 'Link abgelaufen',
-        message: `Ein Download-Link gilt ${seconds(L.linkSeconds)}. Lade Wortschatz einfach nochmals über die Website.`,
-      });
+      return fail(req, res, 410, { say: 'expired', values: { seconds: L.linkSeconds } });
     }
     if (link.a && link.a !== signer.tag(ctx.key)) {
-      return fail(req, res, 403, {
-        title: 'Link für ein anderes Gerät',
-        message: 'Dieser Download-Link gilt nur für das Gerät, das ihn angefordert hat. Lade Wortschatz über die Website.',
-      });
+      return fail(req, res, 403, { say: 'otherDevice' });
     }
     const release = state.releases[link.p];
+    // A link from before the file moved to GitHub: there is no file here to send.
+    if (release?.external) return fail(req, res, 410, { say: 'moved' });
     if (!release || release.fingerprint !== link.f) {
-      return fail(req, res, 410, { title: 'Neue Version', message: 'Inzwischen gibt es eine neue Version. Lade sie über die Website.' });
+      return fail(req, res, 410, { say: 'newVersion' });
     }
 
     let start = 0;
@@ -613,10 +691,7 @@ export async function createApp(config, log) {
       links.set(link.n, usage);
     }
     if (usage.uses >= L.linkUses) {
-      return fail(req, res, 410, {
-        title: 'Link schon verwendet',
-        message: 'Dieser Download-Link wurde schon verwendet. Lade Wortschatz nochmals über die Website.',
-      });
+      return fail(req, res, 410, { say: 'used' });
     }
     // Both before the first wait: requests arriving together must not all pass the check above,
     // and a client that is gone by then must not leave a download waiting for it, slot and all.
@@ -640,11 +715,7 @@ export async function createApp(config, log) {
       usage.uses -= 1;
       log.warn('download.file', { file: release.file, message: error.message });
       reload('download');
-      return fail(req, res, 503, {
-        retryAfter: 20,
-        title: 'Neue Version unterwegs',
-        message: 'Die Datei wird gerade ersetzt. Versuch es in einer halben Minute nochmals.',
-      });
+      return fail(req, res, 503, { retryAfter: 20, say: 'replacing' });
     }
 
     const leave = abort.signal.aborted ? null : gate.enter(ctx.key);
@@ -752,8 +823,8 @@ export async function createApp(config, log) {
     const asset = req.method === 'POST' ? null : state.site.statics.get(path);
     if (asset) return sendEntry(req, res, asset, { versioned: new URLSearchParams(query).get('v') === asset.version });
 
-    if (path === '/login') return login(req, res, ctx, new URLSearchParams(query));
-    if (path === '/logout') return logout(req, res);
+    if (path === LOGIN.de || path === LOGIN.en) return login(req, res, ctx, languageOfPath(path), new URLSearchParams(query));
+    if (path === '/logout' || path === '/en/logout') return logout(req, res, languageOfPath(path));
     if (!OPEN_PATHS.has(path) && !admitted(req, res, ctx, path)) return;
 
     const personal = Boolean(passwordHash);
@@ -785,7 +856,7 @@ export async function createApp(config, log) {
     const platform = PLATFORM_PATH.exec(path)?.[1];
     if (platform) {
       if (req.method === 'POST') return issueLink(req, res, ctx, platform);
-      return redirect(req, res, 303, '/#download');
+      return redirect(req, res, 303, languageOf(req) === 'en' ? '/en#download' : '/#download');
     }
     const token = LINK_PATH.exec(path)?.[1];
     if (token) {
@@ -793,7 +864,7 @@ export async function createApp(config, log) {
       return serveDownload(req, res, ctx, token);
     }
     if (path.startsWith('/dl/')) {
-      return fail(req, res, 404, { title: 'Link ungültig', message: 'Dieser Download-Link ist ungültig. Lade Wortschatz über die Website.' });
+      return fail(req, res, 404, { say: 'invalidLink' });
     }
     return fail(req, res, 404);
   }
@@ -827,24 +898,28 @@ export async function createApp(config, log) {
     });
   }
 
-  async function handle(req, res) {
+  /** `proxySocket`: the request came over the Unix socket of LISTEN_SOCKET, i.e. from the proxy. */
+  async function handle(req, res, { proxySocket = false } = {}) {
     const started = performance.now();
-    const peer = normalizeIp(req.socket?.remoteAddress);
+    const peer = proxySocket ? '' : normalizeIp(req.socket?.remoteAddress);
     const forwardedFor = req.headers['x-forwarded-for'];
-    const ip = clientIp(req, trust);
+    const ip = clientIp(req, trust, { proxySocket });
     const ctx = {
       ip,
       key: ipKey(ip),
       // Only a request straight from this machine is exempt from the limits (health check,
-      // local testing). Through a proxy, every client counts, also a private address.
-      local: !forwardedFor && isLoopback(peer),
+      // local testing). Through a proxy, every client counts, also a private address, and
+      // over the socket it is always the proxy.
+      local: !proxySocket && !forwardedFor && isLoopback(peer),
       path: '-',
       bytes: 0,
       tiny: false, // answered by tiny()
       file: false, // a download: its bytes have their own limits
     };
 
-    if (forwardedFor && peer === ip && isPrivate(peer)) {
+    if (proxySocket && !ip) {
+      warnOnce('proxy.socket', 'Über den Socket kam eine Anfrage ohne brauchbares X-Forwarded-For: Solche Besucher teilen sich alle eine Grenze. Der Proxy muss den Header setzen.');
+    } else if (forwardedFor && peer === ip && isPrivate(peer)) {
       warnOnce('proxy', 'X-Forwarded-For von einem nicht vertrauten Proxy ignoriert, alle Besucher erscheinen gleich. Hinter Docker TRUST_PROXY=private setzen.');
     } else if (forwardedFor && peer !== ip && isPrivate(ip)) {
       warnOnce('proxy.private', `Besucher kommen über den Proxy mit privater Adresse an (${anonymizeIp(ip)}). Die Limits gelten dann für alle zusammen. Bei Docker die Ports nur über IPv4 freigeben oder IPv6 im Docker-Netz einschalten.`);
@@ -862,6 +937,8 @@ export async function createApp(config, log) {
 
   return {
     handle,
+    /** The handler for the Unix socket (LISTEN_SOCKET): every request comes from the proxy. */
+    handleProxied: (req, res) => handle(req, res, { proxySocket: true }),
     reload,
     get state() {
       return state;

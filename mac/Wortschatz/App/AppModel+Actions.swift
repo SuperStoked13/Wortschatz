@@ -15,10 +15,10 @@ extension AppModel {
         do {
             let copy = try store.duplicateSet(setID)
             toasts.show(
-                "Kopie von «\(Self.shortTitle(set.title))» erstellt", tone: .success,
-                action: .init("Öffnen") { [weak self] in self?.showSet(copy.id) })
+                String(localized: "Kopie von «\(Self.shortTitle(set.title))» erstellt"), tone: .success,
+                action: .init(String(localized: "Öffnen")) { [weak self] in self?.showSet(copy.id) })
         } catch {
-            report(error, fallback: "Das Lernset konnte nicht dupliziert werden.")
+            report(error, fallback: String(localized: "Das Lernset konnte nicht dupliziert werden."))
         }
     }
 
@@ -29,7 +29,7 @@ extension AppModel {
         do {
             try store.deleteSet(setID)
         } catch {
-            report(error, fallback: "Das Lernset konnte nicht gelöscht werden.")
+            report(error, fallback: String(localized: "Das Lernset konnte nicht gelöscht werden."))
             return
         }
         let record = DeletedSet(snapshot: snapshot)
@@ -37,15 +37,15 @@ extension AppModel {
         registerRestore(of: record, on: undo)
         let title = Self.shortTitle(snapshot.set.title)
         toasts.show(
-            "«\(title)» gelöscht", systemImage: "trash",
-            action: .init("Rückgängig") { [weak self] in
+            String(localized: "«\(title)» gelöscht"), systemImage: "trash",
+            action: .init(String(localized: "Rückgängig")) { [weak self] in
                 guard let self else { return }
                 // The undo stack must not restore it a second time.
                 undo.removeAllActions(withTarget: record)
                 restoreDeleted(record, via: nil)
             },
             duration: .seconds(7))
-        Announcer.announce("Lernset «\(title)» gelöscht")
+        Announcer.announce(String(localized: "Lernset «\(title)» gelöscht"))
     }
 
     /// Registers "Widerrufen: Lernset löschen" for a deleted set.
@@ -58,7 +58,7 @@ extension AppModel {
         undo.registerUndo(withTarget: record) { [weak self, weak undo] _ in
             self?.restoreDeleted(record, via: undo)
         }
-        undo.setActionName("Lernset löschen")
+        undo.setActionName(String(localized: "Lernset löschen"))
     }
 
     /// Puts a deleted set back. With an undo manager (an undo, not the toast) the redo deletes
@@ -74,12 +74,12 @@ extension AppModel {
                     guard let undo else { return }
                     self?.deleteRestored(set.id, record: record, via: undo)
                 }
-                undo.setActionName("Lernset löschen")
+                undo.setActionName(String(localized: "Lernset löschen"))
             }
-            toasts.show("«\(Self.shortTitle(set.title))» wiederhergestellt", tone: .success)
+            toasts.show(String(localized: "«\(Self.shortTitle(set.title))» wiederhergestellt"), tone: .success)
             if route == .overview || route.setID == nil { showSet(set.id) }
         } catch {
-            report(error, fallback: "Das Lernset konnte nicht wiederhergestellt werden.")
+            report(error, fallback: String(localized: "Das Lernset konnte nicht wiederhergestellt werden."))
         }
     }
 
@@ -101,26 +101,33 @@ extension AppModel {
     func confirmResetProgress(_ setID: String) {
         guard store.getSet(setID) != nil else { return }
         confirm(ConfirmationRequest(
-            title: "Fortschritt zurücksetzen?",
-            message: "Alle Begriffe gelten danach wieder als «Neu», und laufende Runden in Lernen und Schreiben werden beendet. Die Begriffe selbst bleiben erhalten.",
-            confirmLabel: "Zurücksetzen",
+            title: String(localized: "Fortschritt zurücksetzen?"),
+            message: String(localized: "Alle Begriffe gelten danach wieder als «Neu», und laufende Runden in Lernen und Schreiben werden beendet. Die Begriffe selbst bleiben erhalten."),
+            confirmLabel: String(localized: "Zurücksetzen"),
             isDestructive: true
         ) { [weak self] in
             guard let self else { return }
             do {
                 try store.resetProgress(setID)
-                toasts.show("Fortschritt zurückgesetzt", tone: .success)
+                toasts.show(String(localized: "Fortschritt zurückgesetzt"), tone: .success)
             } catch {
                 report(error)
             }
         })
     }
 
+    /// Whether a card has its ★ now – also where `library` holds still under a study screen (the
+    /// lists "Am häufigsten falsch" at the end of a session). Follows every store change.
+    func isStarred(setID: String, cardID: String) -> Bool {
+        _ = revision
+        return latestLibrary.summary(for: setID)?.set.cards.first { $0.id == cardID }?.starred ?? false
+    }
+
     /// The ★ toggle of a card.
     func toggleStar(setID: String, cardID: String) {
         do {
             let starred = try store.toggleStar(setID, cardID)
-            Announcer.announce(starred ? "Markiert" : "Markierung entfernt")
+            Announcer.announce(starred ? String(localized: "Markiert") : String(localized: "Markierung entfernt"))
         } catch {
             report(error)
         }
@@ -140,7 +147,7 @@ extension AppModel {
             let data = try Backup.jsonData(store.exportAll())
             backupExport = BackupExportFile(data: data, fileName: Backup.backupFileName(timeZone: store.timeZone))
         } catch {
-            report(error, fallback: "Das Backup konnte nicht erstellt werden.")
+            report(error, fallback: String(localized: "Das Backup konnte nicht erstellt werden."))
         }
     }
 
@@ -150,23 +157,19 @@ extension AppModel {
         backupExport = nil
         switch result {
         case let .success(url):
-            toasts.show("Backup gespeichert: \(name ?? url.lastPathComponent)", tone: .success)
+            let fileName = name ?? url.lastPathComponent
+            toasts.show(String(localized: "Backup gespeichert: \(fileName)"), tone: .success)
         case let .failure(error):
             if (error as? CocoaError)?.code == .userCancelled { return }
-            report(error, fallback: "Das Backup konnte nicht gespeichert werden.")
+            report(error, fallback: String(localized: "Das Backup konnte nicht gespeichert werden."))
         }
     }
 
-    /// "Backup importieren…": the file chooser, then the import sheet.
+    /// "Backup importieren…" (Settings) and "Backup laden…" (empty overview): the file chooser,
+    /// then the import sheet.
     func importBackup() {
         guard !isPresentingSheet else { return }
         isChoosingBackup = true
-    }
-
-    /// "Aus der Web-Version übernehmen…": the how-to sheet that leads to the file chooser.
-    func showWebMigration() {
-        guard !isPresentingSheet else { return }
-        isShowingWebMigration = true
     }
 
     /// Result of the backup file chooser.
@@ -177,38 +180,12 @@ extension AppModel {
             do {
                 backupImport = try prepareBackupImport(from: url)
             } catch {
-                report(error, fallback: "Diese Datei ist kein gültiges Wortschatz-Backup.")
+                report(error, fallback: String(localized: "Diese Datei ist kein gültiges Wortschatz-Backup."))
             }
         case let .failure(error):
             if (error as? CocoaError)?.code == .userCancelled { return }
             report(error, fallback: Backup.READ_ERROR)
         }
-    }
-
-    /// A backup chosen inside another sheet (the web migration how-to): validated now, shown in
-    /// the import sheet once that sheet is gone (`webMigrationDismissed()`). True when the file
-    /// is a valid backup.
-    func stageBackupImport(_ result: Result<URL, any Error>) -> Bool {
-        switch result {
-        case let .success(url):
-            do {
-                stagedBackupImport = try prepareBackupImport(from: url)
-                return true
-            } catch {
-                report(error, fallback: "Diese Datei ist kein gültiges Wortschatz-Backup.")
-                return false
-            }
-        case let .failure(error):
-            if (error as? CocoaError)?.code != .userCancelled { report(error, fallback: Backup.READ_ERROR) }
-            return false
-        }
-    }
-
-    /// Called when the web migration sheet is gone: opens the import sheet for a staged backup.
-    func webMigrationDismissed() {
-        guard let staged = stagedBackupImport else { return }
-        stagedBackupImport = nil
-        backupImport = staged
     }
 
     /// Reads and validates a backup file (web or Mac) without touching the library.
@@ -235,18 +212,22 @@ extension AppModel {
         do {
             result = try store.importAll(preview.payload, mode: mode)
         } catch {
-            report(error, fallback: "Das Backup konnte nicht importiert werden.")
+            report(error, fallback: String(localized: "Das Backup konnte nicht importiert werden."))
             return
         }
         let total = result.setsAdded + result.setsUpdated
         let message: String
         if mode == .replace {
-            message = "Backup wiederhergestellt: \(Labels.plural(total, "Lernset", "Lernsets"))"
+            message = String(localized: "Backup wiederhergestellt: \(Labels.plural(total, "Lernset", "Lernsets"))")
         } else {
-            var parts: [String] = []
-            if result.setsAdded > 0 { parts.append(Labels.plural(result.setsAdded, "neues Lernset", "neue Lernsets")) }
-            if result.setsUpdated > 0 { parts.append("\(result.setsUpdated) aktualisiert") }
-            message = parts.isEmpty ? "Backup importiert – keine Änderungen" : "Backup importiert: \(parts.joined(separator: ", "))"
+            let added = Labels.plural(result.setsAdded, "neues Lernset", "neue Lernsets")
+            let updated = result.setsUpdated
+            switch (result.setsAdded > 0, updated > 0) {
+            case (true, true): message = String(localized: "Backup importiert: \(added), \(updated) aktualisiert")
+            case (true, false): message = String(localized: "Backup importiert: \(added)")
+            case (false, true): message = String(localized: "Backup importiert: \(updated) aktualisiert")
+            case (false, false): message = String(localized: "Backup importiert – keine Änderungen")
+            }
         }
         toasts.show(message, tone: .success, duration: .seconds(5))
         if route.isStudy == false { showOverview() }
@@ -320,26 +301,32 @@ struct BackupImportPreview: Identifiable {
 
     /// "3 Lernsets · 120 Begriffe · vom 12.10.2026".
     func meta(timeZone: TimeZone = .current) -> String {
-        var parts = [Labels.plural(sets.count, "Lernset", "Lernsets"), Labels.plural(cardCount, "Begriff", "Begriffe")]
+        let setsText = Labels.plural(sets.count, "Lernset", "Lernsets")
+        let cardsText = Labels.plural(cardCount, "Begriff", "Begriffe")
         if let exportedAt {
             let date = TimeUtil.formatDate(exportedAt, timeZone: timeZone)
-            if !date.isEmpty { parts.append("vom \(date)") }
+            if !date.isEmpty { return String(localized: "\(setsText) · \(cardsText) · vom \(date)") }
         }
-        return parts.joined(separator: " · ")
+        return "\(setsText) · \(cardsText)"
     }
 
     var mergeDetail: String {
         var parts: [String] = []
         if additions > 0 { parts.append(Labels.plural(additions, "neues Lernset", "neue Lernsets")) }
-        if updates > 0 { parts.append("\(updates) \(updates == 1 ? "wird" : "werden") durch die Backup-Version ersetzt") }
-        return parts.isEmpty ? "Keine Änderungen" : parts.joined(separator: " · ")
+        if updates > 0 {
+            parts.append(
+                updates == 1
+                    ? String(localized: "1 wird durch die Backup-Version ersetzt")
+                    : String(localized: "\(updates) werden durch die Backup-Version ersetzt"))
+        }
+        return parts.isEmpty ? String(localized: "Keine Änderungen") : parts.joined(separator: " · ")
     }
 
     var replaceDetail: String {
         switch lost {
-        case 0: "Alle deine Lernsets sind im Backup enthalten."
-        case 1: "1 Lernset, das nicht im Backup ist, geht verloren."
-        default: "\(lost) Lernsets, die nicht im Backup sind, gehen verloren."
+        case 0: String(localized: "Alle deine Lernsets sind im Backup enthalten.")
+        case 1: String(localized: "1 Lernset, das nicht im Backup ist, geht verloren.")
+        default: String(localized: "\(lost) Lernsets, die nicht im Backup sind, gehen verloren.")
         }
     }
 }

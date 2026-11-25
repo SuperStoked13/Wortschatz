@@ -8,5 +8,6 @@
   </Folder>
   <Folder Name="/tools/">
     <Project Path="tools/Wortschatz.Snapshots/Wortschatz.Snapshots.csproj" />
+    <Project Path="tools/Wortschatz.SynonymData/Wortschatz.SynonymData.csproj" />
   </Folder>
 </Solution>

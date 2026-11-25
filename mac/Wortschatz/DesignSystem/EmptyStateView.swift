@@ -1,14 +1,14 @@
 import SwiftUI
 
 /// Friendly empty state: a large symbol on a soft accent halo, title, message and actions
-/// (e.g. the overview without sets: "Erstes Lernset erstellen ↩", "Aus der Web-Version
-/// übernehmen…"). Not glass: it is content, not a control.
+/// (e.g. the overview without sets: "Erstes Lernset erstellen ↩", "Backup
+/// laden…"). Not glass: it is content, not a control.
 ///
 /// ```swift
 /// EmptyStateView(systemImage: "rectangle.stack.badge.plus", title: "Noch keine Lernsets",
 ///                message: "Füge deine Vokabelliste ein oder importiere ein Foto davon.") {
 ///     PrimaryActionButton("Erstes Lernset erstellen") { … }
-///     SecondaryButton("Aus der Web-Version übernehmen…") { … }
+///     SecondaryButton("Backup laden…") { … }
 /// }
 /// ```
 struct EmptyStateView<Actions: View>: View {

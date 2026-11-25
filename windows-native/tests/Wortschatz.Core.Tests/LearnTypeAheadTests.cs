@@ -272,14 +272,52 @@ public class LearnTypeAheadTests
         // An article (or two letters of it) is not enough.
         Assert.Null(s.State.Highlighted);
         Assert.Null(LearnFlow.ReturnAction(s.State));
-        s.Type(answer[2..]);
-        Assert.Equal(answer, s.State.Typed);
+        // All but its last letter: picked, not typed out yet.
+        s.Type(answer[2..^1]);
+        Assert.Equal(answer[..^1], s.State.Typed);
         Assert.Equal(s.CorrectIndex, s.State.Highlighted);
         Assert.Equal("Auswählen", LearnFlow.ReturnAction(s.State));
         Assert.Equal(LearnFlow.OptionState.Highlighted, LearnFlow.OptionStateOf(s.State, s.CorrectIndex));
         s.Key(KeyInput.Return);
         Assert.Equal(LearnFlow.Phase.FeedbackOf(LearnFlow.FeedbackKind.Correct), s.State.Phase);
         Assert.Equal("", s.State.Typed);
+    }
+
+    // Typing a whole option chooses it without Return (Mac 23.11.2026).
+    [Fact]
+    public void TypedOutChooses()
+    {
+        var s = new Session();
+        s.Type(s.CorrectText);
+        Assert.Equal(LearnFlow.Phase.FeedbackOf(LearnFlow.FeedbackKind.Correct), s.State.Phase);
+        Assert.Equal("", s.State.Typed);
+    }
+
+    // Typed out means to the end of the option or of an alternative, and only one option fits.
+    [Fact]
+    public void TypedOut()
+    {
+        static bool Out(string typed, string[] choices, Lang lang = Lang.Fr) => LearnFlow.TypeAheadOf(typed, choices, lang).IsTypedOut;
+        string[] choices = ["la voiture", "le chat", "la maison", "un arbre"];
+        Assert.True(Out("la voiture", choices));
+        Assert.True(Out("La Voiture", choices));
+        Assert.True(Out("voiture", choices));
+        Assert.False(Out("la voitur", choices));
+        // "le pain" could still become "le pain de mie": Return picks it.
+        string[] bread = ["le pain", "le pain de mie", "la rue", "le chemin"];
+        Assert.Equal(0, Pick("le pain", bread));
+        Assert.False(Out("le pain", bread));
+        Assert.True(Out("le pain de mie", bread));
+        // One alternative is enough.
+        string[] brain = ["le cerveau, les cerveaux", "le cœur", "la tête", "le bras"];
+        Assert.True(Out("le cerveau", brain));
+        Assert.True(Out("les cerveaux", brain));
+        Assert.False(Out("le cervea", brain));
+        Assert.True(Out("to affect sb", ["to affect sb/ sth", "to cover sb/ sth", "to form", "to revise"], Lang.En));
+        // A note in brackets may still follow ("Aussenminister(in)"): Return picks it.
+        string[] minister = ["Aussenminister(in)", "Aussenpolitik", "Bundesrat", "Kanton"];
+        Assert.Equal(0, Pick("Aussenminister", minister, Lang.De));
+        Assert.False(Out("Aussenminister", minister, Lang.De));
     }
 
     [Fact]

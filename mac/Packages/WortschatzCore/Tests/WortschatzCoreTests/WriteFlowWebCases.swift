@@ -3,8 +3,8 @@
 //
 // They were produced by the JavaScriptCore script below (src/screens/write-model.js, plus the DOM-free
 // diff logic of src/screens/write-card.js copied verbatim). To regenerate, save the script as
-// gen-writeflow.js anywhere and run
-//   TZ=Europe/Zurich /System/Library/Frameworks/JavaScriptCore.framework/Versions/Current/Helpers/jsc -m gen-writeflow.js
+// mac/Parity/tmp-writeflow.js (its imports are relative to that folder) and run
+//   TZ=Europe/Zurich /System/Library/Frameworks/JavaScriptCore.framework/Versions/Current/Helpers/jsc -m mac/Parity/tmp-writeflow.js
 // then replace the JSON between the #""" delimiters with its output.
 //
 //   // Reference cases for WriteFlowModel.swift / WriteFlowText.swift (src/screens/write-model.js and the
@@ -17,7 +17,7 @@
 //   import { DEFAULT_TOLERANCE, splitAlternatives, diffAnswer } from '../../Website/src/core/grading.js';
 //   import { LANGS } from '../../Website/src/lib/labels.js';
 //   import * as S from '../../Website/src/core/session.js';
-//   import { mulberry32, plain, randInt, pick, chance, readText } from '../../mac/Parity/lib.js';
+//   import { mulberry32, plain, randInt, pick, chance, readText } from './lib.js';
 //
 //   const rng = mulberry32(0x7717e);
 //   const KEYS = Object.keys(DEFAULT_TOLERANCE);

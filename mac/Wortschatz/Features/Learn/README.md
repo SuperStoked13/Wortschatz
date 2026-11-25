@@ -36,7 +36,9 @@ the app automatically.
   field (`LearnKeyRouter.continuing`); the answer is then typed there with the input method.
 - Synonyms outside the set: Return on a written answer that would be wrong waits (at most 3 s, "Prüfe Synonym …" in
   the answer box) while `SynonymAssistant` looks it up with Apple Intelligence; it then counts as right with
-  "Auch richtig!", the chip "Synonym – nicht im Set" and "Gesucht war: …".
+  "Auch richtig!", the chip "Synonym – nicht im Set" and "Gesucht war: …". Off for a set with "Synonyme ausserhalb
+  des Sets erlauben" in its Toleranz options (`SetExtendedSynonymsToggle`, a setting of this Mac like its
+  "Soundeffekte"; also in Schreiben); synonym cards of the set count either way.
 - Answer field focus (written, copy step): letters go into the field; Return arrives through `onSubmit`, with the
   repeat flag taken from the current `NSEvent`. ⌥↩ and esc are taken by the field itself (`studyFieldKeys` in
   `LearnKeyRouter.swift`): the field editor would insert a line break for ⌥↩ and swallow esc before the menu sees
@@ -50,5 +52,18 @@ the app automatically.
 sessions ask the cards mastered already once more (`LearnReview` in the package, spec addendum §6 of the Learn mode
 spec): a green "↺ Wiederholung" chip on the card (`LearnReviewChip`), "Wieder am Lernen" in the pill after a miss,
 the count on the finish screen. Without it the "Alles gemeistert!" screen offers "Alle wiederholen".
+
+Both switches («Wiederholungsfragen» and «Nachkontrolle nach Fehlern», `learn.recheck`) apply at once since
+2026-11-24, also to sessions already started: `AppModel+LearnSwitches.swift` watches UserDefaults and switches every
+stored session (`LearnFlow.SavedLearn.switching`), an open Lernen follows `AppModel.learnSwitches`
+(`LearnController.switchesChanged`). At launch every stored session follows the Nachkontrolle, and so does a resumed
+one; repetition questions stay on resume: a session may have been started for them («Alle wiederholen», the exam's
+«Falsche lernen»).
+
+Direction («Antworten auf»), question types and «Fragen pro Runde» apply at once too since 2026-11-25, wherever they
+are changed (Lernen's options, the set's options, Einstellungen): `LearnFlow` applies them on `.optionsChanged` and
+when a stored session resumes (`LearnEngine.setOptions`). The cards' stages stay; the questions still to come in the
+round, the one on screen included, are asked the new way; a smaller round ends the current one sooner, a larger one
+counts from the next round. No «Neu starten?» for options any more (Windows still asks, `KeptOptions`).
 
 Render the scenes with `--render-snapshots <dir> --snapshot-filter learn-` (see `App/DebugSnapshot.swift`).

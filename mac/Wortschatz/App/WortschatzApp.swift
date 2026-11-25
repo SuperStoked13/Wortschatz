@@ -12,6 +12,8 @@ struct WortschatzApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
 
     init() {
+        // The core's texts in the app's language (German or English) before any is built.
+        AppLanguage.install()
         #if DEBUG
         // `--render-snapshots <dir>` / `--list-snapshots`: render views to PNGs and quit
         // (see App/DebugSnapshot.swift). Does nothing for a normal launch, and runs before the
@@ -20,6 +22,8 @@ struct WortschatzApp: App {
         #endif
         // One window, one navigation state: no window tabs ("Tab-Leiste einblenden").
         NSWindow.allowsAutomaticWindowTabbing = false
+        // After "Jetzt neu starten" (Einstellungen › Sprache): the previous instance quits first.
+        AppLanguage.waitForPreviousInstance()
         let model = AppModel.launch()
         // The first page comes in once the window is up (`StudyEntrance`).
         model.hideFirstPage()
@@ -27,6 +31,10 @@ struct WortschatzApp: App {
         // Quitting saves first and asks when that fails.
         appDelegate.model = model
         SoundEffects.shared.synthesizeAhead()
+        #if os(macOS)
+        // Updates of the download app (Release builds only; Services/README.md › «Updates»).
+        AppUpdater.shared.start()
+        #endif
         #if DEBUG
         DebugFocusProbe.scheduleIfRequested(model: model)
         DebugTransitionProbe.scheduleIfRequested(model: model)

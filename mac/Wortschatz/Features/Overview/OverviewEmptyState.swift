@@ -2,36 +2,42 @@ import SwiftUI
 import WortschatzCore
 
 /// The overview without sets (`emptyView` in dashboard.js): "Erstes Lernset erstellen ↩" and
-/// "Aus der Web-Version übernehmen…", plus the three steps of the app.
+/// "Backup laden…" (the file chooser for a backup, like Windows), plus the three steps of the app.
 struct OverviewEmptyState: View {
     let date: Date
 
     @Environment(AppModel.self) private var model
 
     private static let steps: [(symbol: String, title: String, text: String)] = [
-        ("doc.on.clipboard", "Liste einfügen", "Wortschatz erkennt Begriffe und Übersetzungen automatisch – auch aus Fotos und PDFs."),
-        ("sparkles", "Lernen", "Neue Begriffe kommen zuerst als Multiple Choice, danach schreibst du sie selbst – bis alles sitzt."),
-        ("trophy", "Fortschritt sehen", "Zweimal in Folge richtig – und ein Begriff gilt als gemeistert."),
+        ("doc.on.clipboard", String(localized: "Liste einfügen"),
+         String(localized: "Wortschatz erkennt Begriffe und Übersetzungen automatisch – auch aus Fotos und PDFs.")),
+        ("sparkles", String(localized: "Lernen"),
+         String(localized: "Neue Begriffe kommen zuerst als Multiple Choice, danach schreibst du sie selbst – bis alles sitzt.")),
+        ("trophy", String(localized: "Fortschritt sehen"),
+         String(localized: "Zweimal in Folge richtig – und ein Begriff gilt als gemeistert.")),
     ]
 
     var body: some View {
         ScrollView {
             VStack(spacing: Spacing.xxl) {
                 OverviewHeader(
-                    date: date, lead: "Schön, dass du da bist. Leg dein erstes Lernset an und starte direkt."
+                    date: date, lead: String(localized: "Schön, dass du da bist. Leg dein erstes Lernset an und starte direkt.")
                 )
                 .frame(maxWidth: .infinity, alignment: .leading)
 
                 EmptyStateView(
                     systemImage: "rectangle.stack.badge.plus",
-                    title: "Noch keine Lernsets",
-                    message: "Erstelle dein erstes Lernset aus einer Vokabelliste – in wenigen Sekunden kannst du mit Lernen loslegen."
+                    title: String(localized: "Noch keine Lernsets"),
+                    message: String(
+                        localized:
+                            "Erstelle dein erstes Lernset aus einer Vokabelliste – in wenigen Sekunden kannst du mit Lernen loslegen."
+                    )
                 ) {
                     PrimaryActionButton("Erstes Lernset erstellen", systemImage: "plus") {
                         model.openEditor(.new)
                     }
-                    SecondaryButton("Aus der Web-Version übernehmen…", systemImage: "square.and.arrow.down") {
-                        model.showWebMigration()
+                    SecondaryButton("Backup laden…", systemImage: "square.and.arrow.down") {
+                        model.importBackup()
                     }
                 }
 

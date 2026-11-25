@@ -226,6 +226,35 @@ public sealed class LibraryStorePersistenceTests
     }
 
     [Fact]
+    public void BatchNotifiesOnceWithAllKeysAndUndoesEverythingWhenOneWriteThrows()
+    {
+        var store = new LibraryStore(new MemoryBackend(), autosave: true);
+        var set = store.CreateSet("A", cards: Sample);
+        var card = set.Cards[0].Id;
+        var events = new List<StoreChange>();
+        var off = store.Subscribe(events.Add);
+        store.Batch(() =>
+        {
+            store.RecordAnswer(set.Id, card, true);
+            store.SaveLearnJSON(set.Id, LearnState);
+        });
+        Assert.Single(events);
+        var keys = events[0].Keys ?? [];
+        Assert.Contains("progress:" + set.Id, keys);
+        Assert.Contains("learn:" + set.Id, keys);
+
+        var progress = store.GetProgress(set.Id);
+        Assert.Throws<LibraryStoreError>(() => store.Batch(() =>
+        {
+            store.RecordAnswer(set.Id, card, false);
+            store.RecordAnswer(set.Id, "no-such-card", true);
+        }));
+        off();
+        Assert.Single(events);
+        Assert.Equal(progress, store.GetProgress(set.Id));
+    }
+
+    [Fact]
     public void AFailedAutosaveUndoesTheWholeOperation()
     {
         // Like a QUOTA error in the web app: nothing of the operation stays, nobody is notified.

@@ -4,6 +4,11 @@
 // multiple choice), 1 = familiar (asked written), 2 = mastered (not asked any more). A correct
 // answer moves the card up one stage, a wrong one sends it back to stage 0.
 //
+// Multiple choice only once (since 24.11.2026): a card is asked as multiple choice only until it
+// was answered right once (`state.solved`, from the progress: any right answer ever). From then
+// on it is asked written, at stage 0 too: a wrong written answer resets the stage but stays
+// written; only a wrong multiple-choice answer brings multiple choice again.
+//
 // Spacing (Abstand, since 1.4): a card comes back only after at least MIN_GAP (10) other
 // questions – fewer only when fewer cards are left – and at the latest after about MAX_WAIT (15);
 // in between, the longer it waits the likelier it is picked, mixed with new cards. So a new card
@@ -19,8 +24,9 @@
 // more than 60 cards): a card answered wrong in this session is asked once more RECHECK_GAP to
 // RECHECK_WAIT (30–50) questions after it was mastered; wrong again, it is learned again. They
 // live in `state.recheck = { due }` (mastered cards waiting for their recheck, not yet queued).
-// At the end of a session, when nothing else is left to ask, a recheck that could not come at
-// least MIN_GAP questions after the card was mastered is dropped (dropLateRechecks).
+// A recheck never comes sooner than MIN_GAP questions after the card was mastered (since 23.11.2026;
+// before, a round's plan with nothing else left asked it early). At the end of a session, when
+// nothing else is left to ask, a recheck that could not come that late is dropped (dropLateRechecks).
 //
 // Pure and DOM-free (runs under jsc). Every function takes a JSON-serialisable LearnState and
 // returns a NEW state object; inputs are never mutated. Randomness comes from an injected rng.
@@ -36,6 +42,7 @@ import { cardStatus, normalizeProgress, MASTERY_STREAK } from './mastery.js';
 import { answerSide, findSynonymCards } from './synonyms.js';
 import { splitAlternatives } from './grading.js';
 import { normalizeBasic, foldScripts } from './text.js';
+import { listProfiles, cardClass, shapeOf, shapePoints, nearPoints } from './wordclass.js';
 
 export const DEFAULT_LEARN = { roundSize: 7, mc: true, written: true, retype: false };
 
@@ -186,6 +193,31 @@ function distractors(list, card, side, takenKeys = []) {
   return out;
 }
 
+// Wrong options for `card` asked on `side`, most alike first (since 23.11.2026, wordclass.js): cards of
+// the same word class before cards of an open class before others, then by similarity points (close
+// in the set, same article, as many words, similar length, same beginning and ending) plus a random
+// 0–2, so options almost as similar take turns; equal ones in random order.
+function rankedDistractors(list, card, side, rng, takenKeys = []) {
+  const candidates = distractors(list, card, side, takenKeys);
+  const at = new Map(list.map((c, i) => [c.id, i]));
+  const sides = listProfiles(list.map((c) => ({ term: answerSide(c, 'term'), definition: answerSide(c, 'definition') })));
+  const own = { term: answerSide(card, 'term'), definition: answerSide(card, 'definition') };
+  const cls = cardClass(own, sides);
+  const shape = shapeOf(answerSide(card, side).trim(), sides[side]);
+  const here = at.has(card.id) ? at.get(card.id) : -1;
+  const ranked = shuffled(candidates, rng).map((c, order) => {
+    const i = at.get(c.cardId);
+    const other = list[i];
+    const otherCls = cardClass({ term: answerSide(other, 'term'), definition: answerSide(other, 'definition') }, sides);
+    const tier = !cls || !otherCls ? 1 : otherCls === cls ? 2 : 0;
+    let points = shapePoints(shape, shapeOf(c.text, sides[side]));
+    if (here >= 0) points += nearPoints(Math.abs(i - here));
+    return { choice: c, order, key: tier * 100 + points + randomIndex(rng, 3) };
+  });
+  ranked.sort((a, b) => b.key - a.key || a.order - b.order);
+  return ranked.map((x) => x.choice);
+}
+
 export function buildChoices(cards, card, ask, rng = Math.random, n = MAX_CHOICES) {
   if (!isObj(card) || card.id == null || card.id === '') return [];
   const side = ask === 'definition' ? 'definition' : 'term';
@@ -196,9 +228,9 @@ export function buildChoices(cards, card, ask, rng = Math.random, n = MAX_CHOICE
   const correct = { cardId, text: correctText };
   if (size === 1) return [correct];
 
-  const candidates = distractors(cardList(cards), { ...card, id: cardId }, side);
-  const choices = shuffled(candidates, rng).slice(0, size - 1);
-  // The correct option's position is uniform over all slots.
+  const ranked = rankedDistractors(cardList(cards), { ...card, id: cardId }, side, rng);
+  // The most alike, in random order; the correct option's position is uniform over all slots.
+  const choices = shuffled(ranked.slice(0, size - 1), rng);
   choices.splice(randomIndex(rng, choices.length + 1), 0, correct);
   return choices;
 }
@@ -211,15 +243,21 @@ function pickAsk(answerWith, rng) {
   return randomIndex(rng, 2) === 0 ? 'term' : 'definition';
 }
 
-// stage 0 → multiple choice, stage 1 → written; a disabled type falls back to the other one, and
-// multiple choice needs at least two options. `retryChoices` (internal) holds the options for when
-// the question has to be asked at stage 0 after all (a wrong answer earlier in the round).
+// Whether a card at `stage` is asked as multiple choice: at stage 0 until it was answered right once.
+function mcStage(s, id, stage) {
+  return stage === 0 && !s.solved[id];
+}
+
+// stage 0 → multiple choice (until solved), else written; a disabled type falls back to the other
+// one, and multiple choice needs at least two options. `retryChoices` (internal) holds the options
+// for when the question has to be asked as multiple choice after all (a wrong multiple-choice
+// answer earlier in the round).
 function makeQuestion(s, card, stage, pool, qid, rng) {
   const ask = pickAsk(s.answerWith, rng);
   const choices = s.learn.mc ? buildChoices(pool, card, ask, rng) : [];
   const canMc = choices.length >= 2;
   let type;
-  if (stage === 0) type = canMc ? 'mc' : 'written';
+  if (mcStage(s, card.id, stage)) type = canMc ? 'mc' : 'written';
   else type = s.learn.written || !canMc ? 'written' : 'mc';
   const q = { qid, cardId: card.id, type, ask };
   if (type === 'mc') q.choices = choices;
@@ -267,7 +305,8 @@ function best(list, score, index) {
 // Two limits keep the mix: after MAX_REPEATS questions in a row of cards asked before, a new card
 // comes (even before an overdue one); while MAX_LEARNING cards are being learned (asked, not
 // mastered yet) new cards come only by that rule, after twice as many. Only when no card may come
-// yet, the card that has waited longest comes early.
+// yet, the card that has waited longest comes early (a recheck only after MIN_GAP; null when only
+// rechecks are waiting that have not waited that long: the round ends there).
 function nextPick(s, p, t, rng, index) {
   const learning = s.order.filter((id) => p.stage[id] < MASTERED);
   // Cards that can fill a learning card's gap: the learning cards and the repetition questions (rechecks
@@ -301,10 +340,14 @@ function nextPick(s, p, t, rng, index) {
   };
   if (!ready.length) {
     if (hasNew) return takeNew();
-    // Nothing may come yet: the learning card that has waited longest comes early (a recheck only
-    // when nothing is left to learn – it would check nothing so soon).
+    // Nothing may come yet: the learning card that has waited longest comes early. A recheck only
+    // when nothing is left to learn and never before MIN_GAP other questions (sooner it would check
+    // nothing): with only such rechecks left the round ends here; they come once they have waited,
+    // or are dropped when nothing else is left (dropLateRechecks).
     const learn = waiting.filter((c) => c.kind === LEARN);
-    return best(learn.length ? learn : waiting, (c) => c.wait, index);
+    if (learn.length) return best(learn, (c) => c.wait, index);
+    const rechecks = waiting.filter((c) => c.wait >= MIN_GAP);
+    return rechecks.length ? best(rechecks, (c) => c.wait, index) : null;
   }
   if (!hasNew) return best(ready, (c) => c.wait - c.max, index);
   const full = inFlight >= MAX_LEARNING;
@@ -430,6 +473,9 @@ function copyState(state) {
     if (isObj(m)) for (const k of Object.keys(m)) if (known.has(k) && m[k] === true) out[k] = true;
     return out;
   };
+  // A card past stage 0 was answered right (sessions stored before 24.11.2026 have no `solved`).
+  const solved = trueMap(src.solved);
+  for (const id of order) if (stage[id] > 0) solved[id] = true;
   const misses = {};
   if (isObj(src.misses)) for (const k of Object.keys(src.misses)) if (known.has(k)) misses[k] = Math.max(0, finite(src.misses[k], 0));
 
@@ -498,6 +544,7 @@ function copyState(state) {
     stage,
     initiallyMastered: ids(src.initiallyMastered),
     seen: trueMap(src.seen),
+    solved,
     round,
     queue,
     clock,
@@ -599,8 +646,8 @@ function archiveRound(s) {
 }
 
 // The options of question `q` without card `id`. With `refill` ({ pool, byId, rng }: the set's
-// askable cards without `id`) its slot gets another valid wrong option when there is one, so a
-// question keeps its number of options and the other options keep their places.
+// askable cards without `id`) its slot gets the most alike other valid wrong option when there is
+// one, so a question keeps its number of options and the other options keep their places.
 function withoutOption(list, id, q, refill) {
   if (!list) return [];
   const at = list.findIndex((c) => c.cardId === id);
@@ -614,9 +661,9 @@ function withoutOption(list, id, q, refill) {
     const owner = refill.byId.get(c.cardId);
     return textKey(owner ? answerSide(owner, q.ask) : c.text);
   });
-  const candidates = distractors(refill.pool, card, q.ask, taken).filter((c) => !present.has(c.cardId));
+  const candidates = rankedDistractors(refill.pool, card, q.ask, refill.rng, taken).filter((c) => !present.has(c.cardId));
   if (!candidates.length) return rest;
-  rest.splice(at, 0, candidates[randomIndex(refill.rng, candidates.length)]);
+  rest.splice(at, 0, candidates[0]);
   return rest;
 }
 
@@ -624,6 +671,7 @@ function dropCard(s, id, refill = null) {
   s.order = s.order.filter((x) => x !== id);
   delete s.stage[id];
   delete s.seen[id];
+  delete s.solved[id];
   delete s.lastAt[id];
   delete s.misses[id];
   s.initiallyMastered = s.initiallyMastered.filter((x) => x !== id);
@@ -662,6 +710,13 @@ export function stageFromProgress(progress) {
   return Math.min(normalizeProgress(progress).streak, MASTERED);
 }
 
+// Whether a card was ever answered right (then it is no longer asked as multiple choice). A streak
+// counts too, so every card past stage 0 is solved.
+export function solvedFromProgress(progress) {
+  const p = normalizeProgress(progress);
+  return p.correct > 0 || p.streak > 0;
+}
+
 // `review: true` adds repetition questions for the cards that are mastered already, `recheck: true`
 // rechecks (in sessions with more than RECHECK_MIN_CARDS cards; see the top of this file).
 export function createLearn(cards, options, { subset = 'all', progress = {}, rng = Math.random, now = Date.now(), review = false, recheck = false } = {}) {
@@ -677,10 +732,12 @@ export function createLearn(cards, options, { subset = 'all', progress = {}, rng
 
   const stage = {};
   const seen = {};
+  const solved = {};
   for (const id of order) {
     const p = progressOf(prog, id);
     stage[id] = stageFromProgress(p);
     if (cardStatus(p) !== 'new') seen[id] = true;
+    if (solvedFromProgress(p)) solved[id] = true;
   }
 
   const at = finite(now, 0);
@@ -693,6 +750,7 @@ export function createLearn(cards, options, { subset = 'all', progress = {}, rng
     stage,
     initiallyMastered: order.filter((id) => stage[id] >= MASTERED),
     seen,
+    solved,
     round: 1,
     queue: [],
     clock: 0,
@@ -733,6 +791,7 @@ export function answer(state, correct, now = Date.now()) {
   const stageAfter = ok ? Math.min(stageBefore + 1, MASTERED) : 0;
   s.stage[id] = stageAfter;
   s.seen[id] = true;
+  if (ok) s.solved[id] = true;
   s.answered += 1;
   if (ok) s.correct += 1;
   else s.misses[id] = (s.misses[id] || 0) + 1;
@@ -767,6 +826,7 @@ export function override(state, now = Date.now()) {
   const id = l.cardId;
   const stageAfter = Math.min(l.stageBefore + 1, MASTERED);
   s.stage[id] = stageAfter;
+  s.solved[id] = true;
   s.correct = Math.min(s.answered, s.correct + 1);
   s.misses[id] = Math.max(0, (s.misses[id] || 0) - 1);
   for (let i = s.roundLog.length - 1; i >= 0; i--) {
@@ -873,7 +933,6 @@ export function finalStats(state) {
     .map((cardId, i) => ({ cardId, misses: s.misses[cardId] || 0, i }))
     .filter((e) => e.misses > 0)
     .sort((x, y) => y.misses - x.misses || x.i - y.i)
-    .slice(0, 10)
     .map(({ cardId, misses }) => ({ cardId, misses }));
   return {
     total,
@@ -940,23 +999,27 @@ export function tick(state, now = Date.now()) {
 // transition keeps that true by itself; answers given elsewhere (Write mode, another tab) are
 // brought in with syncProgress().
 
-// Whether every card's stage and seen flag match `progress` (a finished session always does:
-// it keeps its result).
+// Whether every card's stage, seen and solved flags match `progress` (a finished session always
+// does: it keeps its result).
 export function matchesProgress(state, progress) {
   const s = copyState(state);
   if (s.finishedAt != null) return true;
   return s.order.every((id) => {
     const p = progressOf(progress, id);
-    return s.stage[id] === stageFromProgress(p) && !!s.seen[id] === (cardStatus(p) !== 'new');
+    return (
+      s.stage[id] === stageFromProgress(p) &&
+      !!s.seen[id] === (cardStatus(p) !== 'new') &&
+      !!s.solved[id] === solvedFromProgress(p)
+    );
   });
 }
 
 // The question `q` asked at its card's current stage (like makeQuestion: multiple choice at
-// stage 0, written at stage 1), using the options it already holds. Keeps qid and ask.
+// stage 0 until solved, else written), using the options it already holds. Keeps qid and ask.
 function retype(s, q) {
   const options = q.type === 'mc' ? q.choices : q.retryChoices;
   const canMc = s.learn.mc && Array.isArray(options) && options.length >= 2;
-  const type = s.stage[q.cardId] === 0 ? (canMc ? 'mc' : 'written') : s.learn.written || !canMc ? 'written' : 'mc';
+  const type = mcStage(s, q.cardId, s.stage[q.cardId]) ? (canMc ? 'mc' : 'written') : s.learn.written || !canMc ? 'written' : 'mc';
   if (type === q.type) return q;
   const out = { qid: q.qid, cardId: q.cardId, type, ask: q.ask };
   if (type === 'mc') out.choices = options;
@@ -965,10 +1028,11 @@ function retype(s, q) {
   return out;
 }
 
-// Brings the session in line with `progress`: every stage becomes min(streak, 2) and `seen`
-// follows whether the card was ever answered. A card that is mastered now leaves this round's
-// queue; a card whose stage changed otherwise keeps its queued questions, switched to the type of
-// its new stage; a card no longer mastered is studied again. A queued repetition question or
+// Brings the session in line with `progress`: every stage becomes min(streak, 2), `seen`
+// follows whether the card was ever answered and `solved` whether it was ever answered right. A
+// card that is mastered now leaves this round's queue; a card whose stage (or, not mastered, whose
+// solved flag) changed otherwise keeps its queued questions, switched to the type of its new
+// stage; a card no longer mastered is studied again. A queued repetition question or
 // recheck of a card that is no longer mastered (missed elsewhere) becomes an ordinary question:
 // the card is learned instead, so it neither shows as a repetition nor counts in reviewStats,
 // and it leaves the cards waiting for a recheck. A finished session is left as it is.
@@ -979,12 +1043,13 @@ export function syncProgress(state, progress, now = Date.now()) {
   for (const id of s.order) {
     const p = progressOf(progress, id);
     const stage = stageFromProgress(p);
-    if (stage !== s.stage[id]) {
-      s.stage[id] = stage;
-      changed.push(id);
-    }
+    const solved = solvedFromProgress(p);
+    if (stage !== s.stage[id] || (solved !== !!s.solved[id] && stage < MASTERED)) changed.push(id);
+    s.stage[id] = stage;
     if (cardStatus(p) === 'new') delete s.seen[id];
     else s.seen[id] = true;
+    if (solved) s.solved[id] = true;
+    else delete s.solved[id];
   }
   for (const id of changed) {
     if (s.stage[id] >= MASTERED) {

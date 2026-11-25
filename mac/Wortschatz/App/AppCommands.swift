@@ -91,6 +91,13 @@ struct AppCommands: Commands {
     @Environment(\.openWindow) private var openWindow
 
     var body: some Commands {
+        #if os(macOS)
+        CommandGroup(after: .appInfo) {
+            Button("Nach Updates suchen…") { AppUpdater.shared.checkForUpdates() }
+                .disabled(!AppUpdater.shared.canCheck)
+        }
+        #endif
+
         CommandGroup(replacing: .newItem) {
             Button("Neues Lernset") { inMainWindow { $0.openEditor(.new) } }
                 .keyboardShortcut("n")
@@ -167,15 +174,20 @@ struct AppCommands: Commands {
         }
 
         CommandMenu("Lernen") {
-            studyButton(.override, "Ich hatte recht", KeyboardShortcut(.return, modifiers: .command))
-            studyButton(.dontKnow, "Weiss ich nicht", KeyboardShortcut(.return, modifiers: .option))
+            studyButton(.override, String(localized: "Ich hatte recht"), KeyboardShortcut(.return, modifiers: .command))
+            studyButton(.dontKnow, String(localized: "Weiss ich nicht"), KeyboardShortcut(.return, modifiers: .option))
             Divider()
-            studyButton(.options, "Optionen…", KeyboardShortcut("k"))
-            studyButton(.speak, "Vorlesen", KeyboardShortcut("r"))
-            studyButton(.toggleStar, study?.isStarred == true ? "Markierung entfernen" : "Markieren", KeyboardShortcut("d"))
+            studyButton(.options, String(localized: "Optionen…"), KeyboardShortcut("k"))
+            studyButton(.speak, String(localized: "Vorlesen"), KeyboardShortcut("r"))
+            studyButton(
+                .toggleStar,
+                study?.isStarred == true ? String(localized: "Markierung entfernen") : String(localized: "Markieren"),
+                KeyboardShortcut("d"))
             Divider()
-            studyButton(.restart, "Neu starten", KeyboardShortcut("r", modifiers: [.command, .shift]))
-            studyButton(.exit, "Beenden", KeyboardShortcut(.escape, modifiers: []))
+            studyButton(.restart, String(localized: "Neu starten"), KeyboardShortcut("r", modifiers: [.command, .shift]))
+            studyButton(
+                .exit, String(localized: "Beenden", comment: "Menu Lernen: leave the running study session"),
+                KeyboardShortcut(.escape, modifiers: []))
         }
 
         SidebarCommands()

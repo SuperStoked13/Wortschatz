@@ -1,4 +1,5 @@
 using System.Text;
+using static Wortschatz.Core.CoreText;
 
 namespace Wortschatz.Core;
 
@@ -76,7 +77,6 @@ public sealed record ParseResult(IReadOnlyList<ParsedCard> Cards, ParseFormat Fo
 
 public static partial class VocabParser
 {
-    static readonly string[] LANG_CODES = ["fr", "de", "en", "es", "it", "ar", "zh", "other"];
     static readonly string[] SUPPORTED = ["fr", "de", "en", "es", "it", "ar", "zh"];
     static readonly Dictionary<string, double> BASE_PRIOR = new() { ["fr"] = 0.2, ["de"] = 0.25, ["en"] = 0.1, ["es"] = 0.05, ["it"] = 0, ["ar"] = 0, ["zh"] = 0 };
     static bool IsScriptLang(string l) => l is "ar" or "zh";
@@ -181,6 +181,17 @@ public static partial class VocabParser
 
     // MARK: - Public API
 
+    /// <summary>Warning of the JS catch-all fallback (the parser could not process the text).</summary>
+    public static string FailureWarning => L("Der Text konnte nicht verarbeitet werden.");
+
+    /// <summary>
+    /// The warning about <paramref name="count"/> skipped lines without vocabulary (skipped lines other than unpaired
+    /// ones), exactly as ParseVocab puts it into the warnings – for callers that leave it out because they list the
+    /// skipped lines themselves (compare with this, not with a word of it; Mac: <c>skippedLinesWarning</c>).
+    /// </summary>
+    public static string SkippedLinesWarning(int count) =>
+        count == 1 ? L("1 Zeile ohne Vokabeln wurde übersprungen.") : L($"{count} Zeilen ohne Vokabeln wurden übersprungen.");
+
     public static ParseResult ParseVocab(string? text, ParseOptions? options = null)
     {
         Opts? o = null;
@@ -193,7 +204,7 @@ public static partial class VocabParser
         {
             var fallback = o ?? NormalizeOptions(new ParseOptions());
             return new ParseResult([], ParseFormat.Empty, null, ToLang(fallback.TermHintRaw ?? "other"), ToLang(fallback.DefHintRaw ?? "de"), false, [],
-                ["Der Text konnte nicht verarbeitet werden."]);
+                [FailureWarning]);
         }
     }
 
@@ -808,8 +819,6 @@ public static partial class VocabParser
         public bool Uncertain;
         public int? Group;
         public int Order;
-        // Set by Finish:
-        public bool Reversed;
     }
 
     static Pair MakePair(string? term, string? def, IEnumerable<int> lines, bool merged = false, bool langSplit = false, bool uncertain = false, int? group = null) =>

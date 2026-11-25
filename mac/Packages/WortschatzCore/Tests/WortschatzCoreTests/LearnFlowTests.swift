@@ -652,13 +652,118 @@ struct LearnFlowTests {
         #expect(d.state.phase == .copy)
         #expect(d.state.rejections == 2)
         #expect(d.announced("Noch nicht ganz – tippe die richtige Antwort genau ab."))
-        d.type("le chemin")
+        // Accepted without its article, but not typed out as shown: Return continues.
+        d.type("chemin")
+        #expect(d.state.phase == .copy)
         d.press(.returnKey)
         // No retry at the end of the round any more: the only card comes back in the next round
-        // (multiple choice).
+        // (written: it was answered right before, so no multiple choice).
         #expect(d.state.phase == .checkpoint)
         d.press(.returnKey)
-        #expect(d.state.phase == .question(.mc))
+        #expect(d.state.phase == .question(.written))
+    }
+
+    @Test func theCopyStepContinuesOnceTheAnswerIsTypedOut() {
+        let cards = [
+            Card(id: "a", term: "le chemin", definition: "der Weg"),
+            Card(id: "b", term: "la rue", definition: "die Strasse"),
+        ]
+        let d = Driver(
+            Self.makeSet(cards), progress: Self.familiar(cards), options: Self.options(retype: true), subset: .cardIds(["a"]))
+        d.type("la route")
+        d.press(.returnKey)
+        #expect(d.state.phase == .copy)
+        d.type("le chemi")
+        #expect(d.state.phase == .copy)
+        #expect(d.state.autoAdvanceToken == nil)
+        let transitions = d.state.transitions
+        // Upper/lower case and spacing do not matter. The finished word stays a short beat.
+        d.type("Le  Chemin")
+        #expect(d.state.phase == .copy)
+        #expect(d.timers.last?.ms == CopyStep.advanceMs)
+        d.fireTimer()
+        #expect(d.state.phase == .checkpoint)
+        #expect(d.state.transitions == transitions + 1)
+        // Return out of habit right after it falls into the input lock.
+        d.press(.returnKey, after: 100)
+        #expect(d.state.phase == .checkpoint)
+    }
+
+    @Test func returnDuringTheBeatContinuesAtOnce() {
+        let cards = [
+            Card(id: "a", term: "le chemin", definition: "der Weg"),
+            Card(id: "b", term: "la rue", definition: "die Strasse"),
+        ]
+        let d = Driver(
+            Self.makeSet(cards), progress: Self.familiar(cards), options: Self.options(retype: true), subset: .cardIds(["a"]))
+        d.type("la route")
+        d.press(.returnKey)
+        d.send(.draftChanged("le chemin"), after: 1500)
+        let token = d.state.autoAdvanceToken
+        #expect(token != nil)
+        d.press(.returnKey, after: 150)
+        #expect(d.state.phase == .checkpoint)
+        // The beat's timer is stale now.
+        d.send(.autoAdvanceFired(token: token ?? -1), after: 250)
+        #expect(d.state.phase == .checkpoint)
+    }
+
+    @Test func aCopyAcceptedLikeAnAnswerContinuesToo() {
+        let cards = [
+            Card(id: "a", term: "le/la collègue", definition: "der Arbeitskollege, die Arbeitskollegin"),
+            Card(id: "b", term: "la rue", definition: "die Strasse"),
+        ]
+        let d = Driver(
+            Self.makeSet(cards), progress: Self.familiar(cards), options: Self.options(retype: true), subset: .cardIds(["a"]))
+        d.type("la route")
+        d.press(.returnKey)
+        #expect(d.state.phase == .copy)
+        d.type("le collègue")
+        #expect(d.state.autoAdvanceToken != nil)
+        // Typing on so that it is no longer right stops the beat; right again starts it anew.
+        d.type("le collègues x")
+        #expect(d.state.autoAdvanceToken == nil)
+        d.type("la collègue")
+        d.fireTimer()
+        #expect(d.state.phase == .checkpoint)
+    }
+
+    @Test func aCopyThatIsOnlyTheStartOfTheAnswerWaitsForReturn() {
+        let cards = [
+            Card(id: "a", term: "le cerveau, les cerveaux", definition: "das Gehirn"),
+            Card(id: "b", term: "la rue", definition: "die Strasse"),
+        ]
+        let d = Driver(
+            Self.makeSet(cards), progress: Self.familiar(cards), options: Self.options(retype: true), subset: .cardIds(["a"]))
+        d.type("la route")
+        d.press(.returnKey)
+        #expect(d.state.phase == .copy)
+        // One of the two forms: right, but whoever copies both must not be cut off after it.
+        d.type("le cerveau")
+        #expect(d.state.phase == .copy)
+        #expect(d.state.autoAdvanceToken == nil)
+        d.press(.returnKey)
+        #expect(d.state.phase == .checkpoint)
+    }
+
+    @Test func aTypedOutCopyWaitsWhileTheOptionsAreOpen() {
+        let cards = [
+            Card(id: "a", term: "le chemin", definition: "der Weg"),
+            Card(id: "b", term: "la rue", definition: "die Strasse"),
+        ]
+        let d = Driver(
+            Self.makeSet(cards), progress: Self.familiar(cards), options: Self.options(retype: true), subset: .cardIds(["a"]))
+        d.type("la route")
+        d.press(.returnKey)
+        d.type("le chemin")
+        let token = d.state.autoAdvanceToken
+        d.send(.overlayPresented(.options), after: 100)
+        d.send(.autoAdvanceFired(token: token ?? -1), after: 300)
+        #expect(d.state.phase == .copy)
+        d.send(.overlayDismissed)
+        #expect(d.state.phase == .copy)
+        d.fireTimer()
+        #expect(d.state.phase == .checkpoint)
     }
 
     @Test func ichHatteRechtWorksInTheCopyStep() {
@@ -824,7 +929,8 @@ struct LearnFlowTests {
             Case(name: "copy, typed", make: {
                     let d = written(retype: true)
                     d.answerByKeys(correct: false)
-                    d.type("le chemin")
+                    // Accepted without its article: typed out as shown it would continue by itself.
+                    d.type("chemin")
                     return d
                  }, label: "Weiter", transitions: 1, after: { $0.state.phase == .checkpoint }),
             Case(name: "checkpoint", make: {
@@ -889,8 +995,17 @@ struct LearnFlowTests {
                     d.press(.returnKey)
                     #expect(d.state.transitions == before)
                 }
-                d.type(d.question!.expected)
-                d.press(.returnKey)
+                // Typed out, the copy continues by itself after a short beat, or at once with
+                // Return; whichever comes second does nothing.
+                d.send(.draftChanged(d.question!.expected), after: 600)
+                let token = try #require(d.state.autoAdvanceToken)
+                if decide() < 0.5 {
+                    d.press(.returnKey, after: 100)
+                    d.send(.autoAdvanceFired(token: token), after: Double(CopyStep.advanceMs))
+                } else {
+                    d.send(.autoAdvanceFired(token: token), after: Double(CopyStep.advanceMs))
+                    d.press(.returnKey, after: 100)
+                }
                 #expect(d.state.transitions - before == 1)
             case .feedback, .checkpoint:
                 // A double press: the second one comes within the input lock.
@@ -1068,59 +1183,66 @@ struct LearnFlowTests {
 
     // MARK: - Options, restart
 
-    @Test func optionsThatShapeTheSessionAskToRestartWhenThePopoverCloses() throws {
+    @Test func optionsThatShapeTheSessionApplyAtOnce() throws {
+        // A smaller round ends this round sooner, without asking.
         let d = Driver(Self.makeSet(Self.makeCards(10)))
         d.send(.overlayPresented(.options))
         d.press(.returnKey)
         #expect(d.last.isEmpty)
+        let shown = try #require(d.question)
         var changed = StudyOptions.default
         changed.learn.roundSize = 3
         d.send(.optionsChanged(changed))
-        #expect(d.state.prompt == nil)
-        d.send(.overlayDismissed)
-        #expect(d.state.prompt == .restartForOptions([.roundSize]))
-        #expect(Flow.promptContent(d.state)?.cancelLabel == "Später")
-        let transitions = d.state.transitions
-        d.send(.promptAnswered(confirmed: true))
         #expect(d.state.session?.learn.roundSize == 3)
         #expect(d.state.session?.queue.count == 3)
-        #expect(d.state.transitions == transitions + 1)
+        #expect(d.question?.qid == shown.qid)
+        #expect(d.saved?.state.learn.roundSize == 3)
+        d.send(.overlayDismissed)
+        #expect(d.state.prompt == nil)
 
-        // Direction and question types need a restart too.
+        // Direction and question types: the question on screen is asked anew.
         let g = Driver(Self.makeSet(Self.makeCards(10)))
         g.send(.overlayPresented(.options))
+        var defs = StudyOptions.default
+        defs.answerWith = .definition
+        defs.learn.mc = false
+        g.send(.optionsChanged(defs))
+        #expect(g.state.session?.answerWith == .definition)
+        #expect(g.state.session?.learn.mc == false)
+        #expect(g.state.phase == .question(.written))
+        #expect(g.question?.ask == .definition)
+        #expect(g.state.session?.queue.allSatisfy { $0.ask == .definition && $0.type == .written } == true)
+        g.send(.overlayDismissed)
+        #expect(g.state.prompt == nil)
+
+        // Changed elsewhere (the set's options, Einstellungen): the same, the stages stay.
+        let e = Driver(Self.makeSet(Self.makeCards(10)))
+        e.press(.digit(try #require(e.correctIndex) + 1))
+        let stages = e.state.session?.stage
         var both = StudyOptions.default
         both.answerWith = .both
-        both.learn.written = false
-        g.send(.optionsChanged(both))
-        g.send(.overlayDismissed)
-        #expect(g.state.prompt == .restartForOptions([.direction, .types]))
-        #expect(Flow.promptContent(g.state)?.message.hasPrefix("Die neuen Einstellungen gelten") == true)
-        g.send(.promptAnswered(confirmed: true))
-        #expect(g.state.session?.answerWith == .both)
-        #expect(g.state.session?.learn.written == false)
-
-        // "Später": the session goes on; an unrelated change later does not ask again.
-        let e = Driver(Self.makeSet(Self.makeCards(10)))
-        let session = e.state.session
-        e.send(.overlayPresented(.options))
-        e.send(.optionsChanged(changed))
-        e.send(.overlayDismissed)
-        e.send(.promptAnswered(confirmed: false))
-        #expect(e.state.session == session)
-        e.send(.overlayPresented(.options))
-        var tolerant = changed
-        tolerant.tolerance.typos = true
-        e.send(.optionsChanged(tolerant))
-        e.send(.overlayDismissed)
+        e.send(.optionsChanged(both))
+        #expect(e.state.session?.answerWith == .both)
+        #expect(e.state.session?.stage == stages)
         #expect(e.state.prompt == nil)
-        // Changed and changed back: nothing to ask.
-        let f = Driver(Self.makeSet(Self.makeCards(10)))
-        f.send(.overlayPresented(.options))
-        f.send(.optionsChanged(changed))
-        f.send(.optionsChanged(.default))
-        f.send(.overlayDismissed)
-        #expect(f.state.prompt == nil)
+    }
+
+    @Test func aResumedSessionFollowsOptionsChangedWhileItWasLeft() throws {
+        let set = Self.makeSet(Self.makeCards(10))
+        let a = Driver(set)
+        a.press(.digit(try #require(a.correctIndex) + 1))
+        a.fireTimer()
+        let answered = a.state.session?.answered
+        var defs = StudyOptions.default
+        defs.answerWith = .definition
+        defs.learn.roundSize = 4
+        let b = Driver(set, progress: a.progress, options: defs, saved: a.saved)
+        #expect(b.state.session?.answered == answered)
+        #expect(b.state.session?.answerWith == .definition)
+        #expect(b.state.session?.learn.roundSize == 4)
+        #expect(b.question?.ask == .definition)
+        #expect(b.state.prompt == nil)
+        #expect(b.saved?.state.answerWith == .definition)
     }
 
     @Test func theToleranceAppliesAtOnce() {

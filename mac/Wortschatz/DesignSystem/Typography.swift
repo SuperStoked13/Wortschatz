@@ -26,11 +26,26 @@ nonisolated enum Typography {
     /// The text on a flashcard: a little larger than the study prompt, stepping down for
     /// sentences so they still fit on the card.
     static func flashcard(for text: String) -> Font {
+        let m = flashcardMetrics(for: text)
+        return .system(size: m.size, weight: m.weight, design: .rounded)
+    }
+
+    /// Size and weight of `flashcard(for:)` (rounded), for `LongWordText`.
+    static func flashcardMetrics(for text: String) -> (size: CGFloat, weight: Font.Weight) {
         switch text.count {
-        case ..<24: .system(size: 46, weight: .semibold, design: .rounded)
-        case ..<60: .system(size: 36, weight: .semibold, design: .rounded)
-        case ..<140: .system(size: 28, weight: .semibold, design: .rounded)
-        default: .system(size: 22, weight: .medium, design: .rounded)
+        case ..<24: (46, .semibold)
+        case ..<60: (36, .semibold)
+        case ..<140: (28, .semibold)
+        default: (22, .medium)
+        }
+    }
+
+    /// Size of `prompt(for:)` (semibold rounded), for `LongWordText`.
+    static func promptSize(for text: String) -> CGFloat {
+        switch text.count {
+        case ..<28: 40
+        case ..<70: 32
+        default: 25
         }
     }
 
@@ -48,6 +63,17 @@ nonisolated enum Typography {
 
     /// Large written-answer field.
     static let answerField = Font.system(size: 24, weight: .medium, design: .rounded)
+
+    /// `answerField` on a study screen that grew (`studyScale`).
+    static func answerField(_ scale: CGFloat) -> Font {
+        scale == 1 ? answerField : .system(size: 24 * scale, weight: .medium, design: .rounded)
+    }
+
+    /// `answer` (the text of a multiple-choice tile) on a study screen that grew (`studyScale`);
+    /// title3 is 15 pt on the Mac.
+    static func answer(_ scale: CGFloat) -> Font {
+        scale == 1 ? answer : .system(size: 15 * scale, weight: .medium, design: .rounded)
+    }
 
     /// Big statistic numbers (stat tiles, results).
     static let statValue = Font.system(size: 34, weight: .semibold, design: .rounded).monospacedDigit()

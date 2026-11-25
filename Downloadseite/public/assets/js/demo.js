@@ -21,6 +21,10 @@
   const toggleLabel = root.querySelector('[data-toggle-label]');
   const keycast = root.querySelector('[data-keycast]');
   const MODES = tabs.map((tab) => tab.dataset.mode);
+  // The window shows the app as it is (in German); only the page around it speaks the page's language.
+  const TOGGLE_LABELS = document.documentElement.lang.startsWith('en')
+    ? { pause: 'Pause animation', play: 'Play animation' }
+    : { pause: 'Animation anhalten', play: 'Animation fortsetzen' };
 
   const EASE = {
     arrive: 'cubic-bezier(0.22, 1, 0.36, 1)',
@@ -895,7 +899,7 @@
   toggle?.addEventListener('click', () => {
     paused = !paused;
     toggle.setAttribute('aria-pressed', String(paused));
-    if (toggleLabel) toggleLabel.textContent = paused ? 'Animation fortsetzen' : 'Animation anhalten';
+    if (toggleLabel) toggleLabel.textContent = TOGGLE_LABELS[paused ? 'play' : 'pause'];
     updateClock();
   });
 

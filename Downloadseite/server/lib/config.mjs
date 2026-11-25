@@ -47,6 +47,15 @@ function readDir(env, name, fallback) {
   return path.resolve(value || fallback);
 }
 
+function readSocket(env, name) {
+  const value = raw(env, name);
+  if (value === '') return '';
+  if (!path.isAbsolute(value) || value.length > 100 || value.includes('\0')) {
+    throw new Error(`${name} muss ein absoluter Pfad mit höchstens 100 Zeichen sein (gesetzt: "${value}").`);
+  }
+  return path.normalize(value);
+}
+
 function readEmail(env, name) {
   const value = raw(env, name);
   if (value === '') return '';
@@ -93,18 +102,29 @@ export function loadConfig(env = process.env) {
     throw new Error('SITE_PASSWORD muss mindestens 8 Zeichen lang sein (oder leer bleiben).');
   }
 
+  // Downloads on GitHub: a manifest may name a release file there instead of a file here, but
+  // only in this repository's releases.
+  const downloadRepo = raw(env, 'DOWNLOAD_REPO') || 'SuperStoked13/Wortschatz';
+  if (!/^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})\/[A-Za-z0-9._-]{1,100}$/.test(downloadRepo) || /\/\.{1,2}$/.test(downloadRepo)) {
+    throw new Error(`DOWNLOAD_REPO muss die Form besitzer/repo haben (gesetzt: "${downloadRepo}").`);
+  }
+
   const duckdnsDomain = raw(env, 'DUCKDNS_DOMAIN').toLowerCase().replace(/\.duckdns\.org$/, '');
   const duckdnsToken = raw(env, 'DUCKDNS_TOKEN');
 
   return Object.freeze({
     host: raw(env, 'HOST') || '127.0.0.1',
     port,
+    // Additionally a Unix socket for the proxy: then the container needs no network at all
+    // (Docker network_mode none), and HOST:PORT only serves its own health check.
+    socket: readSocket(env, 'LISTEN_SOCKET'),
     origin: origin.origin,
     secure: origin.protocol === 'https:',
     allowedHosts: new Set([origin.host.toLowerCase(), ...extraHosts]),
     trustProxy: raw(env, 'TRUST_PROXY') || 'loopback',
     publicDir: readDir(env, 'PUBLIC_DIR', path.join(WEBSITE_ROOT, 'public')),
     releasesDir: readDir(env, 'RELEASES_DIR', path.join(WEBSITE_ROOT, 'releases')),
+    downloadRepo,
     dataDir: readDir(env, 'DATA_DIR', path.join(WEBSITE_ROOT, 'data')),
     secret,
     password,

@@ -9,6 +9,8 @@ struct WriteResultsView: View {
     let results: WriteFlow.Results
     let hardest: [WriteFlow.TermRow]
     let setCounts: StatusCounts
+    /// The set, for the ★ in "Am häufigsten falsch" (nil: no stars, e.g. in snapshots).
+    var setID: String? = nil
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var bounce = 0
@@ -46,20 +48,20 @@ struct WriteResultsView: View {
                 GridRow {
                     // Every tile has a caption, so the row's glass tiles are equally tall.
                     StatTile(
-                        results.cardCount == 1 ? "Begriff" : "Begriffe", value: "\(results.cardCount)",
-                        systemImage: "square.stack.3d.up.fill",
-                        caption: results.bothDirections ? "in beide Richtungen" : "geschrieben")
+                        results.cardCount == 1 ? String(localized: "Begriff") : String(localized: "Begriffe"),
+                        value: "\(results.cardCount)", systemImage: "square.stack.3d.up.fill",
+                        caption: results.bothDirections ? String(localized: "in beide Richtungen") : String(localized: "geschrieben"))
                     StatTile(
-                        "Treffer", value: WriteFlow.percentText(stats.accuracy), systemImage: "target",
-                        tint: Theme.success.fill, caption: "beim ersten Versuch")
+                        String(localized: "Treffer"), value: WriteFlow.percentText(stats.accuracy), systemImage: "target",
+                        tint: Theme.success.fill, caption: String(localized: "beim ersten Versuch"))
                     StatTile(
-                        stats.rounds == 1 ? "Runde" : "Runden", value: "\(stats.rounds)",
+                        stats.rounds == 1 ? String(localized: "Runde") : String(localized: "Runden"), value: "\(stats.rounds)",
                         systemImage: "arrow.trianglehead.2.clockwise", tint: Theme.info.fill,
-                        caption: "bis alles sass")
+                        caption: String(localized: "bis alles sass"))
                     let time = WriteFlow.compactDuration(stats.elapsedMs)
                     StatTile(
                         time.label, value: time.value, systemImage: "clock.fill", tint: Theme.flame,
-                        caption: "aktive Lernzeit"
+                        caption: String(localized: "aktive Lernzeit")
                     )
                     .accessibilityLabel("Zeit")
                     .accessibilityValue(TimeUtil.formatDuration(stats.elapsedMs))
@@ -106,7 +108,7 @@ struct WriteResultsView: View {
                     .foregroundStyle(Theme.accentText)
                     .padding(.top, Spacing.xs)
             } else {
-                WriteTermList(title: "Am häufigsten falsch", rows: hardest, marker: .misses)
+                WriteTermList(title: String(localized: "Am häufigsten falsch"), rows: hardest, marker: .misses, starSetID: setID)
             }
         }
         .celebration(origin: UnitPoint(x: 0.5, y: 0.1))

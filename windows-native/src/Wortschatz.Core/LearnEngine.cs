@@ -7,6 +7,11 @@ namespace Wortschatz.Core;
 // multiple choice), 1 = familiar (asked written), 2 = mastered (not asked any more). A correct answer
 // moves the card up one stage, a wrong one sends it back to stage 0.
 //
+// Multiple choice only once (since 24.11.2026): a card is asked as multiple choice only until it was
+// answered right once (Solved, from the progress: any right answer ever). From then on it is asked
+// written, at stage 0 too: a wrong written answer resets the stage but stays written; only a wrong
+// multiple-choice answer brings multiple choice again.
+//
 // Spacing (Abstand, since 1.4): a card comes back only after at least MIN_GAP (10) other questions –
 // fewer only when fewer cards are left – and at the latest after about MAX_WAIT (15); in between, the
 // longer it waits the likelier it is picked, mixed with new cards (at most MAX_REPEATS questions in a row
@@ -18,11 +23,14 @@ namespace Wortschatz.Core;
 // the round starts as if every answer were right (PlanRound); an actual answer adjusts the card's later
 // questions in the round to its new stage (FollowStage).
 //
-// Rechecks (Nachkontrolle, opt-in, only for sessions with more than 60 cards): a card answered wrong in
-// the session is asked once more RECHECK_GAP to RECHECK_WAIT (30–50) questions after it was mastered.
+// Rechecks (Nachkontrolle, opt-in at creation or during a session via SetRecheck, only for sessions with more
+// than 60 cards): a card answered wrong in
+// the session is asked once more RECHECK_GAP to RECHECK_WAIT (30–50) questions after it was mastered, never
+// sooner than MIN_GAP (since 23.11.2026; at the end of a session one that cannot come that late is dropped).
 //
 // Every function takes a LearnState and returns a NEW state; inputs are never changed. Each function
-// first repairs its input (CopyState), which also makes the private copy the function then mutates.
+// first repairs its input (CopyState), which also makes the private copy the function then mutates
+// (SetReview/SetRecheck return their input when nothing changes).
 // Randomness comes from an injected RNG consumed in exactly the order of the JS, so seeded runs replay
 // the web app's sessions bit for bit (LearnEngineParityTests). Multiple-choice options are generated
 // when a question is created and stored in the state, so a resumed session shows identical options.
@@ -154,6 +162,8 @@ public sealed class LearnState : IJsonEncodable
     public List<string> InitiallyMastered { get; set; } = [];
     /// <summary>cardId → true once answered (ever).</summary>
     public Dictionary<string, bool> Seen { get; set; } = new(StringComparer.Ordinal);
+    /// <summary>cardId → true once answered right (ever): no multiple choice any more. Every card past stage 0 is in it.</summary>
+    public Dictionary<string, bool> Solved { get; set; } = new(StringComparer.Ordinal);
     public int Round { get; set; } = 1;
     public List<LearnQueueQuestion> Queue { get; set; } = [];
     /// <summary>Answers given in the session (the number of the next question); never goes back.</summary>
@@ -194,6 +204,7 @@ public sealed class LearnState : IJsonEncodable
             ["stage"] = LearnJson.Map(Stage, n => n),
             ["initiallyMastered"] = InitiallyMastered.ToJsonArray(),
             ["seen"] = LearnJson.Map(Seen, b => b),
+            ["solved"] = LearnJson.Map(Solved, b => b),
             ["round"] = Round,
             ["queue"] = Queue.ToJsonArray(),
             ["clock"] = Clock,
@@ -252,6 +263,8 @@ public static class LearnEngine
     {
         /// <summary>A repetition question (Wiederholungsfrage) of a card mastered before the session.</summary>
         public bool IsReview => IsReviewQuestion(Qid);
+        /// <summary>A recheck (Nachkontrolle) of a card missed and then mastered in the session.</summary>
+        public bool IsRecheck => IsRecheckQuestion(Qid);
 
         public JSONValue ToJson()
         {
@@ -308,8 +321,8 @@ public static class LearnEngine
 
     /// <summary>
     /// Up to <paramref name="n"/> options for <paramref name="card"/> asked on <paramref name="ask"/>: the correct answer at a
-    /// uniformly random position plus distinct wrong answers of other (non-synonym) cards. [] when the card has
-    /// no id or no answer text; a non-positive n means MAX_CHOICES.
+    /// uniformly random position plus distinct wrong answers of other (non-synonym) cards, the most alike ones
+    /// (RankedDistractors) in random order. [] when the card has no id or no answer text; a non-positive n means MAX_CHOICES.
     /// </summary>
     public static List<Choice> BuildChoices(IReadOnlyList<Card> cards, Card card, AskSide ask, RNG? rng = null, int n = MAX_CHOICES)
     {
@@ -321,9 +334,9 @@ public static class LearnEngine
         var correct = new Choice(card.Id, correctText);
         if (size == 1) return [correct];
 
-        var candidates = Distractors(CardList(cards), card, ask);
-        var choices = Shuffled(candidates, rng).Take(size - 1).ToList();
-        // The correct option's position is uniform over all slots.
+        var ranked = RankedDistractors(CardList(cards), card, ask, rng);
+        // The most alike, in random order; the correct option's position is uniform over all slots.
+        var choices = Shuffled(ranked.Take(size - 1).ToList(), rng);
         choices.Insert(RandomIndex(rng, choices.Count + 1), correct);
         return choices;
     }
@@ -332,6 +345,16 @@ public static class LearnEngine
 
     /// <summary>min(streak, 2) of the card's progress.</summary>
     public static int StageFromProgress(CardProgress? progress) => Math.Min(Mastery.NormalizeProgress(progress).Streak, MasteredStage);
+
+    /// <summary>
+    /// Whether the card was ever answered right (then it is no longer asked as multiple choice). A streak counts too, so
+    /// every card past stage 0 is solved.
+    /// </summary>
+    public static bool SolvedFromProgress(CardProgress? progress)
+    {
+        var p = Mastery.NormalizeProgress(progress);
+        return p.Correct > 0 || p.Streak > 0;
+    }
 
     /// <summary>
     /// <c>createLearn(cards, { answerWith, learn }, { subset, progress, rng, now })</c>. Cards without an id,
@@ -352,11 +375,13 @@ public static class LearnEngine
 
         var stage = new Dictionary<string, int>(StringComparer.Ordinal);
         var seen = new Dictionary<string, bool>(StringComparer.Ordinal);
+        var solved = new Dictionary<string, bool>(StringComparer.Ordinal);
         foreach (var id in order)
         {
             var p = progress.GetValueOrDefault(id);
             stage[id] = StageFromProgress(p);
             if (Mastery.CardStatusOf(p) != CardStatus.New) seen[id] = true;
+            if (SolvedFromProgress(p)) solved[id] = true;
         }
 
         double at = double.IsFinite(nowMs) ? nowMs : 0;
@@ -364,7 +389,7 @@ public static class LearnEngine
         var s = new LearnState
         {
             Subset = sub, AnswerWith = answerWith, Learn = NormalizeLearn(learn), Order = order, Stage = stage,
-            InitiallyMastered = mastered, Seen = seen, StartedAt = at, UpdatedAt = at,
+            InitiallyMastered = mastered, Seen = seen, Solved = solved, StartedAt = at, UpdatedAt = at,
             Review = review ? new LearnReview { Due = MostOverdueFirst(mastered, progress) } : null,
             Recheck = recheck && order.Count > RECHECK_MIN_CARDS ? new LearnRecheck() : null,
         };
@@ -427,6 +452,10 @@ public static class LearnEngine
         var srcStage = Get("stage")?.ObjectValue ?? new JsonObjectMap();
         var stage = new Dictionary<string, int>(StringComparer.Ordinal);
         foreach (var id in order) stage[id] = ClampStage(srcStage.TryGetValue(id, out var sv) ? sv : null);
+        // A card past stage 0 was answered right (sessions stored before 24.11.2026 have no "solved").
+        var solved = TrueMap(Get("solved"));
+        foreach (var id in order)
+            if (stage.GetValueOrDefault(id) > 0) solved[id] = true;
         var misses = new Dictionary<string, int>(StringComparer.Ordinal);
         foreach (var (k, x) in Get("misses")?.ObjectValue ?? new JsonObjectMap())
             if (known.Contains(k)) misses[k] = CountValue(x);
@@ -493,7 +522,7 @@ public static class LearnEngine
             AnswerWith = EnumRaw.ParseJson<AnswerWith>(Get("answerWith")) ?? AnswerWith.Term,
             Learn = NormalizeLearn(roundSize, learnSrc?["mc"]?.BoolValue != false, learnSrc?["written"]?.BoolValue != false),
             Order = order, Stage = stage, InitiallyMastered = Ids(Get("initiallyMastered")), Seen = TrueMap(Get("seen")),
-            Round = round, Queue = queue, Clock = clock, LastAt = lastAt,
+            Solved = solved, Round = round, Queue = queue, Clock = clock, LastAt = lastAt,
             Repeats = Get("repeats")?.IntegerValue is { } rp && rp >= 0 ? rp : 0,
             RoundLog = roundLog, Rounds = rounds, Answered = answered, Correct = Math.Min(answered, CountValue(Get("correct"))),
             Misses = misses, Last = last, StartedAt = startedAt, UpdatedAt = Get("updatedAt")?.FiniteNumber ?? startedAt,
@@ -528,6 +557,9 @@ public static class LearnEngine
 
         var stage = new Dictionary<string, int>(StringComparer.Ordinal);
         foreach (var id in order) stage[id] = ClampStage(state.Stage.GetValueOrDefault(id));
+        var solved = Known(state.Solved, v => v);
+        foreach (var id in order)
+            if (stage.GetValueOrDefault(id) > 0) solved[id] = true;
         int round = state.Round > 0 ? state.Round : 1;
         var queue = new List<LearnQueueQuestion>();
         for (int i = 0; i < state.Queue.Count; i++)
@@ -549,7 +581,7 @@ public static class LearnEngine
             Subset = NormalizeSubset(state.Subset), AnswerWith = state.AnswerWith,
             Learn = NormalizeLearn(state.Learn.RoundSize, state.Learn.Mc, state.Learn.Written),
             Order = order, Stage = stage, InitiallyMastered = Ids(state.InitiallyMastered),
-            Seen = Known(state.Seen, v => v), Round = round, Queue = queue,
+            Seen = Known(state.Seen, v => v), Solved = solved, Round = round, Queue = queue,
             Clock = state.Clock >= 0 ? state.Clock : answered, LastAt = Known(state.LastAt, v => v >= 0),
             Repeats = Math.Max(0, state.Repeats),
             RoundLog = state.RoundLog.Where(e => known.Contains(e.CardId)).Select(e => e with { StageAfter = ClampStage(e.StageAfter) }).ToList(),
@@ -589,6 +621,7 @@ public static class LearnEngine
         int stageAfter = correct ? Math.Min(stageBefore + 1, MasteredStage) : 0;
         s.Stage[id] = stageAfter;
         s.Seen[id] = true;
+        if (correct) s.Solved[id] = true;
         s.Answered = Inc(s.Answered);
         if (correct) s.Correct = Inc(s.Correct);
         else s.Misses[id] = Inc(s.Misses.GetValueOrDefault(id));
@@ -625,6 +658,7 @@ public static class LearnEngine
         var id = l.CardId;
         int stageAfter = Math.Min(l.StageBefore + 1, MasteredStage);
         s.Stage[id] = stageAfter;
+        s.Solved[id] = true;
         s.Correct = Math.Min(s.Answered, Inc(s.Correct));
         s.Misses[id] = Math.Max(0, s.Misses.GetValueOrDefault(id) - 1);
         int i = s.RoundLog.FindLastIndex(e => e.CardId == id && (e.Qid is null || e.Qid == l.Qid));
@@ -729,7 +763,6 @@ public static class LearnEngine
             .Select((cardId, i) => (i, card: new MissedCard(cardId, s.Misses.GetValueOrDefault(cardId))))
             .Where(x => x.card.Misses > 0)
             .OrderByDescending(x => x.card.Misses).ThenBy(x => x.i)
-            .Take(10)
             .Select(x => x.card)
             .ToList();
         return new FinalStats(total, mastered, s.InitiallyMastered.Count, rounds, s.Answered,
@@ -788,13 +821,64 @@ public static class LearnEngine
         return s;
     }
 
+    // MARK: - Switching the options during a session
+    //
+    // «Wiederholungsfragen» and «Nachkontrolle nach Fehlern» apply to a running session at once (since 24.11.2026; before,
+    // only to the next one, so a session started with them kept them for days after they were switched off). A finished
+    // session is left as it is. Both return state itself when nothing changes (Swift: an equal copy), so a caller can
+    // tell with ReferenceEquals whether there is anything to store.
+
+    /// <summary>
+    /// Repetition questions on or off. Off drops the queued ones and those still to come; on asks the cards mastered
+    /// before the session that are mastered still once more, the most overdue first (progress: when each was answered last).
+    /// </summary>
+    public static LearnState SetReview(LearnState state, bool on, IReadOnlyDictionary<string, CardProgress>? progress = null, double? now = null)
+    {
+        if (state.FinishedAt is not null || on == (state.Review is not null)) return state;
+        var s = CopyState(state);
+        if (on)
+        {
+            var mastered = s.InitiallyMastered.Where(id => s.Stage.GetValueOrDefault(id) >= MasteredStage).ToList();
+            s.Review = new LearnReview { Due = MostOverdueFirst(mastered, progress ?? new Dictionary<string, CardProgress>()) };
+        }
+        else
+        {
+            s.Queue.RemoveAll(q => IsReviewQuestion(q.Qid));
+            s.Review = null;
+        }
+        FinishEarly(s, now ?? TimeUtil.NowMs());
+        return s;
+    }
+
+    /// <summary>
+    /// Rechecks on or off. Off drops the queued ones and the cards waiting for one; on (only in sessions with more than
+    /// RECHECK_MIN_CARDS cards) checks the cards missed from now on.
+    /// </summary>
+    public static LearnState SetRecheck(LearnState state, bool on, double? now = null)
+    {
+        if (state.FinishedAt is not null || on == (state.Recheck is not null)) return state;
+        if (on && state.Order.Count <= RECHECK_MIN_CARDS) return state;
+        var s = CopyState(state);
+        if (on)
+        {
+            s.Recheck = new LearnRecheck();
+        }
+        else
+        {
+            s.Queue.RemoveAll(q => IsRecheckQuestion(q.Qid));
+            s.Recheck = null;
+        }
+        FinishEarly(s, now ?? TimeUtil.NowMs());
+        return s;
+    }
+
     // MARK: - Shared progress
     //
     // Learn and Write record every answer in the same CardProgress, which is the source of truth: a card's
     // stage is min(streak, 2) and it counts as seen once it was ever answered. Answers given elsewhere
     // (Write mode, another window) are brought in with SyncProgress().
 
-    /// <summary>Whether every card's stage and seen flag match <paramref name="progress"/> (always true when finished).</summary>
+    /// <summary>Whether every card's stage, seen and solved flags match <paramref name="progress"/> (always true when finished).</summary>
     public static bool MatchesProgress(LearnState state, IReadOnlyDictionary<string, CardProgress> progress)
     {
         var s = CopyState(state);
@@ -803,17 +887,18 @@ public static class LearnEngine
         {
             var p = progress.GetValueOrDefault(id);
             return s.Stage.TryGetValue(id, out int st) && st == StageFromProgress(p)
-                && s.Seen.GetValueOrDefault(id) == (Mastery.CardStatusOf(p) != CardStatus.New);
+                && s.Seen.GetValueOrDefault(id) == (Mastery.CardStatusOf(p) != CardStatus.New)
+                && s.Solved.GetValueOrDefault(id) == SolvedFromProgress(p);
         });
     }
 
     /// <summary>
-    /// Brings the session in line with <paramref name="progress"/>: every stage becomes min(streak, 2) and seen follows
-    /// whether the card was ever answered. A card mastered now leaves this round's queue; a card whose stage
-    /// changed otherwise keeps its queued questions, switched to the type of its new stage; a card no longer
-    /// mastered is studied again. A queued repetition question or recheck of a card no longer mastered (missed
-    /// elsewhere) becomes an ordinary question, and the card leaves the cards waiting for a recheck. A finished
-    /// session is left as it is.
+    /// Brings the session in line with <paramref name="progress"/>: every stage becomes min(streak, 2), seen follows
+    /// whether the card was ever answered and solved whether it was ever answered right. A card mastered now leaves
+    /// this round's queue; a card whose stage (or, not mastered, whose solved flag) changed otherwise keeps its queued
+    /// questions, switched to the type of its new stage; a card no longer mastered is studied again. A queued
+    /// repetition question or recheck of a card no longer mastered (missed elsewhere) becomes an ordinary question,
+    /// and the card leaves the cards waiting for a recheck. A finished session is left as it is.
     /// </summary>
     public static LearnState SyncProgress(LearnState state, IReadOnlyDictionary<string, CardProgress> progress, double? now = null)
     {
@@ -825,13 +910,15 @@ public static class LearnEngine
         {
             var p = progress.GetValueOrDefault(id);
             int stage = StageFromProgress(p);
-            if (!s.Stage.TryGetValue(id, out int old) || old != stage)
-            {
-                s.Stage[id] = stage;
+            bool solved = SolvedFromProgress(p);
+            if (!s.Stage.TryGetValue(id, out int old) || old != stage
+                || (solved != s.Solved.GetValueOrDefault(id) && stage < MasteredStage))
                 changed.Add(id);
-            }
+            s.Stage[id] = stage;
             if (Mastery.CardStatusOf(p) == CardStatus.New) s.Seen.Remove(id);
             else s.Seen[id] = true;
+            if (solved) s.Solved[id] = true;
+            else s.Solved.Remove(id);
         }
         foreach (var id in changed)
         {
@@ -890,6 +977,24 @@ public static class LearnEngine
 
     /// <summary>A card with an empty side cannot be asked (and is no useful distractor either).</summary>
     static bool Askable(Card card) => HasText(card.Term) && HasText(card.Definition);
+
+    /// <summary>
+    /// Works out ahead what multiple choice ranks the wrong options by (the word classes and shapes of both sides of every
+    /// card, WordClass), remembered like any later call: the app runs it in the background when a set's page opens, so
+    /// the first round of a large set does not wait for it (about 90 ms for 500 cards on a laptop). Pure: the same
+    /// results as working them out when they are needed, and no random numbers drawn.
+    /// </summary>
+    public static void PrepareChoices(IReadOnlyList<Card> cards)
+    {
+        var list = CardList(cards);
+        var sides = WordClass.ListProfilesOf(list);
+        foreach (var card in list)
+        {
+            WordClass.CardClass(card, sides);
+            WordClass.ShapeOf(JSCompat.Trim(Synonyms.AnswerSide(card, AskSide.Term)), sides.Side(AskSide.Term));
+            WordClass.ShapeOf(JSCompat.Trim(Synonyms.AnswerSide(card, AskSide.Definition)), sides.Side(AskSide.Definition));
+        }
+    }
 
     /// <summary>Unique cards by id (the first wins), without empty ids, in the given order (<c>cardList</c>).</summary>
     static List<Card> CardList(IReadOnlyList<Card> cards)
@@ -999,6 +1104,37 @@ public static class LearnEngine
         return output;
     }
 
+    /// <summary>
+    /// Wrong options for <paramref name="card"/> asked on <paramref name="side"/>, most alike first (since 23.11.2026,
+    /// WordClass): cards of the same word class before cards of an open class before others, then by similarity
+    /// points (close in the set, same article, as many words, similar length, same beginning and ending) plus a
+    /// random 0–2, so options almost as similar take turns; equal ones in random order.
+    /// </summary>
+    static List<Choice> RankedDistractors(IReadOnlyList<Card> list, Card card, AskSide side, RNG rng, IEnumerable<string>? takenKeys = null)
+    {
+        var candidates = Distractors(list, card, side, takenKeys);
+        var at = new Dictionary<string, int>(StringComparer.Ordinal);
+        for (int i = 0; i < list.Count; i++) at[list[i].Id] = i;
+        var sides = WordClass.ListProfilesOf(list);
+        var cls = WordClass.CardClass(card, sides);
+        var answers = sides.Side(side);
+        var shape = WordClass.ShapeOf(JSCompat.Trim(Synonyms.AnswerSide(card, side)), answers);
+        int here = at.TryGetValue(card.Id, out var h) ? h : -1;
+        var ranked = new List<(Choice Choice, int Order, int Key)>();
+        var order = 0;
+        foreach (var c in Shuffled(candidates, rng))
+        {
+            int i = at.TryGetValue(c.CardId, out var k) ? k : 0;
+            var otherCls = WordClass.CardClass(list[i], sides);
+            int tier = cls.Length == 0 || otherCls.Length == 0 ? 1 : otherCls == cls ? 2 : 0;
+            int points = WordClass.ShapePoints(shape, WordClass.ShapeOf(c.Text, answers));
+            if (here >= 0) points += WordClass.NearPoints(Math.Abs(i - here));
+            ranked.Add((c, order++, tier * 100 + points + RandomIndex(rng, 3)));
+        }
+        ranked.Sort((a, b) => a.Key != b.Key ? b.Key.CompareTo(a.Key) : a.Order.CompareTo(b.Order));
+        return ranked.Select(x => x.Choice).ToList();
+    }
+
     /// <summary>A stored option list: each non-empty card id once; kept only with ≥ 2 options including the asked card's.</summary>
     static List<Choice>? NormChoices(JSONValue? v, string cardId)
     {
@@ -1065,17 +1201,20 @@ public static class LearnEngine
         _ => RandomIndex(rng, 2) == 0 ? AskSide.Term : AskSide.Definition,
     };
 
+    /// <summary>Whether a card at <paramref name="stage"/> is asked as multiple choice: at stage 0 until it was answered right once.</summary>
+    static bool McStage(LearnState s, string id, int stage) => stage == 0 && !s.Solved.GetValueOrDefault(id);
+
     /// <summary>
-    /// Stage 0 → multiple choice, stage 1 → written; a disabled type falls back to the other one, and multiple
-    /// choice needs at least two options. RetryChoices holds the options for when the question has to be asked
-    /// at stage 0 after all (a wrong answer earlier in the round).
+    /// Stage 0 → multiple choice (until solved), else written; a disabled type falls back to the other one, and
+    /// multiple choice needs at least two options. RetryChoices holds the options for when the question has to be
+    /// asked as multiple choice after all (a wrong multiple-choice answer earlier in the round).
     /// </summary>
     static LearnQueueQuestion MakeQuestion(LearnState s, Card card, int stage, IReadOnlyList<Card> pool, string qid, RNG rng)
     {
         var ask = PickAsk(s.AnswerWith, rng);
         var choices = s.Learn.Mc ? BuildChoices(pool, card, ask, rng) : [];
         bool canMc = choices.Count >= 2;
-        var type = stage == 0
+        var type = McStage(s, card.Id, stage)
             ? (canMc ? QuestionType.Mc : QuestionType.Written)
             : (s.Learn.Written || !canMc ? QuestionType.Written : QuestionType.Mc);
         return new LearnQueueQuestion(qid, card.Id, type, ask, type == QuestionType.Mc ? choices : null,
@@ -1111,7 +1250,8 @@ public static class LearnEngine
     /// comes with a chance of (wait - min + 1) in (max - min + 1), otherwise a new card comes (learning cards
     /// not asked yet, stage-1 first, and repetition questions, about every third). After MAX_REPEATS repeats in
     /// a row a new card comes; while MAX_LEARNING cards are being learned only after twice as many. When no
-    /// card may come yet, the one that has waited longest comes early.
+    /// card may come yet, the one that has waited longest comes early (a recheck only after MIN_GAP; null when only
+    /// rechecks are waiting that have not waited that long: the round ends there).
     /// </summary>
     static (string Id, int Kind)? NextPick(LearnState s, Plan p, int t, RNG rng, Dictionary<string, int> index)
     {
@@ -1153,10 +1293,13 @@ public static class LearnEngine
         if (ready.Count == 0)
         {
             if (hasNew) return TakeNew();
-            // Nothing may come yet: the learning card that has waited longest comes early (a recheck only when nothing is
-            // left to learn – it would check nothing so soon).
+            // Nothing may come yet: the learning card that has waited longest comes early. A recheck only when nothing is
+            // left to learn and never before MIN_GAP other questions (sooner it would check nothing): with only such
+            // rechecks left the round ends here; they come once they have waited, or are dropped when nothing else is left.
             var learn = waiting.Where(c => c.Kind == LEARN).ToList();
-            return Of(Best(learn.Count > 0 ? learn : waiting, c => c.Wait, index));
+            if (learn.Count > 0) return Of(Best(learn, c => c.Wait, index));
+            var rechecks = waiting.Where(c => c.Wait >= MIN_GAP).ToList();
+            return rechecks.Count > 0 ? Of(Best(rechecks, c => c.Wait, index)) : null;
         }
         if (!hasNew) return Of(Best(ready, c => c.Wait - c.Max, index));
         bool full = inFlight >= MAX_LEARNING;
@@ -1246,7 +1389,7 @@ public static class LearnEngine
     {
         var options = q.Type == QuestionType.Mc ? q.Choices : q.RetryChoices;
         bool canMc = s.Learn.Mc && (options?.Count ?? 0) >= 2;
-        var type = s.Stage.GetValueOrDefault(q.CardId) == 0
+        var type = McStage(s, q.CardId, s.Stage.GetValueOrDefault(q.CardId))
             ? (canMc ? QuestionType.Mc : QuestionType.Written)
             : (s.Learn.Written || !canMc ? QuestionType.Written : QuestionType.Mc);
         if (type == q.Type) return q;
@@ -1336,8 +1479,8 @@ public static class LearnEngine
     sealed record Refill(IReadOnlyList<Card> Pool, IReadOnlyDictionary<string, Card> ById);
 
     /// <summary>
-    /// The options of question q without card id. With refill its slot gets another valid wrong option when
-    /// there is one, so a question keeps its number of options and the other options keep their places.
+    /// The options of question q without card id. With refill its slot gets the most alike other valid wrong option
+    /// when there is one, so a question keeps its number of options and the other options keep their places.
     /// </summary>
     static List<Choice> WithoutOption(IReadOnlyList<Choice>? list, string id, LearnQueueQuestion q, Refill? refill, RNG rng)
     {
@@ -1349,9 +1492,9 @@ public static class LearnEngine
         var present = new HashSet<string>(rest.Select(c => c.CardId), StringComparer.Ordinal);
         // Keys of the remaining options, from the cards' current texts where they still exist.
         var taken = rest.Select(c => TextKey(refill.ById.TryGetValue(c.CardId, out var other) ? Synonyms.AnswerSide(other, q.Ask) : c.Text)).ToList();
-        var candidates = Distractors(refill.Pool, card, q.Ask, taken).Where(c => !present.Contains(c.CardId)).ToList();
+        var candidates = RankedDistractors(refill.Pool, card, q.Ask, rng, taken).Where(c => !present.Contains(c.CardId)).ToList();
         if (candidates.Count == 0) return rest;
-        rest.Insert(at, candidates[RandomIndex(rng, candidates.Count)]);
+        rest.Insert(at, candidates[0]);
         return rest;
     }
 
@@ -1360,6 +1503,7 @@ public static class LearnEngine
         s.Order.RemoveAll(x => x == id);
         s.Stage.Remove(id);
         s.Seen.Remove(id);
+        s.Solved.Remove(id);
         s.LastAt.Remove(id);
         s.Misses.Remove(id);
         s.InitiallyMastered.RemoveAll(x => x == id);

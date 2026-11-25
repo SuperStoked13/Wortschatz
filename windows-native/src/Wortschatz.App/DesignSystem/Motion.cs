@@ -2,7 +2,6 @@ using System.Diagnostics;
 using System.Runtime.InteropServices;
 using Avalonia;
 using Avalonia.Controls;
-using Avalonia.Media;
 using Avalonia.Threading;
 
 namespace Wortschatz.App.DesignSystem;
@@ -55,9 +54,7 @@ public sealed class Curve
         return new Curve(duration, bezier.Solve, 0);
     }
 
-    public static Curve Linear(double duration) => new(duration, t => t, 0);
     public static Curve EaseOut(double duration) => Bezier(0, 0, 0.58, 1, duration);
-    public static Curve EaseIn(double duration) => Bezier(0.42, 0, 1, 1, duration);
     public static Curve EaseInOut(double duration) => Bezier(0.42, 0, 0.58, 1, duration);
 
     /// <summary>
@@ -289,12 +286,6 @@ public static class Motion
 
     public static double Lerp(double a, double b, double t) => a + (b - a) * t;
     public static double Clamp01(double v) => Math.Clamp(v, 0, 1);
-    /// <summary>Smoothstep of a value already in 0 … 1 (the Mac's <c>x * x * (3 - 2 * x)</c>).</summary>
-    public static double Smooth(double x)
-    {
-        x = Clamp01(x);
-        return x * x * (3 - 2 * x);
-    }
 }
 
 /// <summary>
@@ -323,6 +314,10 @@ public sealed class AnimatedValue
     /// <summary>Moves to <paramref name="target"/> along <paramref name="curve"/> (null: at once).</summary>
     public void Set(double target, Curve? curve, Action? completed = null)
     {
+        // Already there and at rest: the frames would only repeat the value (a fade-in also "moved" its unchanged
+        // position and scale, every render of a study screen "animated" its unchanged progress). A completion still
+        // waits for its curve.
+        if (curve is not null && completed is null && _curve is null && Value == target) return;
         _serial++;
         _completed = null;
         if (curve is null || curve.Total <= 0)

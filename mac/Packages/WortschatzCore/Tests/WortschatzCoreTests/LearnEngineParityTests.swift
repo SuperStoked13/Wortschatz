@@ -5,7 +5,7 @@ import WortschatzCore
 /// Replays Fixtures/learn.json (mac/Parity/gen-learn.js): scripted Learn sessions compared with
 /// src/core/learn.js snapshot by snapshot (state, current, counts, checkpoint, isRoundOver,
 /// isFinished, finalStats and matchesProgress after creation and after every action), plus
-/// buildChoices and stageFromProgress.
+/// buildChoices, stageFromProgress and solvedFromProgress.
 @Suite("Parity: learn.js")
 struct LearnEngineParityTests {
     static let slices = 8
@@ -19,6 +19,7 @@ struct LearnEngineParityTests {
         case "restore": try restore(c)
         case "buildChoices": try buildChoices(c)
         case "stageFromProgress": .number(Double(LearnEngine.stageFromProgress(CardProgress(json: c.arg(0)))))
+        case "solvedFromProgress": .bool(LearnEngine.solvedFromProgress(CardProgress(json: c.arg(0))))
         default: nil
         }
     }
@@ -71,7 +72,7 @@ struct LearnEngineParityTests {
             let actions = c.fn == "scenario" ? c.arg(3) : c.fn == "restore" ? c.arg(4) : .null
             for a in actions.arrayValue ?? [] { ops[a["op"]?.stringValue ?? "?", default: 0] += 1 }
         }
-        #expect(Set(byFn.keys) == ["scenario", "restore", "buildChoices", "stageFromProgress"])
+        #expect(Set(byFn.keys) == ["scenario", "restore", "buildChoices", "stageFromProgress", "solvedFromProgress"])
         #expect((byFn["scenario"] ?? 0) > 400)
         #expect((byFn["restore"] ?? 0) > 150)
         #expect((byFn["buildChoices"] ?? 0) > 400)

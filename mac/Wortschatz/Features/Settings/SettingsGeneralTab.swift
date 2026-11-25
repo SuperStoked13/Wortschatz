@@ -2,7 +2,8 @@ import AVFoundation
 import SwiftUI
 import WortschatzCore
 
-/// Allgemein: the appearance (System / Hell / Dunkel, applied to every window), the sound effects,
+/// Allgemein: the appearance (System / Hell / Dunkel, applied to every window), the language of the
+/// app (System / Deutsch / English), the sound effects,
 /// synonyms outside the set (Apple Intelligence) and the voice used to read each language aloud.
 struct SettingsGeneralTab: View {
     @Environment(AppModel.self) private var model
@@ -31,23 +32,25 @@ struct SettingsGeneralTab: View {
                 Text("Darstellung")
             }
 
+            SettingsLanguageSection()
+
             Section {
                 Toggle(isOn: $soundEffects) {
                     Text("Soundeffekte")
-                    Text("Leise Töne für richtige und falsche Antworten, Serien und geschaffte Runden.")
+                    Text("Leise Töne für richtige und falsche Antworten, Serien und geschaffte Runden. Für ein einzelnes Lernset schaltest du sie in seinen Optionen aus.")
                 }
                 .onChange(of: soundEffects) { _, on in
                     if on { SoundEffects.shared.play(.correct) }
                 }
             } header: {
-                Text("Töne")
+                Text(String(localized: "Töne (Soundeffekte)", defaultValue: "Töne", comment: "Settings section of the sound effects (not the tones of Chinese)"))
             }
 
             Section {
                 let unavailable = SynonymAssistant.shared.unavailableReason
                 Toggle(isOn: $extendedSynonyms) {
                     Text("Weitere Synonyme erkennen")
-                    Text("Lässt auch gleichbedeutende Wörter gelten, die nicht im Lernset stehen – z. B. «ensemble» für «gemeinsam» – und markiert sie als «Synonym – nicht im Set». Läuft mit Apple Intelligence direkt auf deinem Mac.")
+                    Text("Lässt auch gleichbedeutende Wörter gelten, die nicht im Lernset stehen – z. B. «ensemble» für «gemeinsam» – und markiert sie als «Synonym – nicht im Set». Läuft mit Apple Intelligence direkt auf deinem Mac. Für ein einzelnes Lernset schaltest du sie in seinen Optionen unter «Toleranz» aus.")
                 }
                 .disabled(unavailable != nil)
                 if let unavailable {
@@ -56,7 +59,7 @@ struct SettingsGeneralTab: View {
                         .foregroundStyle(.secondary)
                 }
             } header: {
-                Text("Antworten")
+                Text(String(localized: "Antworten (Mehrzahl)", defaultValue: "Antworten", comment: "Noun: the answers (not the button to answer)"))
             }
 
             Section {
@@ -130,9 +133,9 @@ private struct SettingsVoiceRow: View {
     }
 
     private var automaticTitle: String {
-        guard catalog.isLoaded else { return "Automatisch" }
-        guard let automatic = catalog.automaticNames[lang] else { return "Keine Stimme installiert" }
-        return "Automatisch (\(automatic))"
+        guard catalog.isLoaded else { return String(localized: "Automatisch", comment: "Voice picker: the voice the Mac picks") }
+        guard let automatic = catalog.automaticNames[lang] else { return String(localized: "Keine Stimme installiert") }
+        return String(localized: "Automatisch (\(automatic))", comment: "Voice picker: the voice the Mac picks, with its name")
     }
 
 }
@@ -155,7 +158,7 @@ final class SettingsVoiceCatalog {
         var voices: [Lang: [SpeechService.Voice]] = [:]
         var automaticNames: [Lang: String] = [:]
         for lang in Self.languages {
-            voices[lang] = speech.voices(for: lang)
+            voices[lang] = speech.voices(for: lang, among: installed)
             if let tag = SpeechService.languageTag(for: lang), let best = SpeechService.bestVoice(for: tag, among: installed) {
                 automaticNames[lang] = best.name
             }

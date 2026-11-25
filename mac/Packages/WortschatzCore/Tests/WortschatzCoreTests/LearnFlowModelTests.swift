@@ -181,47 +181,6 @@ struct LearnFlowModelTests {
         #expect(try LearnFlow.SavedLearn(state: s).json()["feedback"] == nil)
     }
 
-    // MARK: - Restarts
-
-    @Test func settingsChangesDirectionQuestionTypesAndRoundSizeNeedARestart() {
-        let s = Self.create(Self.makeCards(5), seed: 1)
-        let opts = StudyOptions(answerWith: .term, learn: LearnOptions(roundSize: 7, mc: true, written: true))
-        func changes(_ o: StudyOptions) -> [LearnFlow.SettingsChange] {
-            LearnFlow.settingsChanges(LearnFlow.sessionSettings(s), LearnFlow.sessionSettings(o))
-        }
-        #expect(LearnFlow.sessionSettings(s) == LearnFlow.SessionSettings(answerWith: .term, roundSize: 7, mc: true, written: true))
-        #expect(changes(opts).isEmpty)
-        // Tolerance, audio and retype do not shape the session.
-        var other = opts
-        other.audio = true
-        other.tolerance.typos = true
-        other.learn.retype = true
-        #expect(changes(other).isEmpty)
-        var both = opts
-        both.answerWith = .both
-        #expect(changes(both) == [.direction])
-        var noMc = opts
-        noMc.learn.mc = false
-        #expect(changes(noMc) == [.types])
-        var ten = opts
-        ten.learn.roundSize = 10
-        #expect(changes(ten) == [.roundSize])
-        #expect(changes(StudyOptions(answerWith: .definition, learn: LearnOptions(roundSize: 5, mc: true, written: false)))
-            == [.direction, .types, .roundSize])
-        // Both types off counts as both on (as in the engine).
-        #expect(changes(StudyOptions(learn: LearnOptions(roundSize: 7, mc: false, written: false))).isEmpty)
-        #expect(changes(StudyOptions(learn: LearnOptions(roundSize: 0))).isEmpty)
-    }
-
-    @Test func restartMessageNamesASingleChangeOrTheSettingsInGeneral() {
-        #expect(
-            LearnFlow.restartMessage([.direction])
-                == "Die neue Abfragerichtung gilt ab einem Neustart. Jetzt neu beginnen? Dein Lernfortschritt bleibt gespeichert.")
-        #expect(LearnFlow.restartMessage([.types]).hasPrefix("Die neuen Fragetypen gelten ab einem Neustart."))
-        #expect(LearnFlow.restartMessage([.roundSize]).hasPrefix("Die neue Rundengrösse gilt ab"))
-        #expect(LearnFlow.restartMessage([.direction, .roundSize]).hasPrefix("Die neuen Einstellungen gelten ab"))
-    }
-
     // MARK: - Option texts
 
     @Test func choiceTextsShowTheCurrentCardTextsAndKeepStoredTextsOfDeletedCards() {
@@ -410,8 +369,6 @@ struct LearnFlowModelTests {
         var texts = LearnFlow.PRAISE + [
             LearnFlow.MISS_TITLE, LearnFlow.DONT_KNOW_TITLE, LearnFlow.SYNONYM_TITLE, LearnFlow.TOLERATED_TITLE,
             LearnFlow.INTRO_HINT, LearnFlow.EDITED_CORRECT_TEXT, LearnFlow.WELCOME_BACK,
-            LearnFlow.restartMessage([.direction]), LearnFlow.restartMessage([.types]), LearnFlow.restartMessage([.roundSize]),
-            LearnFlow.restartMessage([.direction, .types]),
             LearnFlow.checkpointTitle(1), LearnFlow.checkpointTitle(0.75), LearnFlow.checkpointTitle(0.5),
             LearnFlow.checkpointTitle(0), LearnFlow.remainingText(mastered: 1, total: 3),
             LearnFlow.finishSubtitle(total: 3, rounds: 2), LearnFlow.finishSubtitle(total: 3, rounds: 2, alreadyMastered: 1),

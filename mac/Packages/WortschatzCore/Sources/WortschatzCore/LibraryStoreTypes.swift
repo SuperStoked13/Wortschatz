@@ -5,7 +5,8 @@ import Foundation
 
 // MARK: - Errors and messages
 
-/// A store error with the web app's German message (`err.code` / `err.message` in db.js).
+/// A store error with the web app's message (`err.code` / `err.message` in db.js; German source,
+/// translated by `StoreMessages`).
 public struct LibraryStoreError: Error, Equatable, Sendable, LocalizedError, CustomStringConvertible {
     public enum Code: String, Sendable, Equatable {
         /// Storage full (JS 'QUOTA'; on the Mac: the disk is full).
@@ -29,28 +30,32 @@ public struct LibraryStoreError: Error, Equatable, Sendable, LocalizedError, Cus
     public var description: String { "\(code.rawValue): \(message)" }
 }
 
-/// German messages of db.js (`MSG`), plus the Mac-only file errors. Swiss spelling (no sharp s).
+/// Messages of db.js (`MSG`), plus the Mac-only file errors: German (Swiss spelling, no sharp s),
+/// in the app's language through `L`.
 public enum StoreMessages {
     /// The web app's message for a full browser storage (kept for parity; the Mac uses `diskFull`).
-    public static let quota =
-        "Der Speicher dieses Browsers ist voll. Exportiere ein Backup und lösche Lernsets, die du nicht mehr brauchst."
-    public static let setNotFound = "Dieses Lernset wurde nicht gefunden."
-    public static let cardNotFound = "Diese Karte wurde nicht gefunden."
-    public static let emptyCard = "Begriff und Definition dürfen nicht beide leer sein."
-    public static let notBackup = "Diese Datei ist kein Wortschatz-Backup."
-    public static let newerBackup =
-        "Dieses Backup stammt aus einer neueren Version von Wortschatz und kann nicht importiert werden."
-    public static let noSets = "Das Backup ist unvollständig: Die Lernsets fehlen."
-    public static func badSet(_ n: Int) -> String { "Das Backup ist beschädigt: Lernset Nr. \(n) ist ungültig." }
-    public static func badPart(_ name: String) -> String { "Das Backup ist beschädigt: Der Bereich «\(name)» ist ungültig." }
-    public static let badSnapshot = "Dieses Lernset kann nicht wiederhergestellt werden."
+    public static var quota: String {
+        L("Der Speicher dieses Browsers ist voll. Exportiere ein Backup und lösche Lernsets, die du nicht mehr brauchst.")
+    }
+    public static var setNotFound: String { L("Dieses Lernset wurde nicht gefunden.") }
+    public static var cardNotFound: String { L("Diese Karte wurde nicht gefunden.") }
+    public static var emptyCard: String { L("Begriff und Definition dürfen nicht beide leer sein.") }
+    public static var notBackup: String { L("Diese Datei ist kein Wortschatz-Backup.") }
+    public static var newerBackup: String {
+        L("Dieses Backup stammt aus einer neueren Version von Wortschatz und kann nicht importiert werden.")
+    }
+    public static var noSets: String { L("Das Backup ist unvollständig: Die Lernsets fehlen.") }
+    public static func badSet(_ n: Int) -> String { L("Das Backup ist beschädigt: Lernset Nr. %@ ist ungültig.", "\(n)") }
+    public static func badPart(_ name: String) -> String { L("Das Backup ist beschädigt: Der Bereich «%@» ist ungültig.", name) }
+    public static var badSnapshot: String { L("Dieses Lernset kann nicht wiederhergestellt werden.") }
     /// Mac only: the library file could not be written.
-    public static let io = "Die Daten konnten nicht gespeichert werden."
+    public static var io: String { L("Die Daten konnten nicht gespeichert werden.") }
     /// Mac only: the disk is full (code `.quota`).
-    public static let diskFull =
-        "Die Daten konnten nicht gespeichert werden, weil auf diesem Mac kein Speicherplatz mehr frei ist."
+    public static var diskFull: String {
+        L("Die Daten konnten nicht gespeichert werden, weil auf diesem Mac kein Speicherplatz mehr frei ist.")
+    }
     /// Mac only: a study state could not be converted to JSON.
-    public static let badState = "Der Lernstand konnte nicht gespeichert werden."
+    public static var badState: String { L("Der Lernstand konnte nicht gespeichert werden.") }
 }
 
 // MARK: - Inputs
@@ -246,6 +251,12 @@ public struct StoreChange: Sendable, Equatable, Hashable {
     /// Whether `key` changed (always true when `keys` is nil).
     public func touches(_ key: String) -> Bool {
         keys?.contains(key) ?? true
+    }
+
+    /// Whether the stored data of set `setId` besides the set itself may have changed: its
+    /// progress, Write session or Learn session (always true when `keys` is nil).
+    public func touchesSetData(_ setId: String) -> Bool {
+        touches("progress:" + setId) || touches("session:" + setId) || touches("learn:" + setId)
     }
 }
 

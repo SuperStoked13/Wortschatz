@@ -2,6 +2,7 @@ import { test, expect, run } from './harness.js';
 import {
   DEFAULT_LEARN,
   stageFromProgress,
+  solvedFromProgress,
   createLearn,
   current,
   answer,
@@ -147,7 +148,7 @@ function playSession(state, cards, decide, { seed = 1, start = T0, max = 5000, o
     const before = situation(s);
     const asked = Object.prototype.hasOwnProperty.call(s.lastAt, q.cardId);
     const ok = decide(q, s) === true;
-    const entry = { ...q, round: s.round, clock: s.clock, wait: asked ? s.clock - s.lastAt[q.cardId] - 1 : null, repeatsBefore: s.repeats, stageBefore: s.stage[q.cardId], correct: ok, ...before };
+    const entry = { ...q, round: s.round, clock: s.clock, wait: asked ? s.clock - s.lastAt[q.cardId] - 1 : null, repeatsBefore: s.repeats, stageBefore: s.stage[q.cardId], solvedBefore: !!s.solved[q.cardId], correct: ok, ...before };
     s = answer(s, ok, t);
     if (!ok && overrideIf && overrideIf(s)) {
       s = override(s, t + 1);
@@ -246,7 +247,8 @@ test('createLearn: state shape for a set of new cards', () => {
   expect(s.repeats).toBe(0);
   // Fields of the engine before spacing (1.4) are gone; the options are opt-in.
   for (const key of ['active', 'retried', 'review', 'recheck']) expect(key in s).toBe(false);
-  expect(Object.keys(s)).toEqual(['v', 'subset', 'answerWith', 'learn', 'order', 'stage', 'initiallyMastered', 'seen', 'round', 'queue', 'clock', 'lastAt', 'repeats', 'roundLog', 'rounds', 'answered', 'correct', 'misses', 'last', 'startedAt', 'updatedAt', 'finishedAt', 'elapsedMs']);
+  expect(Object.keys(s)).toEqual(['v', 'subset', 'answerWith', 'learn', 'order', 'stage', 'initiallyMastered', 'seen', 'solved', 'round', 'queue', 'clock', 'lastAt', 'repeats', 'roundLog', 'rounds', 'answered', 'correct', 'misses', 'last', 'startedAt', 'updatedAt', 'finishedAt', 'elapsedMs']);
+  expect(s.solved).toEqual({});
   expect(s.roundLog).toEqual([]);
   expect(s.rounds).toEqual([]);
   expect(s.answered).toBe(0);
@@ -327,11 +329,13 @@ test('stage initialisation from progress: mastered cards are counted but not ask
   const progress = {
     c1: progressEntry(2), // mastered
     c2: progressEntry(1), // familiar → written
-    c3: progressEntry(0, 1, 1, 'incorrect'), // reset → mc, but not fresh
+    c3: progressEntry(0, 1, 1, 'incorrect'), // reset after a right answer → written, not fresh
     c4: progressEntry(5, 6, 1), // mastered
+    c6: progressEntry(0, 0, 2, 'incorrect'), // never right → mc, not fresh
   };
   const s = createLearn(cards, OPTS, { progress, rng: mulberry32(3), now: T0 });
   expect(s.stage).toEqual({ ...Object.fromEntries(s.order.map((id) => [id, 0])), c1: 2, c2: 1, c4: 2 });
+  expect(s.solved).toEqual({ c1: true, c2: true, c3: true, c4: true });
   expect(sorted(s.initiallyMastered)).toEqual(['c1', 'c4']);
   expect(s.initiallyMastered).toEqual(s.order.filter((id) => id === 'c1' || id === 'c4'));
   expect(sorted([...new Set(s.queue.map((q) => q.cardId))])).toEqual(['c2', 'c3', 'c5', 'c6']);
@@ -342,11 +346,13 @@ test('stage initialisation from progress: mastered cards are counted but not ask
   for (const q of s.queue) if (!byCard[q.cardId]) byCard[q.cardId] = q;
   expect(byCard.c2.type).toBe('written');
   expect(byCard.c2.choices).toBe(undefined);
-  expect(byCard.c3.type).toBe('mc');
+  expect(byCard.c3.type).toBe('written');
+  expect(byCard.c3.retryChoices).toHaveLength(4);
   expect(byCard.c5.type).toBe('mc');
+  expect(byCard.c6.type).toBe('mc');
   // Planned as if every answer were right: c2 is mastered with one question, the others need two.
   expect(s.queue.filter((q) => q.cardId === 'c2')).toHaveLength(1);
-  expect(counts(s)).toEqual({ fresh: 2, learning: 2, mastered: 2, total: 6, progress: 2 / 6 });
+  expect(counts(s)).toEqual({ fresh: 1, learning: 3, mastered: 2, total: 6, progress: 2 / 6 });
   expect(isFinished(s)).toBe(false);
 });
 
@@ -447,7 +453,7 @@ test('a new card is asked multiple choice, then written, and is mastered after b
   expect(counts(s)).toEqual({ fresh: 0, learning: 0, mastered: 6, total: 6, progress: 1 });
 });
 
-test('a wrong written answer sends the card back to multiple choice', () => {
+test('a wrong written answer resets the stage but stays written (multiple choice only once)', () => {
   const cards = makeCards(5);
   const progress = Object.fromEntries(cards.map((c) => [c.id, progressEntry(1)]));
   let s = createLearn(cards, OPTS, { progress, rng: mulberry32(4), now: T0 });
@@ -463,17 +469,77 @@ test('a wrong written answer sends the card back to multiple choice', () => {
   s = playRound(s, () => true, T0 + 10 * SEC);
   expect(checkpoint(s).items.find((it) => it.cardId === id)).toEqual({ cardId: id, stage: 0, results: [false] });
   s = nextRound(s, cards, mulberry32(5), T0 + MIN);
-  // The only open card: multiple choice, then (nothing else to wait for) written right after.
+  // The only open card, answered right before: written twice (nothing else to wait for).
+  expect(s.solved[id]).toBe(true);
   expect(s.queue.map((q) => [q.qid, q.type])).toEqual([
-    [`2.1:${id}`, 'mc'],
+    [`2.1:${id}`, 'written'],
     [`2.1.2:${id}`, 'written'],
   ]);
-  checkChoices(s.queue[0], cards);
   s = answer(s, true, T0 + MIN + 5 * SEC);
   expect(s.stage[id]).toBe(1);
   expect(isFinished(s)).toBe(false);
   s = answer(s, true, T0 + MIN + 10 * SEC);
   expect(isFinished(s)).toBe(true);
+});
+
+test('multiple choice only until a card was answered right once', () => {
+  const cards = makeCards(2);
+  const opts = { answerWith: 'term', learn: { roundSize: 4 } };
+  const types = (st, id) => st.queue.filter((q) => q.cardId === id).map((q) => q.type);
+  let s = createLearn(cards, opts, { rng: mulberry32(12), now: T0 });
+  const [a, b] = s.order;
+  expect(s.queue.map((q) => [q.cardId, q.type])).toEqual([[a, 'mc'], [b, 'mc'], [a, 'written'], [b, 'written']]);
+  // A multiple-choice miss: the card's later question is multiple choice again.
+  s = answer(s, false, T0 + SEC);
+  expect(s.solved).toEqual({});
+  expect(types(s, a)).toEqual(['mc']);
+  checkChoices(s.queue.find((q) => q.cardId === a), cards);
+  // Right once: written from then on.
+  s = answer(s, true, T0 + 2 * SEC);
+  expect(s.solved).toEqual({ [b]: true });
+  expect(types(s, b)).toEqual(['written']);
+  s = answer(s, true, T0 + 3 * SEC);
+  expect(s.solved).toEqual({ [a]: true, [b]: true });
+  // A written miss resets the stage, but the card stays written.
+  expect(current(s)).toEqual({ qid: `1.1.2:${b}`, cardId: b, type: 'written', ask: 'term' });
+  s = answer(s, false, T0 + 4 * SEC);
+  expect(s.stage[b]).toBe(0);
+  expect(s.solved).toEqual({ [a]: true, [b]: true });
+  expect(isRoundOver(s)).toBe(true);
+  s = nextRound(s, cards, mulberry32(13), T0 + MIN);
+  expect(types(s, b)).toEqual(['written', 'written']);
+  expect(s.queue.every((q) => q.type === 'written')).toBe(true);
+  const { log } = playSession(s, cards, () => true, { seed: 14 });
+  expect(log.every((e) => e.type === 'written')).toBe(true);
+
+  // "Ich hatte recht" after a multiple-choice miss counts as right.
+  let o = createLearn(cards, opts, { rng: mulberry32(12), now: T0 });
+  o = answer(o, false, T0 + SEC);
+  o = override(o, T0 + 2 * SEC);
+  expect(o.solved).toEqual({ [a]: true });
+  expect(types(o, a)).toEqual(['written']);
+
+  // Answered right elsewhere (Write mode) and then wrong: still stage 0, but written.
+  let w = createLearn(cards, opts, { rng: mulberry32(12), now: T0 });
+  const elsewhere = { [a]: progressEntry(0, 1, 1, 'incorrect') };
+  expect(solvedFromProgress(elsewhere[a])).toBe(true);
+  expect(solvedFromProgress(progressEntry(0, 0, 3, 'incorrect'))).toBe(false);
+  expect(solvedFromProgress(undefined)).toBe(false);
+  expect(matchesProgress(w, elsewhere)).toBe(false);
+  w = syncProgress(w, elsewhere, T0 + SEC);
+  expect(w.stage[a]).toBe(0);
+  expect(w.solved).toEqual({ [a]: true });
+  expect(types(w, a)).toEqual(['written', 'written']);
+  expect(types(w, b)).toEqual(['mc', 'written']);
+  expect(matchesProgress(w, elsewhere)).toBe(true);
+  // Progress reset: multiple choice again, with the options the questions kept.
+  const before = w;
+  w = syncProgress(w, {}, T0 + 2 * SEC);
+  expect(w.solved).toEqual({});
+  expect(types(w, a)).toEqual(['mc', 'mc']);
+  w.queue.forEach((q, i) => {
+    if (q.cardId === a) expect(q.choices).toEqual(before.queue[i].retryChoices);
+  });
 });
 
 test('a wrong answer is not retried at the end of the round; the card comes back after the gap', () => {
@@ -543,8 +609,9 @@ test('nextRound: a missed card stays open and comes back once it waited its gap'
   const { log } = playSession(s, cards, () => true, { seed: 6 });
   const back = log.find((e) => e.cardId === keep);
   expect(back.wait).toBeGreaterThanOrEqual(Math.min(MIN_GAP, back.open - 1));
-  expect(back.type).toBe('mc');
-  expect(log.filter((e) => e.cardId === keep).map((e) => e.type)).toEqual(['mc', 'written']);
+  // Answered right before (progress): written, also after the miss.
+  expect(back.type).toBe('written');
+  expect(log.filter((e) => e.cardId === keep).map((e) => e.type)).toEqual(['written', 'written']);
 });
 
 test('the session order is shuffled once; new cards follow it', () => {
@@ -607,7 +674,8 @@ test('20 cards with roundSize 7 and random mistakes: invariants hold until finis
         t += 4 * SEC;
         const q = current(s);
         expect(s.stage[q.cardId]).toBeLessThan(2);
-        expect(q.type).toBe(s.stage[q.cardId] === 0 ? 'mc' : 'written');
+        // Multiple choice only until the card was answered right once.
+        expect(q.type).toBe(s.stage[q.cardId] === 0 && !s.solved[q.cardId] ? 'mc' : 'written');
         if (q.type === 'mc') checkChoices(q, cards);
         const before = s;
         s = answer(s, rng() < 0.7, t);
@@ -615,8 +683,11 @@ test('20 cards with roundSize 7 and random mistakes: invariants hold until finis
         expect(s.lastAt[q.cardId]).toBe(before.clock);
         expect(s.repeats).toBe(q.cardId in before.lastAt ? before.repeats + 1 : 0);
         if (!s.last.correct && rng() < 0.15) s = override(s, t + SEC);
+        expect(!!s.solved[q.cardId]).toBe(!!before.solved[q.cardId] || s.last.correct);
         // Queued questions of the card follow its stage at once.
-        for (const x of s.queue) if (x.cardId === q.cardId) expect(x.type).toBe(s.stage[q.cardId] === 0 ? 'mc' : 'written');
+        for (const x of s.queue) {
+          if (x.cardId === q.cardId) expect(x.type).toBe(s.stage[q.cardId] === 0 && !s.solved[q.cardId] ? 'mc' : 'written');
+        }
       }
       expect(s.clock).toBe(s.answered);
       const missSum = Object.values(s.misses).reduce((a, b) => a + b, 0);
@@ -957,15 +1028,15 @@ test('finalStats: accuracy, rounds, answered and hardest cards', () => {
   expect(stats.elapsedMs).toBeGreaterThan(0);
 });
 
-test('finalStats: hardest ties keep the session order, max 10', () => {
+test('finalStats: hardest ties keep the session order, every missed card', () => {
   const cards = makeCards(12);
   // 11 questions: 11 new cards (the first one may come back only after 10 others).
   let s = createLearn(cards, { answerWith: 'term', learn: { roundSize: 11 } }, { rng: mulberry32(14), now: T0 });
   expect(s.queue.map((q) => q.cardId)).toEqual(s.order.slice(0, 11));
   s = playRound(s, () => false, T0);
   const stats = finalStats(s);
-  expect(stats.hardest).toHaveLength(10);
-  expect(stats.hardest).toEqual(s.order.slice(0, 10).map((cardId) => ({ cardId, misses: 1 })));
+  expect(stats.hardest).toHaveLength(11);
+  expect(stats.hardest).toEqual(s.order.slice(0, 11).map((cardId) => ({ cardId, misses: 1 })));
   expect(stats.answered).toBe(11);
   expect(stats.accuracy).toBe(0);
   expect(stats.rounds).toBe(1);
@@ -1134,6 +1205,70 @@ test('buildChoices: distractors vary with the rng and cover the pool', () => {
   }
   expect(sorted([...seen])).toEqual(sorted(cards.map((c) => c.id)));
   expect(snapshot(buildChoices(cards, cards[0], 'term', mulberry32(5)))).toBe(snapshot(buildChoices(cards, cards[0], 'term', mulberry32(5))));
+});
+
+// French–German cards of four word classes (wordclass.js).
+const MIXED = [
+  { id: 'corps', term: 'le corps', definition: 'der Körper' },
+  { id: 'tete', term: 'la tête', definition: 'der Kopf' },
+  { id: 'nez', term: 'le nez', definition: 'die Nase' },
+  { id: 'bouche', term: 'la bouche', definition: 'der Mund' },
+  { id: 'dent', term: 'la dent', definition: 'der Zahn' },
+  { id: 'manger', term: 'manger', definition: 'essen' },
+  { id: 'boire', term: 'boire', definition: 'trinken' },
+  { id: 'dormir', term: 'dormir', definition: 'schlafen' },
+  { id: 'lever', term: 'se lever', definition: 'aufstehen' },
+  { id: 'lent', term: 'lent, lente', definition: 'langsam' },
+  { id: 'rapide', term: 'rapide', definition: 'schnell' },
+  { id: 'beau', term: 'beau, belle', definition: 'schön' },
+  { id: 'gentil', term: 'gentil, gentille', definition: 'nett' },
+  { id: 'noel', term: 'Joyeux Noël!', definition: 'Frohe Weihnachten!' },
+  { id: 'merci', term: 'Merci beaucoup!', definition: 'Vielen Dank!' },
+];
+const MIXED_CLASS = {
+  corps: 'noun', tete: 'noun', nez: 'noun', bouche: 'noun', dent: 'noun',
+  manger: 'verb', boire: 'verb', dormir: 'verb', lever: 'verb',
+  lent: 'adj', rapide: 'adj', beau: 'adj', gentil: 'adj',
+  noel: 'phrase', merci: 'phrase',
+};
+
+test('buildChoices: wrong options are of the same word class while there are enough', () => {
+  for (let seed = 1; seed <= 60; seed++) {
+    for (const card of MIXED) {
+      const ask = seed % 2 ? 'term' : 'definition';
+      const choices = buildChoices(MIXED, card, ask, mulberry32(seed));
+      expect(choices).toHaveLength(4);
+      const others = choices.filter((c) => c.cardId !== card.id).map((c) => MIXED_CLASS[c.cardId]);
+      const want = MIXED_CLASS[card.id];
+      // Only two expressions: the other one, then cards of other classes.
+      if (want === 'phrase') expect(others.filter((x) => x === 'phrase')).toHaveLength(1);
+      else expect(others).toEqual([want, want, want]);
+    }
+  }
+});
+
+test('buildChoices: the most alike options come most often, but they take turns', () => {
+  const cards = makeCards(40);
+  const card = cards[19];
+  const seen = {};
+  let near = 0;
+  let total = 0;
+  for (let seed = 1; seed <= 300; seed++) {
+    for (const c of buildChoices(cards, card, 'term', mulberry32(seed))) {
+      if (c.cardId === card.id) continue;
+      seen[c.cardId] = (seen[c.cardId] || 0) + 1;
+      const at = cards.findIndex((x) => x.id === c.cardId);
+      if (Math.abs(at - 19) <= 3) near++;
+      total++;
+    }
+  }
+  // Mostly the neighbours in the set (6 of 39 cards), yet more than three different options.
+  expect(near / total).toBeGreaterThan(0.6);
+  expect(Object.keys(seen).length).toBeGreaterThan(6);
+  // The options of one question stay in random order: the closest is not always first.
+  const firsts = new Set();
+  for (let seed = 1; seed <= 40; seed++) firsts.add(buildChoices(cards, card, 'term', mulberry32(seed)).find((c) => c.cardId !== card.id).cardId);
+  expect(firsts.size).toBeGreaterThan(3);
 });
 
 test('buildChoices: odd input never throws', () => {
@@ -1809,7 +1944,8 @@ test('matchesProgress / syncProgress: Learn follows answers given in Write mode'
   const mcQ = r.queue.find((q) => q.type === 'mc');
   expect(mcQ.cardId).toBe(zeros[0]);
   progress[mcQ.cardId] = recorded(true);
-  // Write: a queued written card (stage 1) is answered wrong → its question becomes multiple choice.
+  // Write: a queued written card (stage 1) is answered wrong → stage 0, but it stays written (it
+  // was answered right before).
   const wQ = r.queue.find((q) => q.cardId === ones[1]);
   expect(wQ.type).toBe('written');
   progress[ones[1]] = applyAnswer(progress[ones[1]], false, T0);
@@ -1822,9 +1958,8 @@ test('matchesProgress / syncProgress: Learn follows answers given in Write mode'
   expect(nowMc).toEqual({ qid: mcQ.qid, cardId: mcQ.cardId, type: 'written', ask: mcQ.ask, retryChoices: mcQ.retryChoices });
   expect(r.queue.filter((q) => q.cardId === mcQ.cardId).map((q) => q.type)).toEqual(['written', 'written']);
   const nowW = r.queue.find((q) => q.qid === wQ.qid);
-  expect(nowW.type).toBe('mc');
-  expect(nowW.choices).toEqual(wQ.retryChoices);
-  checkChoices(nowW, cards);
+  expect(r.stage[ones[1]]).toBe(0);
+  expect(nowW).toEqual(wQ);
   expect(r.queue.some((q) => q.cardId === done.cardId)).toBe(false);
   expect(r.stage[done.cardId]).toBe(2);
   expect(counts(r).mastered).toBe(1);
@@ -1858,7 +1993,7 @@ test('syncProgress: a card mastered before the session but missed elsewhere is s
   s = playRound(s, () => true, T0 + SEC);
   s = nextRound(s, cards, mulberry32(33), T0 + MIN);
   const q = s.queue.find((x) => x.cardId === 'c1');
-  expect(q.type).toBe('mc');
+  expect(q.type).toBe('written'); // answered right before: no multiple choice
   expect(finalStats(s).alreadyMastered).toBe(0);
 });
 
@@ -2107,8 +2242,9 @@ test('review: a missed repetition question sends the card back to learning', () 
   expect(reviewStats(s)).toEqual({ asked: 1, kept: 0, left: 5 });
   const { s: end, log } = playSession(s, cards, () => true, { seed: 9 });
   const again = log.filter((e) => e.cardId === first.cardId);
+  // Answered right before: written, no multiple choice.
   expect(again.map((e) => [kindOf(e.qid), e.type])).toEqual([
-    [1, 'mc'],
+    [1, 'written'],
     [1, 'written'],
   ]);
   expect(again[0].wait).toBeGreaterThanOrEqual(Math.min(MIN_GAP, again[0].open - 1));
@@ -2129,9 +2265,9 @@ test('review: a missed card is learned again until it is mastered', () => {
   expect(s.stage[missed]).toBe(0);
   expect(isFinished(s)).toBe(false);
   s = nextRound(s, cards, mulberry32(9), T0 + MIN);
-  // The only open card: learned from the start, multiple choice then written.
+  // The only open card: learned from the start, written twice (answered right before).
   expect(s.queue.map((q) => [q.qid, q.type])).toEqual([
-    [`2.1:${missed}`, 'mc'],
+    [`2.1:${missed}`, 'written'],
     [`2.1.2:${missed}`, 'written'],
   ]);
   s = playAll(s, () => true, T0 + MIN);
@@ -2206,7 +2342,7 @@ test('review: a card missed elsewhere is learned instead of repeated', () => {
   const { s: end, log } = playSession(s, cards, () => true, { seed: 5 });
   const c5 = log.filter((e) => e.cardId === 'c5');
   expect(c5.map((e) => [kindOf(e.qid), e.type])).toEqual([
-    [1, 'mc'],
+    [1, 'written'],
     [1, 'written'],
   ]);
   expect('c5' in end.review.results).toBe(false);
@@ -2224,10 +2360,10 @@ test('review: a queued repetition question of a card missed elsewhere becomes an
   progress[id] = applyAnswer(progress[id], false, T0 + 500);
   s = syncProgress(s, progress, T0 + 600);
   const q = s.queue.find((x) => x.cardId === id);
-  // Same place in the round, asked as multiple choice now, no longer a repetition.
+  // Same place in the round, no longer a repetition; still written (answered right before).
   expect(q.qid).toBe(qid.replace('.3:', '.1:'));
-  expect(q.type).toBe('mc');
-  checkChoices(q, cards);
+  expect(q.type).toBe('written');
+  expect(q.choices).toBe(undefined);
   expect(s.initiallyMastered).not.toContain(id);
   expect(reviewStats(s).left).toBe(5);
   s = playAll(s, () => true, T0 + 600);
@@ -2439,7 +2575,7 @@ test('recheck: wrong again → learned again → after mastering it a new rechec
     [1, 'mc', true],
     [1, 'written', true],
     [4, 'written', false],
-    [1, 'mc', true],
+    [1, 'written', true], // answered right before: no multiple choice after the wrong recheck
     [1, 'written', true],
     [4, 'written', true],
   ]);
@@ -2534,13 +2670,28 @@ test('recheck: dropped only when it would come within 10 questions of mastering,
   expect(isFinished(nine.raw)).toBe(false);
 });
 
-test('recheck: the gap is at least 10, also with few cards open (except at the end of a planned round)', () => {
+test('recheck: the gap is at least 10, also with few cards open and at the end of a planned round', () => {
   // c1 mastered 5 questions ago and waiting for its recheck, c2 new: c2 twice, then nothing else
-  // is left in the plan and the recheck comes after only 7 (a planned recheck is not dropped).
+  // is left in the plan, but the recheck would come after only 7 – the round ends instead.
   const cards = makeCards(2);
   for (let seed = 1; seed <= 40; seed++) {
     const s = planFrom(cards, { stage: { c1: 2 }, lastAt: { c1: 4 }, clock: 10, seed, extra: { recheck: { due: ['c1'] }, misses: { c1: 1 } } });
-    expect(s.queue.map((q) => q.qid)).toEqual(['1.1:c2', '1.1.2:c2', '1.4:c1']);
+    expect(s.queue.map((q) => q.qid)).toEqual(['1.1:c2', '1.1.2:c2']);
+    expect(s.recheck.due).toEqual(['c1']);
+    // Both right: everything mastered, the recheck could only come right away – dropped, finished.
+    const done = nextRound(answer(answer(s, true, T0 + SEC), true, T0 + 2 * SEC), cards, mulberry32(seed), T0 + 3 * SEC);
+    expect(done.recheck.due).toEqual([]);
+    expect(isFinished(done)).toBe(true);
+    // c2 wrong at first: it is learned again, and the recheck waits until it has waited 10.
+    let w = answer(s, false, T0 + SEC);
+    while (!isFinished(w)) {
+      if (isRoundOver(w)) w = nextRound(w, cards, mulberry32(seed), T0 + 3 * SEC);
+      else {
+        const q = current(w);
+        if (isRecheck(q.qid)) expect(w.clock - w.lastAt.c1 - 1).toBeGreaterThanOrEqual(MIN_GAP);
+        w = answer(w, true, T0 + 2 * SEC);
+      }
+    }
   }
   // 12 cards (c1 mastered, 11 new): min = max(10, min(30, 11)) = 11. After 10 it may not come,
   // after 11 with a chance of 1 in 40.
@@ -2589,16 +2740,34 @@ test('spacing: nothing may come and nothing is new: a learning card early, a rec
   const cards = makeCards(3);
   const s = planFrom(cards, { stage: { c1: 1, c2: 1, c3: 2 }, lastAt: { c1: 9, c2: 9, c3: 4 }, clock: 10, roundSize: 1, extra: { recheck: { due: ['c3'] }, misses: { c3: 1 } } });
   expect(s.queue.map((q) => q.qid)).toEqual(['1.1:c1']);
-  // Only rechecks waiting, none ready, a repetition question still to come later: the recheck
-  // waiting longest comes (the repetition question is new, so only once it is planned).
-  const t = planFrom(cards, {
-    stage: { c1: 2, c2: 2, c3: 2 },
-    lastAt: { c1: 9, c2: 3 },
-    clock: 12,
-    roundSize: 2,
-    extra: { recheck: { due: ['c1', 'c2'] }, misses: { c1: 1, c2: 1 }, review: { due: ['c3'], results: {} } },
-  });
-  expect(t.queue.map((q) => q.qid)).toEqual(['1.3:c3', '1.4:c2']);
+  // Only rechecks waiting, none ready, after the repetition question: a recheck that has waited
+  // MIN_GAP questions comes (c2, 10 at its turn), one that has waited fewer never comes early – the
+  // round ends there (c2 last asked at 3, then 9 at its turn).
+  const plan = (c2) =>
+    planFrom(cards, {
+      stage: { c1: 2, c2: 2, c3: 2 },
+      lastAt: { c1: 9, c2 },
+      clock: 12,
+      roundSize: 3,
+      extra: { recheck: { due: ['c1', 'c2'] }, misses: { c1: 1, c2: 1 }, review: { due: ['c3'], results: {} } },
+    });
+  expect(plan(2).queue.map((q) => q.qid)).toEqual(['1.3:c3', '1.4:c2']);
+  expect(plan(2).recheck.due).toEqual(['c1']);
+  expect(plan(3).queue.map((q) => q.qid)).toEqual(['1.3:c3']);
+  expect(plan(3).recheck.due).toEqual(['c1', 'c2']);
+});
+
+test('spacing: rechecks at the end come after MIN_GAP even when their wait is not reached', () => {
+  // Every card mastered, 35 rechecks waiting 15 questions: their wait would be 30 with so many open,
+  // but nothing else is left, so they come (none sooner than MIN_GAP).
+  const cards = makeCards(40);
+  const ids = cards.slice(0, 35).map((c) => c.id);
+  const stage = Object.fromEntries(cards.map((c) => [c.id, 2]));
+  const lastAt = Object.fromEntries(ids.map((id) => [id, 4]));
+  const misses = Object.fromEntries(ids.map((id) => [id, 1]));
+  const s = planFrom(cards, { stage, lastAt, clock: 20, roundSize: 7, extra: { recheck: { due: ids }, misses } });
+  expect(s.queue).toHaveLength(7);
+  expect(s.queue.every((q) => isRecheck(q.qid))).toBe(true);
 });
 
 test('recheck: "Ich hatte recht"', () => {
@@ -2661,7 +2830,7 @@ test('recheck: removeCard and syncProgress', () => {
   const synced = syncProgress(queued.s, p2, T0 + DAY_MS);
   const qAfter = synced.queue.find((y) => y.cardId === x);
   expect(qAfter.qid).toBe(qBefore.qid.replace('.4', '.1'));
-  expect(qAfter.type).toBe('mc');
+  expect(qAfter.type).toBe('written');
   expect(synced.queue.map((y) => y.cardId)).toEqual(queued.s.queue.map((y) => y.cardId));
   // Mastered elsewhere without a miss in this session: nothing to recheck.
   expect(syncProgress(s0, { [x]: recorded(true, true) }, T0).recheck).toEqual({ due: [] });
@@ -2796,7 +2965,8 @@ test('determinism: the same seed gives the same session, also with repetition qu
       const key = `${e.round}/${e.cardId}`;
       nth[key] = (nth[key] || 0) + 1;
       expect(n === undefined ? 1 : Number(n)).toBe(nth[key]);
-      expect(e.type).toBe(e.stageBefore === 0 ? 'mc' : 'written');
+      // Multiple choice only until the card was answered right once (here or before the session).
+      expect(e.type).toBe(e.stageBefore === 0 && !e.solvedBefore ? 'mc' : 'written');
       // Repetition questions: once per card mastered before, as its first question.
       if (kind === '3') expect(e.stageBefore === 2 && !seenIds.has(id) && progress[id] !== undefined).toBe(true);
       // Rechecks: mastered cards; learning questions: cards not mastered.
@@ -2822,9 +2992,8 @@ test('determinism: the same seed gives the same session, also with repetition qu
         expect(after.length < MIN_GAP || after.some((x) => x.learning === 0 && x.reviews === 0)).toBe(true);
       }
     }
-    // Rechecks wait at least 10 questions, except when a round's plan has nothing else left to ask
-    // (then a planned recheck comes early; only rechecks not yet planned are dropped).
-    for (const e of rechecked) if (e.wait < MIN_GAP) expect([e.learning, e.reviews]).toEqual([0, 0]);
+    // Rechecks wait at least 10 questions, also at the end of the session (then they are dropped).
+    for (const e of rechecked) expect(e.wait).toBeGreaterThanOrEqual(MIN_GAP);
   }
 });
 

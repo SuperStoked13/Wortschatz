@@ -8,4 +8,14 @@
   <ItemGroup>
     <InternalsVisibleTo Include="Wortschatz.Core.Tests" />
   </ItemGroup>
+  <ItemGroup>
+    <!-- TeX hyphenation patterns for Hyphenator (sources and licences: Hyphenation/README.md). -->
+    <EmbeddedResource Include="Hyphenation\*.txt" WithCulture="false" LogicalName="Wortschatz.Core.Hyphenation.%(Filename)%(Extension)" />
+    <!-- Synonym lists for "Weitere Synonyme erkennen" (Windows/Android; sources, rules, licences: SynonymData/README.md). -->
+    <EmbeddedResource Include="SynonymData\*.syn" WithCulture="false" LogicalName="Wortschatz.Core.SynonymData.%(Filename)%(Extension)" />
+    <!-- English texts (CoreText, TextTable): en-mac.json = the Mac's String Catalog for the texts both apps share
+         (written by tools/strings.py sync), en.json = the texts only Windows and Android have. -->
+    <EmbeddedResource Include="Strings\en-mac.json" WithCulture="false" LogicalName="Wortschatz.Core.Strings.en-mac.json" />
+    <EmbeddedResource Include="Strings\en.json" WithCulture="false" LogicalName="Wortschatz.Core.Strings.en.json" />
+  </ItemGroup>
 </Project>

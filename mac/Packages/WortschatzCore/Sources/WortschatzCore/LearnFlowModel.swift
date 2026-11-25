@@ -10,25 +10,34 @@ extension LearnFlow {
     // MARK: - Copy
 
     /// Praise after a correct answer, varied (never the same twice in a row).
-    public static let PRAISE = ["Super!", "Klasse!", "Genau!", "Weiter so!", "Stark!"]
+    public static var PRAISE: [String] { [L("Super!"), L("Klasse!"), L("Genau!"), L("Weiter so!"), L("Stark!")] }
     /// Title after a wrong answer.
-    public static let MISS_TITLE = "Nicht ganz – das lernst du noch!"
+    public static var MISS_TITLE: String { L("Nicht ganz – das lernst du noch!") }
     /// Title after "Weiss ich nicht?" (short enough for one line).
-    public static let DONT_KNOW_TITLE = "Kein Problem – merk sie dir!"
+    public static var DONT_KNOW_TITLE: String { L("Kein Problem – merk sie dir!") }
     /// Title of a correct answer that belongs to another card with the same prompt.
-    public static let SYNONYM_TITLE = "Auch richtig!"
+    public static var SYNONYM_TITLE: String { L("Auch richtig!") }
     /// Title of a correct answer that was accepted with a tolerance (not exact).
-    public static let TOLERATED_TITLE = "Richtig!"
+    public static var TOLERATED_TITLE: String { L("Richtig!") }
     /// The intro hint shown until the first checkpoint.
-    public static let INTRO_HINT = "Neue Begriffe kommen zuerst als Multiple Choice – beim nächsten Mal schreibst du sie."
+    public static var INTRO_HINT: String {
+        L("Neue Begriffe kommen zuerst als Multiple Choice – beim nächsten Mal schreibst du sie.")
+    }
     /// Shown when the edited card now accepts what was typed.
-    public static let EDITED_CORRECT_TEXT = "Mit deiner Korrektur stimmt deine Antwort jetzt."
+    public static var EDITED_CORRECT_TEXT: String { L("Mit deiner Korrektur stimmt deine Antwort jetzt.") }
     /// Toast when a session is resumed with answers.
-    public static let WELCOME_BACK = "Willkommen zurück – weiter geht's"
+    public static var WELCOME_BACK: String { L("Willkommen zurück – weiter geht's") }
     /// The mark of a repetition question (Wiederholungsfrage) of a mastered card.
-    public static let REVIEW_LABEL = "Wiederholung"
+    public static var REVIEW_LABEL: String { L("Wiederholung") }
     /// After a missed repetition question: the card is learned again.
-    public static let DEMOTED_TEXT = "Wieder am Lernen"
+    public static var DEMOTED_TEXT: String { L("Wieder am Lernen") }
+    /// The mark of a recheck (Nachkontrolle) of a card missed earlier in the session.
+    public static var RECHECK_LABEL: String { L("Nachkontrolle") }
+    /// Its help text.
+    public static var RECHECK_HELP: String { L("Diesen Begriff hattest du vorhin falsch. Er kommt zur Kontrolle nochmals.") }
+    /// The hint at the first recheck of a session (a toast with "Optionen", `RECHECK_HINT_MS` long).
+    public static var RECHECK_HINT: String { L("Merke: Die Nachkontrolle kannst du in den Optionen ausschalten.") }
+    public static let RECHECK_HINT_MS = 10_000
 
     /// Auto-advance after a correct answer, and after one with notes ("Genau: …" needs reading).
     public static let ADVANCE_MS = 900
@@ -109,107 +118,34 @@ extension LearnFlow {
         return pendingFeedback(state, json)
     }
 
-    // MARK: - Options that need a restart
-
-    /// A setting that shapes a running session: it only applies to a new one.
-    public enum SettingsChange: String, Codable, Sendable, Equatable, Hashable, CaseIterable {
-        case direction, types, roundSize, review, recheck
-    }
-
-    /// The options a session was built with (`sessionSettings`).
-    public struct SessionSettings: Codable, Sendable, Equatable, Hashable {
-        public var answerWith: AnswerWith
-        public var roundSize: Int
-        public var mc: Bool
-        public var written: Bool
-        /// With repetition questions (`LearnReview`).
-        public var review: Bool
-        /// With rechecks (Nachkontrolle, `LearnRecheck`; only sessions with more than
-        /// `LearnEngine.RECHECK_MIN_CARDS` cards have them).
-        public var recheck: Bool
-
-        public init(
-            answerWith: AnswerWith, roundSize: Int, mc: Bool, written: Bool, review: Bool = false, recheck: Bool = false
-        ) {
-            self.answerWith = answerWith
-            self.roundSize = roundSize
-            self.mc = mc
-            self.written = written
-            self.review = review
-            self.recheck = recheck
-        }
-    }
-
-    public static func sessionSettings(_ state: LearnState) -> SessionSettings {
-        sessionSettings(answerWith: state.answerWith, roundSize: state.learn.roundSize, mc: state.learn.mc,
-                        written: state.learn.written, review: state.review != nil, recheck: state.recheck != nil)
-    }
-
-    /// The settings a new session would get (`review`: the repetition questions are on;
-    /// `recheck`: rechecks would apply, i.e. the option is on and the session has more than
-    /// `LearnEngine.RECHECK_MIN_CARDS` cards).
-    public static func sessionSettings(_ options: StudyOptions, review: Bool = false, recheck: Bool = false)
-        -> SessionSettings
-    {
-        sessionSettings(answerWith: options.answerWith, roundSize: options.learn.roundSize, mc: options.learn.mc,
-                        written: options.learn.written, review: review, recheck: recheck)
-    }
-
-    private static func sessionSettings(
-        answerWith: AnswerWith, roundSize: Int, mc: Bool, written: Bool, review: Bool, recheck: Bool
-    ) -> SessionSettings {
-        let both = mc || written
-        return SessionSettings(
-            answerWith: answerWith, roundSize: roundSize >= 1 ? roundSize : defaultRoundSize, mc: both ? mc : true,
-            written: both ? written : true, review: review, recheck: recheck)
-    }
-
-    /// Which session-shaping settings differ: direction, question types, round size, repetition
-    /// questions, rechecks (in this order). Tolerance, audio and the copy step apply at once.
-    public static func settingsChanges(_ a: SessionSettings, _ b: SessionSettings) -> [SettingsChange] {
-        var out: [SettingsChange] = []
-        if a.answerWith != b.answerWith { out.append(.direction) }
-        if a.mc != b.mc || a.written != b.written { out.append(.types) }
-        if a.roundSize != b.roundSize { out.append(.roundSize) }
-        if a.review != b.review { out.append(.review) }
-        if a.recheck != b.recheck { out.append(.recheck) }
-        return out
-    }
-
-    /// "Neu starten?" after options that only apply to a new session.
-    public static func restartMessage(_ changes: [SettingsChange]) -> String {
-        let lead =
-            switch changes.count == 1 ? changes[0] : nil {
-            case .direction?: "Die neue Abfragerichtung gilt"
-            case .types?: "Die neuen Fragetypen gelten"
-            case .roundSize?: "Die neue Rundengrösse gilt"
-            case .review?: "Die Einstellung für Wiederholungsfragen gilt"
-            case .recheck?: "Die Einstellung für die Nachkontrolle gilt"
-            case nil: "Die neuen Einstellungen gelten"
-            }
-        return "\(lead) ab einem Neustart. Jetzt neu beginnen? Dein Lernfortschritt bleibt gespeichert."
-    }
+    // MARK: - Restart
 
     /// "Neu starten?" in a running session: what the new one covers.
     public static func restartSessionMessage(_ subset: StudySubset = .all) -> String {
-        let what =
-            switch subset {
-            case .starred: "mit allen markierten Begriffen, die noch nicht sitzen"
-            case .missed: "mit allen zuletzt falsch beantworteten Begriffen"
-            case .cardIds: "mit den ausgewählten Begriffen, die noch nicht sitzen"
-            case .all, .learning: "mit allen Begriffen, die noch nicht sitzen"
-            }
-        return "Du beginnst eine neue Lerneinheit \(what). Dein Lernfortschritt bleibt gespeichert."
+        switch subset {
+        case .starred:
+            L(
+                "Du beginnst eine neue Lerneinheit mit allen markierten Begriffen, die noch nicht sitzen. Dein Lernfortschritt bleibt gespeichert.")
+        case .missed:
+            L(
+                "Du beginnst eine neue Lerneinheit mit allen zuletzt falsch beantworteten Begriffen. Dein Lernfortschritt bleibt gespeichert.")
+        case .cardIds:
+            L(
+                "Du beginnst eine neue Lerneinheit mit den ausgewählten Begriffen, die noch nicht sitzen. Dein Lernfortschritt bleibt gespeichert.")
+        case .all, .learning:
+            L(
+                "Du beginnst eine neue Lerneinheit mit allen Begriffen, die noch nicht sitzen. Dein Lernfortschritt bleibt gespeichert.")
+        }
     }
 
     /// What a new session with a subset asks (for "Laufende Lerneinheit beenden?").
     public static func subsetWhat(_ subset: StudySubset) -> String {
         switch subset {
-        case .all: "alle Begriffe"
-        case .starred: "nur die markierten Begriffe"
-        case .learning: "nur die nicht gemeisterten Begriffe"
-        case .missed: "nur die zuletzt falsch beantworteten Begriffe"
-        case .cardIds: "eine neue Auswahl"
+        case .all: L("alle Begriffe")
+        case .starred: L("nur die markierten Begriffe")
+        case .learning: L("nur die nicht gemeisterten Begriffe")
+        case .missed: L("nur die zuletzt falsch beantworteten Begriffe")
+        case .cardIds: L("eine neue Auswahl")
         }
     }
 
@@ -239,13 +175,13 @@ extension LearnFlow {
             qid: q.qid, cardId: card.id, type: q.type, ask: q.ask, prompt: askTerm ? card.definition : card.term,
             expected: askTerm ? card.term : card.definition, promptLang: promptLang, answerLang: answerLang,
             promptLabel: sameLang || promptLang == .other
-                ? (askTerm ? "Definition" : "Begriff") : Labels.langName(promptLang),
+                ? (askTerm ? L("Definition") : L("Begriff")) : Labels.langName(promptLang),
             placeholder: sameLang || answerLang == .other
-                ? "Antwort eingeben" : "Antwort auf \(Labels.langName(answerLang)) eingeben",
+                ? L("Antwort eingeben") : L("Antwort auf %@ eingeben", Labels.langName(answerLang)),
             placeholderShort: sameLang || answerLang == .other
-                ? "Antwort eingeben" : "Auf \(Labels.langName(answerLang)) …",
+                ? L("Antwort eingeben") : L("Auf %@ …", Labels.langName(answerLang)),
             starred: card.starred, choices: choiceTexts(stored, cards: cards, ask: q.ask), storedChoices: stored,
-            isReview: q.isReview)
+            isReview: q.isReview, isRecheck: q.isRecheck)
     }
 
     /// Grades the written answer of `info` (`gradeQuestion`): an answer that is right for another
@@ -289,9 +225,11 @@ extension LearnFlow {
 
     /// Gemeistert / Am Lernen / Noch neu.
     public static func stageStatus(_ stage: Int) -> StageStatus {
-        if stage >= 2 { return StageStatus(status: .mastered, label: "Gemeistert", tone: .success, systemImage: "checkmark") }
-        if stage == 1 { return StageStatus(status: .learning, label: "Am Lernen", tone: .warning, systemImage: nil) }
-        return StageStatus(status: .new, label: "Noch neu", tone: .neutral, systemImage: nil)
+        if stage >= 2 {
+            return StageStatus(status: .mastered, label: L("Gemeistert"), tone: .success, systemImage: "checkmark")
+        }
+        if stage == 1 { return StageStatus(status: .learning, label: L("Am Lernen"), tone: .warning, systemImage: nil) }
+        return StageStatus(status: .new, label: L("Noch neu"), tone: .neutral, systemImage: nil)
     }
 
     /// The checkpoint chip of a card answered in the round: stage 0 there means "answered
@@ -302,46 +240,50 @@ extension LearnFlow {
 
     /// "18 von 52 gemeistert"
     public static func masteredLine(_ mastered: Int, _ total: Int) -> String {
-        "\(mastered) von \(total) gemeistert"
+        L("%@ von %@ gemeistert", "\(mastered)", "\(total)")
     }
 
     /// The checkpoint title by the round's share of correct answers.
     public static func checkpointTitle(_ ratio: Double) -> String {
-        if ratio >= 0.9 { return "Hervorragend!" }
-        if ratio >= 0.7 { return "Gut gemacht!" }
-        if ratio >= 0.4 { return "Du machst Fortschritte!" }
-        return "Dranbleiben – das wird!"
+        if ratio >= 0.9 { return L("Hervorragend!") }
+        if ratio >= 0.7 { return L("Gut gemacht!") }
+        if ratio >= 0.4 { return L("Du machst Fortschritte!") }
+        return L("Dranbleiben – das wird!")
     }
 
     /// What is left after a checkpoint, e.g. "Noch 34 Begriffe, bis alles sitzt."
     public static func remainingText(mastered: Int, total: Int) -> String {
         let left = max(0, total - mastered)
-        if left == 0 { return "Alles sitzt!" }
-        return "Noch \(Labels.plural(left, "Begriff", "Begriffe")), bis alles sitzt."
+        if left == 0 { return L("Alles sitzt!") }
+        return L("Noch %@, bis alles sitzt.", Labels.plural(left, "Begriff", "Begriffe"))
     }
 
     /// "5 richtige Antworten von 7 in dieser Runde. Noch 34 Begriffe, bis alles sitzt."
     public static func checkpointText(_ cp: LearnEngine.Checkpoint) -> String {
-        "\(Labels.plural(cp.correct, "richtige Antwort", "richtige Antworten")) von \(cp.answered) in dieser Runde. "
-            + remainingText(mastered: cp.counts.mastered, total: cp.counts.total)
+        L(
+            "%@ von %@ in dieser Runde. %@", Labels.plural(cp.correct, "richtige Antwort", "richtige Antworten"),
+            "\(cp.answered)", remainingText(mastered: cp.counts.mastered, total: cp.counts.total))
     }
 
-    /// The adjective naming a session's scope ("markierten ", …, with a trailing space; "" for
-    /// the whole set).
-    private static func scopeAdjective(_ subset: StudySubset) -> String {
-        switch subset {
-        case .cardIds: "ausgewählten "
-        case .starred: "markierten "
-        case .learning: "offenen "
-        case .missed: "falsch beantworteten "
-        case .all: ""
-        }
-    }
-
-    /// "Du hast alle markierten Begriffe gemeistert!" (the finish screen's title).
+    /// "Du hast alle markierten Begriffe gemeistert!" (the finish screen's title). The scope's
+    /// adjective (ausgewählten, markierten, offenen, falsch beantworteten; none for the whole set)
+    /// is part of each whole sentence.
     public static func finishTitle(_ subset: StudySubset = .all, total: Int = 2) -> String {
-        let adj = scopeAdjective(subset)
-        return total == 1 ? "Du hast den \(adj)Begriff gemeistert!" : "Du hast alle \(adj)Begriffe gemeistert!"
+        let one = total == 1
+        switch subset {
+        case .cardIds:
+            return one ? L("Du hast den ausgewählten Begriff gemeistert!") : L("Du hast alle ausgewählten Begriffe gemeistert!")
+        case .starred:
+            return one ? L("Du hast den markierten Begriff gemeistert!") : L("Du hast alle markierten Begriffe gemeistert!")
+        case .learning:
+            return one ? L("Du hast den offenen Begriff gemeistert!") : L("Du hast alle offenen Begriffe gemeistert!")
+        case .missed:
+            return one
+                ? L("Du hast den falsch beantworteten Begriff gemeistert!")
+                : L("Du hast alle falsch beantworteten Begriffe gemeistert!")
+        case .all:
+            return one ? L("Du hast den Begriff gemeistert!") : L("Du hast alle Begriffe gemeistert!")
+        }
     }
 
     /// "Alle 3 markierten Begriffe in 2 Runden gemeistert – stark!" or "44 Begriffe in 16 Runden
@@ -349,16 +291,67 @@ extension LearnFlow {
     public static func finishSubtitle(total: Int, rounds: Int, alreadyMastered: Int = 0, subset: StudySubset = .all)
         -> String
     {
-        let when = rounds > 0 ? " in \(Labels.plural(rounds, "Runde", "Runden"))" : ""
         let before = max(0, alreadyMastered)
         let learned = total - before
         if before > 0 && learned > 0 {
-            return "\(Labels.plural(learned, "Begriff", "Begriffe"))\(when) gemeistert, \(before) "
-                + "\(before == 1 ? "sass" : "sassen") schon vorher – stark!"
+            let cards = Labels.plural(learned, "Begriff", "Begriffe")
+            if rounds > 0 {
+                let inRounds = Labels.plural(rounds, "Runde", "Runden")
+                return before == 1
+                    ? L("%@ in %@ gemeistert, %@ sass schon vorher – stark!", cards, inRounds, "\(before)")
+                    : L("%@ in %@ gemeistert, %@ sassen schon vorher – stark!", cards, inRounds, "\(before)")
+            }
+            return before == 1
+                ? L("%@ gemeistert, %@ sass schon vorher – stark!", cards, "\(before)")
+                : L("%@ gemeistert, %@ sassen schon vorher – stark!", cards, "\(before)")
         }
-        let adj = scopeAdjective(subset)
-        let what = total == 1 ? "Den \(adj)Begriff" : "Alle \(total) \(adj)Begriffe"
-        return "\(what)\(when) gemeistert – stark!"
+        if rounds > 0 {
+            return finishSubtitleInRounds(subset, total: total, rounds: Labels.plural(rounds, "Runde", "Runden"))
+        }
+        let one = total == 1
+        let n = "\(total)"
+        switch subset {
+        case .cardIds:
+            return one ? L("Den ausgewählten Begriff gemeistert – stark!") : L("Alle %@ ausgewählten Begriffe gemeistert – stark!", n)
+        case .starred:
+            return one ? L("Den markierten Begriff gemeistert – stark!") : L("Alle %@ markierten Begriffe gemeistert – stark!", n)
+        case .learning:
+            return one ? L("Den offenen Begriff gemeistert – stark!") : L("Alle %@ offenen Begriffe gemeistert – stark!", n)
+        case .missed:
+            return one
+                ? L("Den falsch beantworteten Begriff gemeistert – stark!")
+                : L("Alle %@ falsch beantworteten Begriffe gemeistert – stark!", n)
+        case .all:
+            return one ? L("Den Begriff gemeistert – stark!") : L("Alle %@ Begriffe gemeistert – stark!", n)
+        }
+    }
+
+    /// `finishSubtitle` with rounds ("Alle 3 markierten Begriffe in 2 Runden gemeistert – stark!");
+    /// `rounds` is the plural text ("2 Runden").
+    private static func finishSubtitleInRounds(_ subset: StudySubset, total: Int, rounds: String) -> String {
+        let one = total == 1
+        let n = "\(total)"
+        switch subset {
+        case .cardIds:
+            return one
+                ? L("Den ausgewählten Begriff in %@ gemeistert – stark!", rounds)
+                : L("Alle %@ ausgewählten Begriffe in %@ gemeistert – stark!", n, rounds)
+        case .starred:
+            return one
+                ? L("Den markierten Begriff in %@ gemeistert – stark!", rounds)
+                : L("Alle %@ markierten Begriffe in %@ gemeistert – stark!", n, rounds)
+        case .learning:
+            return one
+                ? L("Den offenen Begriff in %@ gemeistert – stark!", rounds)
+                : L("Alle %@ offenen Begriffe in %@ gemeistert – stark!", n, rounds)
+        case .missed:
+            return one
+                ? L("Den falsch beantworteten Begriff in %@ gemeistert – stark!", rounds)
+                : L("Alle %@ falsch beantworteten Begriffe in %@ gemeistert – stark!", n, rounds)
+        case .all:
+            return one
+                ? L("Den Begriff in %@ gemeistert – stark!", rounds) : L("Alle %@ Begriffe in %@ gemeistert – stark!", n, rounds)
+        }
     }
 
     public static func finishSubtitle(_ stats: LearnEngine.FinalStats, subset: StudySubset = .all) -> String {
@@ -372,20 +365,24 @@ extension LearnFlow {
         let asked = Labels.plural(stats.asked, "gemeisterten Begriff", "gemeisterte Begriffe")
         let missed = stats.asked - stats.kept
         if missed == 0 {
-            return "\(asked) wiederholt, \(stats.asked == 1 ? "er sass" : "alle sassen") noch."
+            return stats.asked == 1 ? L("%@ wiederholt, er sass noch.", asked) : L("%@ wiederholt, alle sassen noch.", asked)
         }
-        return "\(asked) wiederholt, \(missed) davon \(missed == 1 ? "ist" : "sind") wieder am Lernen."
+        return missed == 1
+            ? L("%@ wiederholt, %@ davon ist wieder am Lernen.", asked, "\(missed)")
+            : L("%@ wiederholt, %@ davon sind wieder am Lernen.", asked, "\(missed)")
     }
 
     /// How many cards a scope covers, for the "everything mastered" screen.
     public static func scopeText(_ subset: StudySubset, count: Int) -> String {
-        if subset == .starred { return count == 1 ? "den markierten Begriff" : "alle \(count) markierten Begriffe" }
-        return count == 1 ? "den Begriff" : "alle \(count) Begriffe"
+        if subset == .starred {
+            return count == 1 ? L("den markierten Begriff") : L("alle %@ markierten Begriffe", "\(count)")
+        }
+        return count == 1 ? L("den Begriff") : L("alle %@ Begriffe", "\(count)")
     }
 
     /// "18 von 52 gemeistert, 7 am Lernen, 27 neu"
     public static func progressText(fresh: Int, learning: Int, mastered: Int, total: Int) -> String {
-        "\(masteredLine(mastered, total)), \(learning) am Lernen, \(fresh) neu"
+        L("%@ von %@ gemeistert, %@ am Lernen, %@ neu", "\(mastered)", "\(total)", "\(learning)", "\(fresh)")
     }
 
     public static func progressText(_ counts: LearnEngine.Counts) -> String {

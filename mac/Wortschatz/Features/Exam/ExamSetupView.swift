@@ -72,7 +72,7 @@ struct ExamSetupView: View {
         let available = Exam.scope(controller.set.cards, settings: settings).count
         return GlassCard(padding: Spacing.xl, cornerRadius: Radii.panel) {
             VStack(alignment: .leading, spacing: Spacing.l) {
-                ExamSettingRow(title: "Wörter", systemImage: "number", caption: countCaption(available)) {
+                ExamSettingRow(title: String(localized: "Wörter"), systemImage: "number", caption: countCaption(available)) {
                     Picker("Wörter", selection: countBinding(available)) {
                         ForEach(countChoices(available), id: \.self) { count in
                             Text(count == 0 ? "Alle \(available)" : "\(count)").tag(count)
@@ -82,7 +82,7 @@ struct ExamSetupView: View {
                     .labelsHidden()
                 }
                 Divider()
-                ExamSettingRow(title: "Zeitlimit", systemImage: ExamSymbols.timer, caption: timeCaption) {
+                ExamSettingRow(title: String(localized: "Zeitlimit"), systemImage: ExamSymbols.timer, caption: timeCaption) {
                     Picker("Zeitlimit", selection: binding(\.minutes)) {
                         ForEach(ExamSettings.minuteChoices, id: \.self) { minutes in
                             Text(minutes == 0 ? "Ohne" : "\(minutes) Min.").tag(minutes)
@@ -94,7 +94,7 @@ struct ExamSetupView: View {
                 }
                 Divider()
                 ExamSettingRow(
-                    title: "Antworten auf", systemImage: "arrow.left.arrow.right",
+                    title: String(localized: "Antworten auf"), systemImage: "arrow.left.arrow.right",
                     caption: LearnOptionsCopy.directionText(settings.answerWith, names: names)
                 ) {
                     Picker("Antworten auf", selection: binding(\.answerWith)) {
@@ -107,7 +107,7 @@ struct ExamSetupView: View {
                 }
                 Divider()
                 ExamSettingRow(
-                    title: "Kleine Fehler", systemImage: "checkmark.seal",
+                    title: String(localized: "Kleine Fehler"), systemImage: "checkmark.seal",
                     caption: ExamCopy.toleranceText(settings.tolerance)
                 ) {
                     Picker("Kleine Fehler", selection: binding(\.tolerance)) {
@@ -122,8 +122,8 @@ struct ExamSetupView: View {
                 if controller.starredCount > 0 {
                     Divider()
                     ExamToggleRow(
-                        title: "Nur markierte (\(controller.starredCount))", systemImage: "star",
-                        caption: "Nur die Begriffe mit Stern abfragen.", isOn: binding(\.starredOnly))
+                        title: String(localized: "Nur markierte (\(controller.starredCount))"), systemImage: "star",
+                        caption: String(localized: "Nur die Begriffe mit Stern abfragen."), isOn: binding(\.starredOnly))
                 }
             }
         }
@@ -163,14 +163,18 @@ struct ExamSetupView: View {
     private func countCaption(_ available: Int) -> String {
         let planned = controller.plannedCount
         return planned >= available
-            ? "Alle Begriffe, in zufälliger Reihenfolge."
-            : "\(planned) von \(available) Begriffen, zufällig ausgewählt."
+            ? String(localized: "Alle Begriffe, in zufälliger Reihenfolge.")
+            : String(localized: "\(planned) von \(available) Begriffen, zufällig ausgewählt.")
     }
 
     private var timeCaption: String {
-        guard settings.minutes > 0 else { return "So viel Zeit, wie du brauchst. Die Zeit wird trotzdem gemessen." }
+        guard settings.minutes > 0 else {
+            return String(localized: "So viel Zeit, wie du brauchst. Die Zeit wird trotzdem gemessen.")
+        }
         let suggested = max(1, Int((Double(controller.plannedCount) * 0.5).rounded(.up)))
-        return "Ist die Zeit um, wird abgegeben. Empfohlen: etwa \(Labels.plural(suggested, "Minute", "Minuten")) für \(Labels.plural(controller.plannedCount, "Wort", "Wörter"))."
+        return String(
+            localized:
+                "Ist die Zeit um, wird abgegeben. Empfohlen: etwa \(Labels.plural(suggested, "Minute", "Minuten")) für \(Labels.plural(controller.plannedCount, "Wort", "Wörter")).")
     }
 
     private func binding<Value>(_ keyPath: WritableKeyPath<ExamSettings, Value>) -> Binding<Value> {

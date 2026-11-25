@@ -1,3 +1,5 @@
+using static Wortschatz.Core.CoreText;
+
 namespace Wortschatz.Core;
 
 // Port of Exam.swift. Prüfungsmodus (exam): a vocabulary test over a set on one page, graded like a test
@@ -258,12 +260,12 @@ public static class Exam
     /// <summary>The results' title by grade.</summary>
     public static string Verdict(double grade) => grade switch
     {
-        >= 6 => "Perfekt!",
-        >= 5.5 => "Hervorragend!",
-        >= 5 => "Sehr gut!",
-        >= 4.5 => "Gut gemacht!",
-        >= 4 => "Bestanden!",
-        _ => "Noch nicht genügend",
+        >= 6 => L("Perfekt!"),
+        >= 5.5 => L("Hervorragend!"),
+        >= 5 => L("Sehr gut!"),
+        >= 4.5 => L("Gut gemacht!"),
+        >= 4 => L("Bestanden!"),
+        _ => L("Noch nicht genügend"),
     };
 
     // MARK: - Internals
@@ -304,45 +306,45 @@ public static class Exam
     }
 }
 
-/// <summary>German texts of the exam settings and results.</summary>
+/// <summary>Texts of the exam settings and results (German source, translated with <see cref="CoreText.L(string)"/>).</summary>
 public static class ExamCopy
 {
     /// <summary>"Ohne Zeitlimit", "1 Minute", "10 Minuten".</summary>
-    public static string Minutes(int minutes) => minutes <= 0 ? "Ohne Zeitlimit" : Labels.Plural(minutes, "Minute", "Minuten");
+    public static string Minutes(int minutes) => minutes <= 0 ? L("Ohne Zeitlimit") : Labels.Plural(minutes, "Minute", "Minuten");
 
     public static string ToleranceTitle(ExamTolerance tolerance) => tolerance switch
     {
-        ExamTolerance.Strict => "Streng",
-        ExamTolerance.Half => "Halber Punkt",
-        _ => "Grosszügig",
+        ExamTolerance.Strict => L("Streng"),
+        ExamTolerance.Half => L("Halber Punkt"),
+        _ => L("Grosszügig"),
     };
 
     /// <summary>What a small mistake costs.</summary>
     public static string ToleranceText(ExamTolerance tolerance) => tolerance switch
     {
-        ExamTolerance.Strict => "Nur ganz richtige Antworten geben einen Punkt.",
-        ExamTolerance.Half => "Ein kleiner Fehler kostet einen halben Punkt.",
-        _ => "Kleine Fehler kosten nichts.",
+        ExamTolerance.Strict => L("Nur ganz richtige Antworten geben einen Punkt."),
+        ExamTolerance.Half => L("Ein kleiner Fehler kostet einen halben Punkt."),
+        _ => L("Kleine Fehler kosten nichts."),
     };
 
     /// <summary>Which mistakes are small.</summary>
-    public const string SmallMistakesText =
-        "Kleine Fehler sind ein Tippfehler, fehlende Akzente, die Grossschreibung deutscher Nomen und ein fehlender Artikel oder ein fehlendes Pronomen. Ein falscher Artikel ist ein Fehler.";
+    public static string SmallMistakesText =>
+        L("Kleine Fehler sind ein Tippfehler, fehlende Akzente, die Grossschreibung deutscher Nomen und ein fehlender Artikel oder ein fehlendes Pronomen. Ein falscher Artikel ist ein Fehler.");
 
     /// <summary>"17.5 von 20 Punkten".</summary>
-    public static string ScoreLine(ExamResult result) => $"{Exam.PointsText(result.Points)} von {Labels.Plural(result.MaxPoints, "Punkt", "Punkten")}";
+    public static string ScoreLine(ExamResult result) => L($"{Exam.PointsText(result.Points)} von {Labels.Plural(result.MaxPoints, "Punkt", "Punkten")}");
 
     /// <summary>The mark's label in the results ("Richtig", "Halber Punkt", …).</summary>
     public static string MarkLabel(ExamItemResult item) => item.Mark switch
     {
-        ExamMark.Correct => "Richtig",
+        ExamMark.Correct => L("Richtig"),
         ExamMark.Minor => item.Points switch
         {
-            1 => "Richtig",
-            0.5 => "Halber Punkt",
-            _ => "Kleiner Fehler",
+            1 => L("Richtig"),
+            0.5 => L("Halber Punkt"),
+            _ => L("Kleiner Fehler"),
         },
-        ExamMark.Wrong => "Falsch",
-        _ => "Keine Antwort",
+        ExamMark.Wrong => L("Falsch"),
+        _ => L("Keine Antwort"),
     };
 }

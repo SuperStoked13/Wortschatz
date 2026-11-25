@@ -1,9 +1,11 @@
+using static Wortschatz.Core.CoreText;
+
 namespace Wortschatz.Core;
 
 // Second half of the parser port (parser.js from "Delimited lists" on): delimited lists
 // (VocabParser+Delimited.swift), line-based lists and their alignment (VocabParser+LineBased.swift),
-// explicit delimiter mode, orchestration, Finish and the German warnings (VocabParser.swift,
-// VocabParser+Context.swift).
+// explicit delimiter mode, orchestration, Finish and the warnings (German source, translated with CoreText.L;
+// VocabParser.swift, VocabParser+Context.swift).
 public static partial class VocabParser
 {
     sealed record ParseOutcome(List<Pair> Pairs, string Format, string? Delimiter);
@@ -722,7 +724,7 @@ public static partial class VocabParser
         var pairs = new List<Pair>();
         foreach (var (left, right, m) in columns)
         {
-            if (left.Count != right.Count) ctx.Warnings.Add($"Die beiden Spalten sind unterschiedlich lang ({left.Count} und {right.Count} Zeilen).");
+            if (left.Count != right.Count) ctx.Warnings.Add(L($"Die beiden Spalten sind unterschiedlich lang ({left.Count} und {right.Count} Zeilen)."));
             for (int k = 0; k < m; k++)
             {
                 var (a, b) = (items[left[k]], items[right[k]]);
@@ -1156,9 +1158,9 @@ public static partial class VocabParser
             if (lines.Count > 1) ctx.Warnings.Duplicate(term, lines);
         }
         int skipCount = ctx.Skipped.Count(s => s.Reason != SkipReason.Unpaired);
-        if (skipCount > 0)
-            ctx.Warnings.Add(skipCount == 1 ? "1 Zeile ohne Vokabeln wurde übersprungen." : $"{skipCount} Zeilen ohne Vokabeln wurden übersprungen.");
-        if (cards.Count >= 3 && !distinct) ctx.Warnings.Add("Die Sprachen der beiden Seiten konnten nicht sicher erkannt werden.");
+        if (skipCount > 0) ctx.Warnings.Add(SkippedLinesWarning(skipCount));
+        // CoreText.L in full: this method has a local L (the left side's language).
+        if (cards.Count >= 3 && !distinct) ctx.Warnings.Add(CoreText.L("Die Sprachen der beiden Seiten konnten nicht sicher erkannt werden."));
 
         string PickLang(string lang, double conf, string? hint) => KnownLang(lang) && (conf >= 0.55 || hint is null) ? lang : hint ?? "other";
         var format = cards.Count > 0 || result.Format != "empty" ? result.Format : "empty";
@@ -1173,26 +1175,34 @@ public static partial class VocabParser
             ctx.Warnings.Build());
     }
 
-    // MARK: - German warnings
+    // MARK: - Warnings (German source, translated with CoreText.L)
 
-    static readonly (string Kind, string One, string Many)[] LINE_WARNINGS =
-    [
-        ("unpaired", "Zeile {n} konnte keinem Paar zugeordnet werden.", "Zeilen {n} konnten keinem Paar zugeordnet werden."),
-        ("merged", "Zeile {n} wurde als Fortsetzung der vorherigen Zeile übernommen.", "Zeilen {n} wurden als Fortsetzung der vorherigen Zeile übernommen."),
-        ("reversed", "Zeile {n}: Begriff und Definition waren vertauscht und wurden umgedreht.", "Zeilen {n}: Begriff und Definition waren vertauscht und wurden umgedreht."),
-        ("lowConfidence", "Zeile {n} wurde unsicher erkannt – bitte prüfen.", "Zeilen {n} wurden unsicher erkannt – bitte prüfen."),
-        ("langMismatch", "Zeile {n} passt sprachlich nicht zu ihrer Spalte.", "Zeilen {n} passen sprachlich nicht zu ihrer Spalte."),
-        ("missingTerm", "Zeile {n}: Der Begriff fehlt.", "Zeilen {n}: Der Begriff fehlt."),
-        ("missingDefinition", "Zeile {n}: Die Definition fehlt.", "Zeilen {n}: Die Definition fehlt."),
-    ];
+    /// <summary>The kinds of line warnings, in display order.</summary>
+    static readonly string[] LINE_WARNINGS = ["unpaired", "merged", "reversed", "lowConfidence", "langMismatch", "missingTerm", "missingDefinition"];
+
+    /// <summary>The warning of a kind for the line numbers <paramref name="n"/> ("3", "3 und 5"); <paramref name="one"/>: a single line.</summary>
+    static string LineWarning(string kind, bool one, string n) => kind switch
+    {
+        "unpaired" => one ? L($"Zeile {n} konnte keinem Paar zugeordnet werden.") : L($"Zeilen {n} konnten keinem Paar zugeordnet werden."),
+        "merged" => one
+            ? L($"Zeile {n} wurde als Fortsetzung der vorherigen Zeile übernommen.")
+            : L($"Zeilen {n} wurden als Fortsetzung der vorherigen Zeile übernommen."),
+        "reversed" => one
+            ? L($"Zeile {n}: Begriff und Definition waren vertauscht und wurden umgedreht.")
+            : L($"Zeilen {n}: Begriff und Definition waren vertauscht und wurden umgedreht."),
+        "lowConfidence" => one ? L($"Zeile {n} wurde unsicher erkannt – bitte prüfen.") : L($"Zeilen {n} wurden unsicher erkannt – bitte prüfen."),
+        "langMismatch" => one ? L($"Zeile {n} passt sprachlich nicht zu ihrer Spalte.") : L($"Zeilen {n} passen sprachlich nicht zu ihrer Spalte."),
+        "missingTerm" => one ? L($"Zeile {n}: Der Begriff fehlt.") : L($"Zeilen {n}: Der Begriff fehlt."),
+        _ => one ? L($"Zeile {n}: Die Definition fehlt.") : L($"Zeilen {n}: Die Definition fehlt."),
+    };
 
     static string ListNumbers(List<int> nos)
     {
         var shown = nos.Take(6).ToList();
         int more = nos.Count - shown.Count;
-        if (more > 0) return $"{string.Join(", ", shown)} und {more} weitere";
+        if (more > 0) return L($"{string.Join(", ", shown)} und {more} weitere");
         if (shown.Count == 1) return shown[0].ToString();
-        return $"{string.Join(", ", shown.Take(shown.Count - 1))} und {shown[^1]}";
+        return L($"{string.Join(", ", shown.Take(shown.Count - 1))} und {shown[^1]}");
     }
 
     sealed class Warnings
@@ -1217,14 +1227,14 @@ public static partial class VocabParser
         public List<string> Build()
         {
             var output = new List<string>();
-            foreach (var (kind, one, many) in LINE_WARNINGS)
+            foreach (var kind in LINE_WARNINGS)
             {
                 if (!_byKind.TryGetValue(kind, out var nos) || nos.Count == 0) continue;
                 var sorted = nos.OrderBy(x => x).ToList();
-                output.Add((sorted.Count == 1 ? one : many).Replace("{n}", ListNumbers(sorted)));
+                output.Add(LineWarning(kind, sorted.Count == 1, ListNumbers(sorted)));
             }
-            if (_dups.Count > 3) output.Add($"{_dups.Count} Begriffe kommen mehrfach vor.");
-            else foreach (var d in _dups) output.Add($"«{d.Term}» kommt mehrfach vor (Zeilen {ListNumbers(d.Nos)}).");
+            if (_dups.Count > 3) output.Add(L($"{_dups.Count} Begriffe kommen mehrfach vor."));
+            else foreach (var d in _dups) output.Add(L($"«{d.Term}» kommt mehrfach vor (Zeilen {ListNumbers(d.Nos)})."));
             output.AddRange(_extra);
             return output;
         }

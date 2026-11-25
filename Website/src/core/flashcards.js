@@ -438,7 +438,8 @@ export function finishedTitle(deck) {
 
 export function finishedText(deck) {
   const rounds = deck.round === 1 ? 'Gleich in der ersten Runde – stark.' : `Geschafft in ${deck.round} Runden.`;
-  return `${rounds} Teste dich jetzt in «Lernen», damit sie auch als gemeistert zählen.`;
+  const it = deckTotal(deck) === 1 ? 'sie auch als gemeistert zählt' : 'sie auch als gemeistert zählen';
+  return `${rounds} Teste dich jetzt in «Lernen», damit ${it}.`;
 }
 
 // The confirmation before starting over.

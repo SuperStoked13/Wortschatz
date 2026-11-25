@@ -1,6 +1,8 @@
 import Foundation
 
-/// Port of src/lib/time.js: German date/time helpers.
+/// Port of src/lib/time.js: date/time helpers. The display texts are German (the source language)
+/// and pass through `L`, so the app's language can reorder or reword them; `dateKey` is a key and
+/// never translated.
 ///
 /// All timestamps are epoch milliseconds as `Double` (like JS). Local calendar logic takes an
 /// explicit `TimeZone` (the web app uses the browser's zone); the parity fixtures are generated
@@ -22,11 +24,12 @@ public enum TimeUtil {
         return "\(d.year)-\(pad(d.month))-\(pad(d.day))"
     }
 
-    /// Local date as "DD.MM.YYYY" ("" for nil/invalid input).
+    /// Local date as "DD.MM.YYYY" ("" for nil/invalid input). Display only: the order and the
+    /// separators come from `L` (day, month, year).
     public static func formatDate(_ ms: Double?, timeZone: TimeZone = .current) -> String {
         guard let ms, let t = JSCompat.timeClip(ms) else { return "" }
         let d = localDate(t, timeZone: timeZone)
-        return "\(pad(d.day)).\(pad(d.month)).\(d.year)"
+        return L("%@.%@.%@", pad(d.day), pad(d.month), "\(d.year)")
     }
 
     /// Whole local calendar days from `from` to `to` (DST-safe); 0 for nil/invalid input.
@@ -40,35 +43,35 @@ public enum TimeUtil {
     public static func relativeTime(_ ms: Double?, now: Double = nowMs(), timeZone: TimeZone = .current) -> String {
         guard let ms, let then = JSCompat.timeClip(ms), let ref = JSCompat.timeClip(now) else { return "" }
         let diff = ref - then
-        if diff < MINUTE { return "gerade eben" } // also absorbs small clock skew into the future
+        if diff < MINUTE { return L("gerade eben") } // also absorbs small clock skew into the future
         if diff < HOUR {
             let m = (diff / MINUTE).rounded(.down)
-            return m == 1 ? "vor 1 Minute" : "vor \(JSCompat.numberToString(m)) Minuten"
+            return m == 1 ? L("vor 1 Minute") : L("vor %@ Minuten", JSCompat.numberToString(m))
         }
         let days = calendarDaysBetween(then, ref, timeZone: timeZone)
         if days <= 0 {
             let hrs = (diff / HOUR).rounded(.down)
-            return hrs == 1 ? "vor 1 Stunde" : "vor \(JSCompat.numberToString(hrs)) Stunden"
+            return hrs == 1 ? L("vor 1 Stunde") : L("vor %@ Stunden", JSCompat.numberToString(hrs))
         }
-        if days == 1 { return "gestern" }
-        if days < 7 { return "vor \(days) Tagen" }
-        return "am \(formatDate(then, timeZone: timeZone))"
+        if days == 1 { return L("gestern") }
+        if days < 7 { return L("vor %@ Tagen", "\(days)") }
+        return L("am %@", formatDate(then, timeZone: timeZone))
     }
 
     /// "1 Std. 5 Min." | "4 Min. 12 Sek." | "4 Min." | "45 Sek." (NaN and negatives give "0 Sek.").
     public static func formatDuration(_ ms: Double) -> String {
         let seconds = ms.isNaN ? 0 : JSCompat.round(ms / 1000)
         let total = max(0, seconds)
-        guard total.isFinite else { return "\(JSCompat.numberToString(total)) Sek." }
+        guard total.isFinite else { return L("%@ Sek.", JSCompat.numberToString(total)) }
         let h = (total / 3600).rounded(.down)
         let m = (total.truncatingRemainder(dividingBy: 3600) / 60).rounded(.down)
         let s = total.truncatingRemainder(dividingBy: 60)
         let hs = JSCompat.numberToString(h)
         let mins = JSCompat.numberToString(m)
         let secs = JSCompat.numberToString(s)
-        if h > 0 { return m > 0 ? "\(hs) Std. \(mins) Min." : "\(hs) Std." }
-        if m > 0 { return s > 0 ? "\(mins) Min. \(secs) Sek." : "\(mins) Min." }
-        return "\(secs) Sek."
+        if h > 0 { return m > 0 ? L("%@ Std. %@ Min.", hs, mins) : L("%@ Std.", hs) }
+        if m > 0 { return s > 0 ? L("%@ Min. %@ Sek.", mins, secs) : L("%@ Min.", mins) }
+        return L("%@ Sek.", secs)
     }
 
     // MARK: - Local calendar helpers (shared with Mastery and the store)

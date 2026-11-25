@@ -1,6 +1,53 @@
 // The HTTP server and response helpers: security headers, content negotiation, caching.
 
+import fsp from 'node:fs/promises';
 import http from 'node:http';
+import net from 'node:net';
+
+/** Whether a server answers on the socket file (a leftover of a crash refuses at once). */
+function socketAnswers(file) {
+  return new Promise((resolve) => {
+    const probe = net.connect(file);
+    const done = (answers) => {
+      probe.destroy();
+      resolve(answers);
+    };
+    probe.once('connect', () => done(true));
+    probe.once('error', () => done(false));
+    // No answer either way: rather assume somebody is there than take the socket away.
+    probe.setTimeout(1000, () => done(true));
+  });
+}
+
+/**
+ * Listens on a Unix socket (LISTEN_SOCKET). A socket left over from an earlier run is replaced;
+ * one that a running server still listens on is not (it would be cut off, and removing the file
+ * on stopping would then leave nobody there), and anything else at that path is left alone.
+ * Only owner and group may connect (the proxy runs as root or in the group).
+ */
+export async function listenOnSocket(server, file) {
+  let stat = null;
+  try {
+    stat = await fsp.lstat(file);
+  } catch (error) {
+    if (error.code !== 'ENOENT') throw error;
+  }
+  if (stat) {
+    if (!stat.isSocket()) throw new Error(`${file} gibt es schon und ist kein Socket.`);
+    if (await socketAnswers(file)) {
+      throw Object.assign(new Error(`An ${file} lauscht schon ein anderer Server.`), { code: 'EADDRINUSE' });
+    }
+    await fsp.unlink(file);
+  }
+  await new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(file, () => {
+      server.off('error', reject);
+      resolve();
+    });
+  });
+  await fsp.chmod(file, 0o660);
+}
 
 /** The HTTP server with its timeouts and limits (`options` only for tests). */
 export function createHttpServer(handler, options = {}) {
@@ -9,7 +56,7 @@ export function createHttpServer(handler, options = {}) {
       headersTimeout: 10_000, // all headers within 10 s (slow-loris)
       requestTimeout: 10_000, // the whole request within 10 s: the only bodies are tiny forms
       connectionsCheckingInterval: 2_000, // the default of 30 s would make both up to 30 s late
-      // Longer than Caddy keeps idle upstream connections (30 s, see deploy/Caddyfile), so
+      // Longer than Caddy keeps idle upstream connections (`keepalive 30s` in its reverse_proxy transport), so
       // Caddy never reuses a connection that Node is just closing.
       keepAliveTimeout: 65_000,
       maxHeaderSize: 16 * 1024,

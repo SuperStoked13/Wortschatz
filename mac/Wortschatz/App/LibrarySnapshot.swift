@@ -13,12 +13,10 @@ struct LibrarySnapshot {
     var stats: OverviewStats
     /// "Weiterlernen": the latest unfinished Learn session, else the latest Write session.
     var resume: ResumeItem?
-    /// When the snapshot was taken (epoch ms).
-    var now: Double
 
     static let empty = LibrarySnapshot(
         sets: [], stats: OverviewStats(streak: StudyStreak(current: 0, today: 0, longest: 0), week: 0, mastered: 0, total: 0),
-        resume: nil, now: 0)
+        resume: nil)
 
     func summary(for setID: String) -> SetSummary? {
         sets.first { $0.id == setID }
@@ -26,9 +24,15 @@ struct LibrarySnapshot {
 
     var isEmpty: Bool { sets.isEmpty }
 
-    /// Builds the snapshot from the store's current contents.
+    /// Builds the snapshot from the store's current contents. With the `previous` snapshot and
+    /// the `change` since, a set whose card data, progress and sessions are untouched keeps its
+    /// summary (an answer rebuilds only the studied set: decoding and checking every set's
+    /// sessions took ~3.5 ms per answer for 1100 cards in four sets).
     @MainActor
-    static func build(from store: LibraryStore, now: Double = TimeUtil.nowMs()) -> LibrarySnapshot {
+    static func build(
+        from store: LibraryStore, now: Double = TimeUtil.nowMs(), previous: LibrarySnapshot? = nil,
+        change: StoreChange? = nil
+    ) -> LibrarySnapshot {
         let activity = store.getActivity()
         let streak = Mastery.studyStreak(activity, now: now, timeZone: store.timeZone)
         var mastered = 0
@@ -36,8 +40,19 @@ struct LibrarySnapshot {
         var latestLearn: (summary: SetSummary, resume: LearnResume)?
         var latestWrite: (summary: SetSummary, resume: WriteResume)?
 
+        // Summaries that cannot have changed (settings feed every set's options).
+        var reusable: [String: SetSummary] = [:]
+        if let previous, let change, change.keys != nil, !change.touches("settings") {
+            for summary in previous.sets { reusable[summary.id] = summary }
+        }
+
         let summaries = store.listSets().map { set -> SetSummary in
-            let summary = SetSummary(set: set, store: store, now: now)
+            let summary =
+                if let old = reusable[set.id], old.set == set, !(change?.touchesSetData(set.id) ?? true) {
+                    old
+                } else {
+                    SetSummary(set: set, store: store, now: now)
+                }
             mastered += summary.stats.mastered
             total += summary.stats.total
             if let learn = summary.learn, learn.updatedAt > (latestLearn?.resume.updatedAt ?? -.infinity) {
@@ -63,8 +78,7 @@ struct LibrarySnapshot {
             stats: OverviewStats(
                 streak: streak, week: weekTotal(activity, now: now, timeZone: store.timeZone), mastered: mastered,
                 total: total),
-            resume: resume,
-            now: now)
+            resume: resume)
     }
 
     /// Answers over the last seven calendar days including today (`weekTotal` of dashboard.js).
@@ -178,23 +192,32 @@ struct LearnResume: Equatable {
 
     /// "Runde 3" or "Runde 3 geschafft".
     var roundText: String {
-        roundOver ? "Runde \(round) geschafft" : "Runde \(round)"
+        roundOver ? String(localized: "Runde \(round) geschafft") : String(localized: "Runde \(round)")
     }
 
     /// "18 von 52 gemeistert".
     var masteredText: String {
-        "\(counts.mastered) von \(counts.total) gemeistert"
+        String(localized: "\(counts.mastered) von \(counts.total) gemeistert")
     }
 
     /// "Nur markierte · Runde 3 · 18 von 52 gemeistert" (`learnDetail` in set.js).
     var detail: String {
-        StudyCopy.join([StudyCopy.subsetLabel(subset, objectLabel: "Ausgewählte Begriffe"), roundText, masteredText])
+        StudyCopy.join([StudyCopy.subsetLabel(subset, objectLabel: String(localized: "Ausgewählte Begriffe")), roundText, masteredText])
     }
 
     /// "Runde 3 · 18/52" or "Runde 3 · 0/3 markierte" for compact places (set cards, sidebar).
     var shortDetail: String {
-        let noun = StudyCopy.subsetNoun(subset).map { " \($0)" } ?? ""
-        return "\(roundText) · \(counts.mastered)/\(counts.total)\(noun)"
+        let mastered = counts.mastered
+        let total = counts.total
+        let count: String =
+            switch subset {
+            case .all: "\(mastered)/\(total)"
+            case .starred: String(localized: "\(mastered)/\(total) markierte")
+            case .learning: String(localized: "\(mastered)/\(total) offene")
+            case .missed: String(localized: "\(mastered)/\(total) falsche")
+            case .cardIds: String(localized: "\(mastered)/\(total) ausgewählte")
+            }
+        return "\(roundText) · \(count)"
     }
 
     /// Mastered share of the session (0…1).
@@ -222,25 +245,27 @@ struct WriteResume: Equatable {
 
     /// "Runde 2 · 5 übrig" or "Runde 2 geschafft" (`sessionLabel` in dashboard.js).
     var roundText: String {
-        counters.remaining == 0 ? "Runde \(counters.round) geschafft" : "Runde \(counters.round) · \(counters.remaining) übrig"
+        counters.remaining == 0
+            ? String(localized: "Runde \(counters.round) geschafft")
+            : String(localized: "Runde \(counters.round) · \(counters.remaining) übrig")
     }
 
     /// "Runde 2 · 5 übrig" or "Runde 2 geschafft · 3 zum Wiederholen", with the subset in front
     /// (`sessionDetail` in set.js).
     var detail: String {
-        var parts = [StudyCopy.subsetLabel(subset, objectLabel: "Falsche Begriffe")]
+        var parts = [StudyCopy.subsetLabel(subset, objectLabel: String(localized: "Falsche Begriffe"))]
         if counters.remaining > 0 {
-            parts += ["Runde \(counters.round)", "\(counters.remaining) übrig"]
+            parts += [String(localized: "Runde \(counters.round)"), String(localized: "\(counters.remaining) übrig")]
         } else {
-            parts.append("Runde \(counters.round) geschafft")
-            if counters.incorrect > 0 { parts.append("\(counters.incorrect) zum Wiederholen") }
+            parts.append(String(localized: "Runde \(counters.round) geschafft"))
+            if counters.incorrect > 0 { parts.append(String(localized: "\(counters.incorrect) zum Wiederholen")) }
         }
         return StudyCopy.join(parts)
     }
 
     /// "5 übrig" or "Runde geschafft".
     var shortDetail: String {
-        counters.remaining > 0 ? "\(counters.remaining) übrig" : "Runde geschafft"
+        counters.remaining > 0 ? String(localized: "\(counters.remaining) übrig") : String(localized: "Runde geschafft")
     }
 
     var progressValue: Double { counters.progress }
@@ -270,21 +295,10 @@ enum StudyCopy {
     static func subsetLabel(_ subset: StudySubset, objectLabel: String) -> String? {
         switch subset {
         case .all: nil
-        case .starred: "Nur markierte"
-        case .learning: "Nur nicht gemeisterte"
-        case .missed: "Nur falsche"
+        case .starred: String(localized: "Nur markierte")
+        case .learning: String(localized: "Nur nicht gemeisterte")
+        case .missed: String(localized: "Nur falsche")
         case .cardIds: objectLabel
-        }
-    }
-
-    /// `SUBSET_NOUNS` ("0/3 markierte").
-    static func subsetNoun(_ subset: StudySubset) -> String? {
-        switch subset {
-        case .all: nil
-        case .starred: "markierte"
-        case .learning: "offene"
-        case .missed: "falsche"
-        case .cardIds: "ausgewählte"
         }
     }
 
@@ -308,7 +322,16 @@ enum StudyCopy {
 
     /// Case-, accent- and sharp-s-insensitive search form (`fold` in dashboard.js).
     static func fold(_ text: String) -> String {
+        if let known = folded[text] { return known }
         let lowered = TextNormalizer.stripDiacritics(text.lowercased())
-        return lowered.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+        let result = lowered.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+        if folded.count >= 50_000 { folded.removeAll(keepingCapacity: true) }
+        folded[text] = result
+        return result
     }
+
+    /// `fold` of the texts searched so far: the sidebar and the term list fold every title, term
+    /// and definition on each key typed into their search (7 ms per key for 1100 cards; 1 ms with
+    /// this).
+    private static var folded: [String: String] = [:]
 }

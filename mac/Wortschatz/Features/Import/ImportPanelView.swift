@@ -5,14 +5,16 @@ import WortschatzImport
 
 /// "Vokabelliste importieren" in the editor (spec §4.4, port of the panel of
 /// src/screens/editor-import.js): a disclosure header, the paste box next to the file drop
-/// zone, the progress of PDF reading and text recognition, and the detection with its
-/// preview and "N Karten übernehmen".
+/// zone, the progress of PDF reading and text recognition, and the detection (whose pairs are
+/// the editor's cards).
 struct ImportPanelView: View {
     let model: ImportPanelModel
     /// Files are dragged over the paste box (the sheet shows its drop overlay).
     @Binding var isTextDropTargeted: Bool
     var focus: FocusState<SetEditorField?>.Binding
-    let onApply: () -> Void
+    let onShowCards: () -> Void
+    /// "Text leeren" (through the editor: its cards go too, undoably).
+    let onClearText: () -> Void
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -34,7 +36,7 @@ struct ImportPanelView: View {
                             .transition(.opacity)
                     }
                     if model.result != nil {
-                        ImportDetectionPanel(model: model, focus: focus, onApply: onApply)
+                        ImportDetectionPanel(model: model, focus: focus, onShowCards: onShowCards)
                             .id(SetEditorModel.ScrollTarget.detection)
                             .transition(.opacity)
                     }
@@ -91,7 +93,7 @@ struct ImportPanelView: View {
                 .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: Spacing.s)
             if model.hasText {
-                Button("Text leeren", systemImage: "xmark.circle") { model.clearText() }
+                Button("Text leeren", systemImage: "xmark.circle", action: onClearText)
                     .buttonStyle(.borderless)
                     .foregroundStyle(.secondary)
             }

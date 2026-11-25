@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text;
+using static Wortschatz.Core.CoreText;
 
 namespace Wortschatz.Core;
 
@@ -11,8 +12,8 @@ public sealed class BackupFileError(string message) : Exception(message);
 /// </summary>
 public static class Backup
 {
-    public const string READ_ERROR = "Die Datei konnte nicht gelesen werden.";
-    public const string PARSE_ERROR = "Die Datei ist keine gültige Backup-Datei (JSON).";
+    public static string READ_ERROR => L("Die Datei konnte nicht gelesen werden.");
+    public static string PARSE_ERROR => L("Die Datei ist keine gültige Backup-Datei (JSON).");
 
     // MARK: Text export
 

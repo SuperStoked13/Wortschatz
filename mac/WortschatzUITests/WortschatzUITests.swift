@@ -60,12 +60,11 @@ final class WortschatzUITests: XCTestCase {
         XCTAssertTrue(
             waitUntil(timeout: 5) { textValue(importText).contains("le monsieur, messieurs") },
             "⌘V fügt die Liste ins Importfeld ein")
-        let apply = app.buttons["editor-apply-import"]
+        // The pairs are cards right away (no "übernehmen"): the save bar counts them.
         XCTAssertTrue(
-            waitUntil(timeout: 10) { apply.exists && apply.label.contains("52 Karten") },
-            "52 Paare erkannt: \(apply.exists ? apply.label : "kein Übernehmen-Knopf")")
+            app.text(startingWith: "52 Karten").waitForExistence(timeout: 10), "52 Paare erkannt und als Karten in der Liste")
 
-        // ⌘↩ takes the waiting list over and saves.
+        // ⌘↩ saves.
         app.typeKey(.return, modifierFlags: .command)
         XCTAssertTrue(app.text(startingWith: "52 Begriffe").waitForExistence(timeout: 10), "Das Lernset hat 52 Begriffe")
         XCTAssertFalse(title.exists, "Der Editor ist zu")

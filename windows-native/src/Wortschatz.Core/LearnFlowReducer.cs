@@ -1,4 +1,5 @@
 using System.Globalization;
+using static Wortschatz.Core.CoreText;
 
 namespace Wortschatz.Core;
 
@@ -108,7 +109,11 @@ public static partial class LearnFlow
                     s.Highlighted = h.Index is { } i && i >= 0 && i < q.Choices.Count ? i : null;
                     break;
                 case Event.DraftChanged d:
-                    if (AcceptsText) s.Draft = d.Text;
+                    if (AcceptsText)
+                    {
+                        s.Draft = d.Text;
+                        ContinueTypedOutCopy();
+                    }
                     break;
                 case Event.Submit sub:
                     if (!IsFree) return;
@@ -130,8 +135,14 @@ public static partial class LearnFlow
                 case Event.ToggleStar: ToggleStar(); break;
                 case Event.EditCard edit: EditCard(edit.Card); break;
                 case Event.OptionsChanged o: OptionsChanged(o.Options); break;
-                case Event.ReviewChanged r: s.Review = r.Review; break;
-                case Event.RecheckChanged r: s.Recheck = r.Recheck; break;
+                case Event.ReviewChanged r:
+                    s.Review = r.Review;
+                    ApplySwitches(review: true);
+                    break;
+                case Event.RecheckChanged r:
+                    s.Recheck = r.Recheck;
+                    ApplySwitches(recheck: true);
+                    break;
                 case Event.StartReview:
                     if (IsFree && s.Phase == Phase.AllMastered) StartFresh(s.Subset, review: true);
                     break;
@@ -150,12 +161,7 @@ public static partial class LearnFlow
                 case Event.OverlayPresented presented:
                     if (s.Overlay is null) PauseAdvance();
                     s.Overlay = presented.Overlay;
-                    if (presented.Overlay == Overlay.Options && s.OptionsBeforeOverlay is null)
-                    {
-                        s.OptionsBeforeOverlay = s.Options;
-                        s.ReviewBeforeOverlay = s.Review;
-                        s.RecheckBeforeOverlay = s.Recheck;
-                    }
+                    if (presented.Overlay == Overlay.Options && s.OptionsBeforeOverlay is null) s.OptionsBeforeOverlay = s.Options;
                     break;
                 case Event.OverlayDismissed: OverlayDismissed(); break;
                 case Event.PromptAnswered answered: PromptAnswered(answered.Confirmed); break;
@@ -241,7 +247,8 @@ public static partial class LearnFlow
 
         /// <summary>
         /// A letter typed on a multiple-choice question: the one option the letters start is highlighted, so Enter
-        /// chooses it (TypeAheadOf). No input lock: typing is no transition.
+        /// chooses it (TypeAheadOf); typed out, it is chosen at once (TypeAhead.IsTypedOut). No input lock: typing is no
+        /// transition.
         /// </summary>
         void TypeOnChoices(string text)
         {
@@ -250,6 +257,9 @@ public static partial class LearnFlow
             if (Graphemes.Count(s.Typed) + Graphemes.Count(text) > TYPE_AHEAD_MAX) return;
             s.Typed += text;
             UpdateTypeAhead(q);
+            // Typed out: chosen like Return would (Anthony 23.11.2026, Windows since 23.11.2026).
+            if (s.Highlighted is { } index && TypeAheadOf(s.Typed, q.Choices.Select(c => c.Text).ToList(), q.AnswerLang).IsTypedOut)
+                Choose(index);
         }
 
         /// <summary>Backspace removes the last letter, Ctrl+Backspace the last word ("la voi" → "la ").</summary>
@@ -270,7 +280,7 @@ public static partial class LearnFlow
         {
             s.Typed = "";
             s.Highlighted = null;
-            Announce("Eingabe gelöscht");
+            Announce(L("Eingabe gelöscht"));
         }
 
         void UpdateTypeAhead(QuestionInfo q)
@@ -279,7 +289,7 @@ public static partial class LearnFlow
             var previous = s.Highlighted;
             s.Highlighted = match.Selected;
             if (match.Selected is { } index && index != previous)
-                Announce($"Antwort {index + 1}: {q.Choices[index].Text}. Eingabetaste wählt sie.");
+                Announce(L($"Antwort {index + 1}: {q.Choices[index].Text}. Eingabetaste wählt sie."));
         }
 
         /// <summary>
@@ -320,7 +330,7 @@ public static partial class LearnFlow
                     {
                         // Typed letters that pick no option yet: Enter cannot guess.
                         s.Rejections++;
-                        Announce($"Keine eindeutige Antwort – tippe weiter oder wähle mit 1 bis {q.Choices.Count}.");
+                        Announce(L($"Keine eindeutige Antwort – tippe weiter oder wähle mit 1 bis {q.Choices.Count}."));
                     }
                     break;
                 case PhaseKind.Question: SubmitAnswer(s.Draft); break;
@@ -358,7 +368,7 @@ public static partial class LearnFlow
             }
             if (next == s.Highlighted) return;
             s.Highlighted = next;
-            Announce($"Antwort {next + 1}: {q.Choices[next].Text}");
+            Announce(L($"Antwort {next + 1}: {q.Choices[next].Text}"));
         }
 
         // MARK: Session lifecycle (learn.js)
@@ -373,6 +383,17 @@ public static partial class LearnFlow
                 stored = LearnEngine.SyncProgress(stored, env.Progress, Now);
                 synced = true;
             }
+            // The rechecks follow «Nachkontrolle nach Fehlern» as it is now (switched since the session started). The
+            // repetition questions stay: a session may have been started for them («Alle wiederholen», the exam's «Falsche lernen»).
+            if (stored is not null)
+            {
+                var switched = LearnEngine.SetRecheck(stored, s.Recheck, Now);
+                if (!ReferenceEquals(switched, stored))
+                {
+                    stored = switched;
+                    synced = true;
+                }
+            }
             if (stored is null || !CanResumeLearn(stored, forceNew, wanted))
             {
                 // A requested subset must not end a session with answers without asking.
@@ -385,10 +406,45 @@ public static partial class LearnFlow
                     }
                     return;
                 }
+                // Finished by answers given elsewhere or the switched Nachkontrolle: stored as finished, so «Weiterlernen»
+                // no longer offers it (when nothing new starts here).
+                if (synced && stored is { FinishedAt: not null }) Emit(new Effect.SaveLearn(stored, null));
                 StartFresh(wanted ?? StudySubset.All);
                 return;
             }
-            ResumeSaved(stored, saved?.Feedback, wanted, synced, welcome: true);
+            // Options that shape a session were changed elsewhere since it started (Einstellungen, the set's options): a
+            // session without answers simply starts again with them (issue #7); one with answers asks.
+            if (!HasLearnAnswers(stored) && SettingsChanges(SessionSettingsOf(stored), CurrentSettingsOf(s.Options, stored)).Count > 0)
+            {
+                StartFresh(wanted ?? stored.Subset, review: stored.Review is not null || s.Review);
+                return;
+            }
+            if (ResumeSaved(stored, saved?.Feedback, wanted, synced, welcome: true)) AskForChangedOptions();
+        }
+
+        /// <summary>
+        /// Options that shape the session (direction, question types, round size) were changed outside it since it started
+        /// (Einstellungen, the set's options, another device): «Neu starten?» as after the options (issue #7, 24.11.2026,
+        /// Windows; before, the session went on with the old ones for days, and nothing said so). After «Später»
+        /// (KeepChangedOptions) it is not asked again while the options stay so.
+        /// </summary>
+        void AskForChangedOptions()
+        {
+            if (!IsFree || s.Session is not { FinishedAt: null } session) return;
+            var current = CurrentSettingsOf(s.Options, session);
+            var changes = SettingsChanges(SessionSettingsOf(session), current);
+            if (changes.Count == 0 || s.Kept?.Covers(session.StartedAt, KeptSettingsJson(current)) == true) return;
+            PauseAdvance();
+            s.Prompt = new Prompt.RestartForOptions(changes);
+        }
+
+        /// <summary>«Später» on «Neu starten?»: the session keeps its settings while the options are as now (stored on this device).</summary>
+        void KeepChangedOptions()
+        {
+            if (s.Session is not { FinishedAt: null } session) return;
+            var kept = new KeptOptions(session.StartedAt, KeptSettingsJson(CurrentSettingsOf(s.Options, session)));
+            s.Kept = kept;
+            Emit(new Effect.KeepOptions(kept));
         }
 
         /// <summary>Resumes a stored session; false when it had to start a new one instead.</summary>
@@ -536,7 +592,10 @@ public static partial class LearnFlow
             s.Transitions++;
             var lead = info.IsReview ? $"{REVIEW_LABEL}. " : "";
             if (q.Type == QuestionType.Mc)
-                Announce($"{lead}{info.PromptLabel}: {info.Prompt}. Wähle die richtige Antwort, 1 bis {info.Choices.Count}.");
+            {
+                var pick = L($"Wähle die richtige Antwort, 1 bis {info.Choices.Count}.");
+                Announce($"{lead}{info.PromptLabel}: {info.Prompt}. {pick}");
+            }
             else
                 Announce($"{lead}{info.PromptLabel}: {info.Prompt}" + (session.AnswerWith == AnswerWith.Both ? $". {info.Placeholder}." : ""));
             Lock();
@@ -630,7 +689,9 @@ public static partial class LearnFlow
             f = f with { Title = f.Kind == FeedbackKind.DontKnow ? DONT_KNOW_TITLE : MISS_TITLE };
             s.Feedback = f;
             var demoted = f.Demoted ? $" {DEMOTED_TEXT}." : "";
-            Announce($"{(f.Kind == FeedbackKind.DontKnow ? "Kein Problem." : "Nicht ganz.")} Richtige Antwort: {info.Expected}.{demoted}");
+            var lead = f.Kind == FeedbackKind.DontKnow ? L("Kein Problem.") : L("Nicht ganz.");
+            var answer = L($"Richtige Antwort: {info.Expected}.");
+            Announce($"{lead} {answer}{demoted}");
             if (how == Presentation.Answer && f.Kind == FeedbackKind.Wrong) Emit(new Effect.Haptic(HapticKind.Failure));
             Lock();
         }
@@ -642,7 +703,7 @@ public static partial class LearnFlow
             if (!HasText(value))
             {
                 s.Rejections++;
-                Announce("Gib zuerst eine Antwort ein – oder wähle «Weiss ich nicht?».");
+                Announce(L("Gib zuerst eine Antwort ein – oder wähle «Weiss ich nicht?»."));
                 return;
             }
             var graded = GradeQuestion(info, value, s.Cards, s.Options.Tolerance, env.ExtraAnswers(info.SynonymQuery));
@@ -680,7 +741,7 @@ public static partial class LearnFlow
                 }
                 else f = f with { Title = TOLERATED_TITLE };
             }
-            var exactLabel = f.Synonym ? "Gesucht war:" : "Genau:";
+            var exactLabel = f.Synonym ? L("Gesucht war:") : L("Genau:");
             int ms = result.Exact ? ADVANCE_MS : ADVANCE_MS_WITH_NOTES;
             f = f with { ExactLabel = result.Exact ? null : exactLabel, AutoAdvanceMs = ms };
             s.Feedback = f;
@@ -706,13 +767,30 @@ public static partial class LearnFlow
             if (phase != s.Phase) s.Draft = "";
             s.Phase = phase;
             if (how != Presentation.Refresh) s.Transitions++;
-            var lead = dontKnow ? "Kein Problem." : "Nicht ganz.";
+            var lead = dontKnow ? L("Kein Problem.") : L("Nicht ganz.");
+            var answer = L($"Richtige Antwort: {info.Expected}.");
             var hint = f.Hint is { } hl ? $" {hl}." : "";
             var demoted = f.Demoted ? $" {DEMOTED_TEXT}." : "";
-            var tail = f.Copy ? " Tippe die richtige Antwort ab." : "";
-            Announce($"{lead} Richtige Antwort: {info.Expected}.{hint}{demoted}{tail}");
+            var tail = f.Copy ? " " + L("Tippe die richtige Antwort ab.") : "";
+            Announce($"{lead} {answer}{hint}{demoted}{tail}");
             if (how == Presentation.Answer && !dontKnow) Emit(new Effect.Haptic(HapticKind.Failure));
             Lock();
+        }
+
+        /// <summary>
+        /// The copy typed out continues by itself after a short beat, like Return (CopyStep); typing on so that it no
+        /// longer is stops the countdown.
+        /// </summary>
+        void ContinueTypedOutCopy()
+        {
+            if (!IsFree || s.Phase != Phase.Copy || s.Question is not { } shown) return;
+            var info = RefreshedInfo(shown);
+            if (!CopyStep.IsTypedOut(s.Draft, info.Expected, s.Options.Tolerance, info.AnswerLang))
+            {
+                ClearAdvance();
+                return;
+            }
+            if (s.AutoAdvanceToken is null) StartAdvance(CopyStep.AdvanceMs);
         }
 
         void SubmitCopy(string value)
@@ -723,7 +801,7 @@ public static partial class LearnFlow
             else
             {
                 s.Rejections++;
-                Announce("Noch nicht ganz – tippe die richtige Antwort genau ab.");
+                Announce(L("Noch nicht ganz – tippe die richtige Antwort genau ab."));
             }
         }
 
@@ -742,7 +820,7 @@ public static partial class LearnFlow
             SyncProgress(progress);
             s.Pending = null;
             Persist();
-            Emit(new Effect.Toast("Als richtig gezählt", Tone.Success));
+            Emit(new Effect.Toast(L("Als richtig gezählt"), Tone.Success));
             ContinueNext(fromUser: false);
         }
 
@@ -827,7 +905,7 @@ public static partial class LearnFlow
             s.Draft = "";
             if (refresh) return;
             s.Transitions++;
-            Announce($"Runde {cp.Round} geschafft. {MasteredLine(cp.Counts.Mastered, cp.Counts.Total)}.");
+            Announce(L($"Runde {cp.Round} geschafft. {cp.Counts.Mastered} von {cp.Counts.Total} gemeistert."));
             Lock();
         }
 
@@ -868,7 +946,7 @@ public static partial class LearnFlow
             s.Draft = "";
             if (refresh) return;
             s.Transitions++;
-            Announce($"Geschafft! {FinishTitle(session.Subset, stats.Total)}");
+            Announce(L($"Geschafft! {FinishTitle(session.Subset, stats.Total)}"));
             Emit(new Effect.Haptic(HapticKind.Success));
             Lock();
         }
@@ -995,7 +1073,7 @@ public static partial class LearnFlow
             Emit(new Effect.UpdateCard(card));
             s.Cards[i] = card;
             if (s.IsStudyStep) RefreshCurrent(regrade: true);
-            Emit(new Effect.Toast("Karte gespeichert", Tone.Success));
+            Emit(new Effect.Toast(L("Karte gespeichert"), Tone.Success));
         }
 
         void OptionsChanged(StudyOptions options)
@@ -1003,28 +1081,28 @@ public static partial class LearnFlow
             var before = s.Options;
             s.Options = options;
             // The copy step applies at once to an open written miss.
-            if (before.Learn.Retype == options.Learn.Retype || s.Question?.Type != QuestionType.Written || s.Feedback is not { } f || f.Kind == FeedbackKind.Correct) return;
-            if (s.Phase.IsFeedback || s.Phase == Phase.Copy) ShowWrittenIncorrect(Presentation.Refresh);
+            if (before.Learn.Retype != options.Learn.Retype && s.Question?.Type == QuestionType.Written && s.Feedback is { Kind: not FeedbackKind.Correct }
+                && (s.Phase.IsFeedback || s.Phase == Phase.Copy))
+                ShowWrittenIncorrect(Presentation.Refresh);
+            // Changed outside while the session is on screen (imported from another device): asks at once. Changes in the
+            // options ask when they close (OverlayDismissed).
+            if (s.Overlay is null && SessionSettingsOf(before) != SessionSettingsOf(options)) AskForChangedOptions();
         }
 
         void OverlayDismissed()
         {
             if (s.Overlay is null) return;
             var before = s.OptionsBeforeOverlay;
-            bool reviewBefore = s.ReviewBeforeOverlay ?? s.Review;
-            bool recheckBefore = s.RecheckBeforeOverlay ?? s.Recheck;
             s.Overlay = null;
             s.OptionsBeforeOverlay = null;
-            s.ReviewBeforeOverlay = null;
-            s.RecheckBeforeOverlay = null;
-            // Direction, question types, round size, repetition questions and rechecks shape the session: they need a restart.
+            // Direction, question types and round size shape the session: they need a restart (the repetition questions
+            // and the rechecks applied when they were switched).
             if (before is not null && s.Session is { FinishedAt: null } session)
             {
-                // Rechecks only exist in sessions with more than RECHECK_MIN_CARDS cards.
-                bool large = session.Order.Count > LearnEngine.RECHECK_MIN_CARDS;
-                var current = SessionSettingsOf(s.Options, s.Review, s.Recheck && large);
+                bool review = session.Review is not null, recheck = session.Recheck is not null;
+                var current = SessionSettingsOf(s.Options, review, recheck);
                 var changes = SettingsChanges(SessionSettingsOf(session), current);
-                if (SettingsChanges(SessionSettingsOf(before, reviewBefore, recheckBefore && large), current).Count > 0 && changes.Count > 0)
+                if (SettingsChanges(SessionSettingsOf(before, review, recheck), current).Count > 0 && changes.Count > 0)
                 {
                     s.Prompt = new Prompt.RestartForOptions(changes);
                     return;
@@ -1033,11 +1111,35 @@ public static partial class LearnFlow
             ResumeAfterOverlay();
         }
 
+        /// <summary>
+        /// A switched «Wiederholungsfragen» (review) or «Nachkontrolle nach Fehlern» (recheck) applies to the running
+        /// session at once (State.Review/Recheck), also while the options are open, so the stored session never lags
+        /// behind the other stored ones: switched off, their questions go (also the one on screen, which makes way for the
+        /// next one); switched on, they come from now on. Only the switched one: a session started for its repetition
+        /// questions keeps them when the rechecks are switched.
+        /// </summary>
+        void ApplySwitches(bool review = false, bool recheck = false)
+        {
+            if (!(review || recheck) || s.Session is not { FinishedAt: null } session) return;
+            var next = session;
+            if (review) next = LearnEngine.SetReview(next, s.Review, env.Progress, Now);
+            if (recheck) next = LearnEngine.SetRecheck(next, s.Recheck, Now);
+            if (ReferenceEquals(next, session)) return;
+            s.Session = next;
+            Persist();
+            if (s.Phase.IsQuestion && LearnEngine.Current(next)?.Qid != s.Question?.Qid) ShowQuestion();
+        }
+
         /// <summary>A closed overlay or prompt restarts the countdown it interrupted.</summary>
         void ResumeAfterOverlay()
         {
             if (!s.AutoAdvancePaused) return;
             s.AutoAdvancePaused = false;
+            if (s.Phase == Phase.Copy)
+            {
+                ContinueTypedOutCopy();
+                return;
+            }
             if (s.Phase != Phase.FeedbackOf(FeedbackKind.Correct) || s.Feedback is not { } f) return;
             Lock();
             StartAdvance(f.AutoAdvanceMs ?? ADVANCE_MS);
@@ -1077,7 +1179,11 @@ public static partial class LearnFlow
             {
                 case Prompt.RestartSession or Prompt.RestartForOptions:
                     if (confirmed) StartFresh(s.Session?.Subset ?? s.Subset);
-                    else ResumeAfterOverlay();
+                    else
+                    {
+                        if (prompt is Prompt.RestartForOptions) KeepChangedOptions();
+                        ResumeAfterOverlay();
+                    }
                     break;
                 case Prompt.Relearn relearn:
                 {

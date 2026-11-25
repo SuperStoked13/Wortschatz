@@ -154,13 +154,24 @@ public static class SpeechText
         ["CN"] = "China", ["TW"] = "Taiwan", ["HK"] = "Hongkong", ["MO"] = "Macau", ["SG"] = "Singapur",
     };
 
-    /// <summary>"Microsoft Hedda (Deutsch, Deutschland)" (Mac: Voice.displayName, region names in German).</summary>
+    /// <summary>A region's name in the app's language: German from the list above, English from .NET (Mac: the locale).</summary>
+    static string RegionName(string region)
+    {
+        if (CoreText.Language == "en")
+        {
+            try { return new System.Globalization.RegionInfo(region).EnglishName; }
+            catch (ArgumentException) { }
+        }
+        return Regions.TryGetValue(region, out var name) ? name : region.ToUpperInvariant();
+    }
+
+    /// <summary>"Microsoft Hedda (Deutsch, Deutschland)" (Mac: Voice.displayName, region names in the app's language).</summary>
     public static string DisplayName(VoiceInfo voice)
     {
         var parts = voice.Language.Replace('_', '-').Split('-');
         var language = LangOf(voice.Language) is { } lang ? Labels.LangName(lang) : parts[0];
         var region = parts.Skip(1).LastOrDefault(p => p.Length == 2 && p.All(char.IsLetter));
-        var place = region is null ? language : $"{language}, {(Regions.TryGetValue(region, out var name) ? name : region.ToUpperInvariant())}";
+        var place = region is null ? language : $"{language}, {RegionName(region)}";
         var label = voice.Quality == VoiceQuality.Premium ? " – Premium" : "";
         return $"{voice.Name} ({place}){label}";
     }

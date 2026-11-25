@@ -8,7 +8,9 @@ import SwiftUI
 // - No glass on glass: content inside a GlassCard/GlassPanel uses plain fills (chips, keycaps,
 //   the special-character bar are designed for that). Put glass buttons next to a card, not in it.
 // - Several glass shapes that sit close together go into one `GlassEffectContainer` so they
-//   sample the backdrop once and can morph (`ChoiceGrid`, `GlassActionBar` do this).
+//   sample the backdrop once and can morph (`ChoiceGrid` does this). A container that lasts
+//   keeps every glass shape it ever held: give buttons that change per step their own (see
+//   `StudyActionBar`).
 // - Inside a GlassEffectContainer, modifiers applied *outside* `.glassEffect`/`.glassSurface`
 //   (opacity, overlay, scaleEffect, clipShape) are not rendered: put state visuals (rings,
 //   dimming) on the content before the glass modifier. Offsets and transitions work.
@@ -182,30 +184,5 @@ struct ContentPanel<Content: View>: View {
         content
             .padding(padding)
             .contentSurface(cornerRadius: cornerRadius)
-    }
-}
-
-// MARK: - Action bar
-
-/// The floating bottom action bar of study screens: a row of glass buttons sharing one
-/// `GlassEffectContainer` (so they sample the backdrop together and morph when buttons
-/// appear or disappear). Place it directly on the backdrop, never inside a card.
-///
-/// ```swift
-/// GlassActionBar {
-///     SecondaryButton("Weiss ich nicht", key: .optionReturn) { … }
-///     PrimaryActionButton("Antworten") { … }
-/// }
-/// ```
-struct GlassActionBar<Content: View>: View {
-    var spacing: CGFloat = Spacing.s
-    @ViewBuilder var content: Content
-
-    var body: some View {
-        GlassEffectContainer(spacing: spacing) {
-            HStack(spacing: spacing) {
-                content
-            }
-        }
     }
 }

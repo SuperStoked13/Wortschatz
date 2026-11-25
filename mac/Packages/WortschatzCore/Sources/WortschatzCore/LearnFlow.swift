@@ -10,12 +10,14 @@ import Foundation
 // - Multiple choice: ↑↓←→ move the highlight (none at first, the first arrow lands on option 1),
 //   Return chooses the highlighted option, 1–4 choose directly, 0 or ⌥↩ = "Weiss ich nicht".
 //   Typing letters highlights the one option they start ("la vo" → la voiture, see
-//   `typeAhead`); ⌫ deletes a letter (held: one after another), ⌥⌫ a word, esc clears them.
+//   `typeAhead`) and chooses it once it is typed out (`TypeAhead.isTypedOut`); ⌫ deletes a
+//   letter (held: one after another), ⌥⌫ a word, esc clears them.
 // - Written: Return submits the answer field (`draft`), ⌥↩ = "Weiss ich nicht".
 // - Feedback: Return = Weiter (a correct answer also advances by itself); after multiple choice
 //   any key continues, after a correct written answer any key continues and starts typing the
 //   next written answer. ⌘↩ = "Ich hatte recht" after a written miss.
-// - Copy step (Abtippen, `learn.retype`): Return checks the copy field and continues when right.
+// - Copy step (Abtippen, `learn.retype`): Return checks the copy field and continues when right;
+//   typed out it continues by itself after a short beat (`CopyStep`).
 // - Checkpoint: Return = Weiter zu Runde N. Finish: Return = Fertig. Esc leaves (back to the set).
 // One key press causes at most one transition: repeats never transition, and presses within
 // `INPUT_LOCK_MS` after a transition are swallowed (like the web app's Enter lock).
@@ -68,11 +70,13 @@ public enum LearnFlow {
         public var storedChoices: [Choice]
         /// A repetition question (Wiederholungsfrage) of a card mastered before the session.
         public var isReview: Bool
+        /// A recheck (Nachkontrolle) of a card missed and then mastered in the session.
+        public var isRecheck: Bool
 
         public init(
             qid: String, cardId: String, type: QuestionType, ask: AskSide, prompt: String, expected: String,
             promptLang: Lang, answerLang: Lang, promptLabel: String, placeholder: String, placeholderShort: String,
-            starred: Bool, choices: [Choice], storedChoices: [Choice], isReview: Bool = false
+            starred: Bool, choices: [Choice], storedChoices: [Choice], isReview: Bool = false, isRecheck: Bool = false
         ) {
             self.qid = qid
             self.cardId = cardId
@@ -89,6 +93,7 @@ public enum LearnFlow {
             self.choices = choices
             self.storedChoices = storedChoices
             self.isReview = isReview
+            self.isRecheck = isRecheck
         }
 
         /// The question for the synonym check (`ExtendedSynonyms`).
@@ -229,6 +234,19 @@ public enum LearnFlow {
             if let feedback, feedback != .null { o["feedback"] = feedback }
             return .object(o)
         }
+
+        /// The stored session after «Wiederholungsfragen» (`review`) or «Nachkontrolle nach Fehlern»
+        /// (`recheck`) was switched (nil: not switched): they apply at once to every unfinished
+        /// session (`LearnEngine.setReview`/`setRecheck`). nil when nothing changes.
+        public func switching(
+            review: Bool? = nil, recheck: Bool? = nil, progress: ProgressMap, now: Double = TimeUtil.nowMs()
+        ) -> SavedLearn? {
+            var next = state
+            if let review { next = LearnEngine.setReview(next, on: review, progress: progress, now: now) }
+            if let recheck { next = LearnEngine.setRecheck(next, on: recheck, now: now) }
+            guard next != state else { return nil }
+            return SavedLearn(state: next, feedbackJSON: feedback)
+        }
     }
 
     /// A confirmation the view shows as an alert (see `promptContent`). Keys are ignored while it
@@ -236,8 +254,6 @@ public enum LearnFlow {
     public enum Prompt: Codable, Sendable, Equatable, Hashable {
         /// "Neu starten?" (⇧⌘R in a running session).
         case restartSession
-        /// Options that only apply to a new session were changed.
-        case restartForOptions([SettingsChange])
         /// "Fortschritt zurücksetzen?" before learning these cards again.
         case relearn(cardIds: [String])
         /// "Laufende Lerneinheit beenden?" when another subset was asked for.
@@ -291,11 +307,12 @@ public enum LearnFlow {
         public var cards: [Card]
         /// The study options in effect (tolerance, audio and the copy step apply at once).
         public var options: StudyOptions
-        /// New sessions ask repetition questions (Wiederholungsfragen, `LearnReview`); a running
-        /// session keeps what it was started with.
+        /// Sessions ask repetition questions (Wiederholungsfragen, `LearnReview`). Switched
+        /// (`.reviewChanged`, also in the options), it applies to the running session at once; a
+        /// resumed session keeps its own (it may have been started for them).
         public var review: Bool
-        /// New sessions have rechecks (Nachkontrolle, `LearnRecheck`); a running session keeps
-        /// what it was started with.
+        /// Sessions have rechecks (Nachkontrolle, `LearnRecheck`). Switched (`.recheckChanged`, also
+        /// in the options) it applies to the running session at once, and a resumed session follows it.
         public var recheck: Bool
         /// The scope (the session's subset, or the requested one on the message screens).
         public var subset: StudySubset
@@ -315,9 +332,6 @@ public enum LearnFlow {
         public var roundStartCounts: LearnEngine.Counts?
         public var prompt: Prompt?
         public var overlay: Overlay?
-        public var optionsBeforeOverlay: StudyOptions?
-        public var reviewBeforeOverlay: Bool?
-        public var recheckBeforeOverlay: Bool?
         /// The running auto-advance timer (`.scheduleAutoAdvance`), nil = none.
         public var autoAdvanceToken: Int?
         public var lastToken: Int
@@ -429,9 +443,9 @@ public enum LearnFlow {
         case editCard(Card)
         /// The study options changed (options popover or settings).
         case optionsChanged(StudyOptions)
-        /// "Wiederholungsfragen" was switched (applies to new sessions; see `State.review`).
+        /// "Wiederholungsfragen" was switched (applies at once; see `State.review`).
         case reviewChanged(Bool)
-        /// "Nachkontrolle" was switched (applies to new sessions; see `State.recheck`).
+        /// "Nachkontrolle" was switched (applies at once; see `State.recheck`).
         case recheckChanged(Bool)
         /// "Alle wiederholen" on the everything-mastered screen: a session of repetition
         /// questions over the scope.
@@ -535,18 +549,18 @@ public enum LearnFlow {
         return m.result()
     }
 
-    /// The German label of what Return does now (for the ↩ hint and the primary button), nil when
+    /// The label of what Return does now (for the ↩ hint and the primary button), nil when
     /// Return does nothing.
     public static func returnAction(_ state: State) -> String? {
         guard state.prompt == nil, state.overlay == nil else { return nil }
         switch state.phase {
-        case .question(.mc): return state.highlighted == nil ? nil : "Auswählen"
-        case .question(.written): return "Antworten"
-        case .feedback, .copy: return "Weiter"
-        case .checkpoint: return "Weiter zu Runde \(state.round + 1)"
-        case .finished: return "Fertig"
-        case .allMastered: return "Fortschritt zurücksetzen und neu lernen"
-        case .empty: return state.subset == .all ? "Begriffe hinzufügen" : "Alle Begriffe üben"
+        case .question(.mc): return state.highlighted == nil ? nil : L("Auswählen")
+        case .question(.written): return L("Antworten")
+        case .feedback, .copy: return L("Weiter")
+        case .checkpoint: return L("Weiter zu Runde %@", "\(state.round + 1)")
+        case .finished: return L("Fertig")
+        case .allMastered: return L("Fortschritt zurücksetzen und neu lernen")
+        case .empty: return state.subset == .all ? L("Begriffe hinzufügen") : L("Alle Begriffe üben")
         }
     }
 
@@ -555,18 +569,19 @@ public enum LearnFlow {
     public static func overrideLabel(_ state: State) -> String? {
         guard let f = state.feedback, f.canOverride, state.question?.type == .written else { return nil }
         switch state.phase {
-        case .feedback(.wrong), .copy: return f.editedCorrect ? "Als richtig zählen" : "Ich hatte recht"
+        case .feedback(.wrong), .copy: return f.editedCorrect ? L("Als richtig zählen") : L("Ich hatte recht")
         default: return nil
         }
     }
 
-    /// How option `index` of the multiple-choice question is drawn.
-    public static func optionState(_ state: State, at index: Int) -> OptionState {
+    /// How option `index` of the multiple-choice question is drawn. `typeAhead`: the state's
+    /// `typeAhead(state)`, when the caller has it already (it is computed otherwise).
+    public static func optionState(_ state: State, at index: Int, typeAhead known: TypeAhead? = nil) -> OptionState {
         switch state.phase {
         case .question(.mc):
             if state.highlighted == index { return .highlighted }
             guard !state.typed.isEmpty else { return .idle }
-            let match = typeAhead(state)
+            let match = known ?? typeAhead(state)
             return match.isActive && !match.matching.isEmpty && !match.matching.contains(index) ? .filtered : .idle
         case .feedback:
             guard let f = state.feedback, state.question?.type == .mc else { return .idle }
@@ -583,26 +598,62 @@ public enum LearnFlow {
         switch prompt {
         case .restartSession:
             return PromptContent(
-                title: "Neu starten?", message: restartSessionMessage(state.session?.subset ?? state.subset),
-                confirmLabel: "Neu starten", cancelLabel: "Abbrechen", isDestructive: false)
-        case let .restartForOptions(changes):
-            return PromptContent(
-                title: "Neu starten?", message: restartMessage(changes), confirmLabel: "Neu starten",
-                cancelLabel: "Später", isDestructive: false)
+                title: L("Neu starten?"), message: restartSessionMessage(state.session?.subset ?? state.subset),
+                confirmLabel: L("Neu starten"), cancelLabel: L("Abbrechen"), isDestructive: false)
         case let .relearn(ids):
             let n = ids.count
             return PromptContent(
-                title: "Fortschritt zurücksetzen?",
-                message: "Der Lernfortschritt \(n == 1 ? "dieses Begriffs" : "dieser \(n) Begriffe") wird zurückgesetzt. "
-                    + "Danach lernst du \(n == 1 ? "ihn" : "sie") von vorne – zuerst mit Multiple Choice.",
-                confirmLabel: "Zurücksetzen", cancelLabel: "Abbrechen", isDestructive: true)
+                title: L("Fortschritt zurücksetzen?"),
+                message: n == 1
+                    ? L(
+                        "Der Lernfortschritt dieses Begriffs wird zurückgesetzt. Danach lernst du ihn von vorne – zuerst mit Multiple Choice.")
+                    : L(
+                        "Der Lernfortschritt dieser %@ Begriffe wird zurückgesetzt. Danach lernst du sie von vorne – zuerst mit Multiple Choice.",
+                        "\(n)"),
+                confirmLabel: L("Zurücksetzen"), cancelLabel: L("Abbrechen"), isDestructive: true)
         case let .replaceSession(wanted):
             return PromptContent(
-                title: "Laufende Lerneinheit beenden?",
-                message: "Deine gespeicherte Lerneinheit endet, wenn du jetzt \(subsetWhat(wanted)) lernst. "
-                    + "Dein Lernfortschritt bleibt erhalten.",
-                confirmLabel: "Neu beginnen", cancelLabel: "Fortsetzen", isDestructive: false)
+                title: L("Laufende Lerneinheit beenden?"), message: replaceSessionMessage(wanted),
+                confirmLabel: L("Neu beginnen"), cancelLabel: L("Fortsetzen"), isDestructive: false)
         }
+    }
+
+    /// "Laufende Lerneinheit beenden?": one whole sentence per subset (`subsetWhat` names them).
+    private static func replaceSessionMessage(_ wanted: StudySubset) -> String {
+        switch wanted {
+        case .all:
+            L("Deine gespeicherte Lerneinheit endet, wenn du jetzt alle Begriffe lernst. Dein Lernfortschritt bleibt erhalten.")
+        case .starred:
+            L(
+                "Deine gespeicherte Lerneinheit endet, wenn du jetzt nur die markierten Begriffe lernst. Dein Lernfortschritt bleibt erhalten.")
+        case .learning:
+            L(
+                "Deine gespeicherte Lerneinheit endet, wenn du jetzt nur die nicht gemeisterten Begriffe lernst. Dein Lernfortschritt bleibt erhalten.")
+        case .missed:
+            L(
+                "Deine gespeicherte Lerneinheit endet, wenn du jetzt nur die zuletzt falsch beantworteten Begriffe lernst. Dein Lernfortschritt bleibt erhalten.")
+        case .cardIds:
+            L(
+                "Deine gespeicherte Lerneinheit endet, wenn du jetzt eine neue Auswahl lernst. Dein Lernfortschritt bleibt erhalten.")
+        }
+    }
+
+    /// The `.allMastered` text: one whole sentence per scope (`scopeText` names it).
+    private static func allMasteredText(_ subset: StudySubset, count: Int) -> String {
+        if subset == .starred {
+            return count == 1
+                ? L(
+                    "Du beherrschst bereits den markierten Begriff. Wiederhole sie, um zu prüfen, ob sie noch sitzen, setz den Fortschritt zurück, um nochmal von vorne zu lernen, oder übe sie schriftlich.")
+                : L(
+                    "Du beherrschst bereits alle %@ markierten Begriffe. Wiederhole sie, um zu prüfen, ob sie noch sitzen, setz den Fortschritt zurück, um nochmal von vorne zu lernen, oder übe sie schriftlich.",
+                    "\(count)")
+        }
+        return count == 1
+            ? L(
+                "Du beherrschst bereits den Begriff. Wiederhole sie, um zu prüfen, ob sie noch sitzen, setz den Fortschritt zurück, um nochmal von vorne zu lernen, oder übe sie schriftlich.")
+            : L(
+                "Du beherrschst bereits alle %@ Begriffe. Wiederhole sie, um zu prüfen, ob sie noch sitzen, setz den Fortschritt zurück, um nochmal von vorne zu lernen, oder übe sie schriftlich.",
+                "\(count)")
     }
 
     /// The message screens (`.empty`, `.allMastered`).
@@ -622,36 +673,46 @@ public enum LearnFlow {
         switch state.phase {
         case .allMastered:
             return MessageContent(
-                systemImage: "trophy.fill", title: "Alles gemeistert!",
-                text: "Du beherrschst bereits \(scopeText(state.subset, count: state.scopeCardIds.count)). "
-                    + "Wiederhole sie, um zu prüfen, ob sie noch sitzen, setz den Fortschritt zurück, um nochmal von "
-                    + "vorne zu lernen, oder übe sie schriftlich.",
-                primaryLabel: "Fortschritt zurücksetzen und neu lernen", offersWrite: true, offersReview: true)
+                systemImage: "trophy.fill", title: L("Alles gemeistert!"),
+                text: allMasteredText(state.subset, count: state.scopeCardIds.count),
+                primaryLabel: L("Fortschritt zurücksetzen und neu lernen"), offersWrite: true, offersReview: true)
         case .empty:
-            let all = "Alle Begriffe üben"
+            let all = L("Alle Begriffe üben")
             switch state.subset {
             case .starred:
                 return MessageContent(
-                    systemImage: "star", title: "Keine markierten Begriffe",
-                    text: "Markiere schwierige Begriffe mit dem Stern, um sie gezielt zu üben.", primaryLabel: all,
+                    systemImage: "star", title: L("Keine markierten Begriffe"),
+                    text: L("Markiere schwierige Begriffe mit dem Stern, um sie gezielt zu üben."), primaryLabel: all,
                     offersWrite: false)
             case .learning:
                 return MessageContent(
-                    systemImage: "trophy.fill", title: "Alles gemeistert!",
-                    text: "Du beherrschst bereits alle Begriffe in diesem Lernset. "
-                        + "Übe trotzdem alle, damit sie frisch bleiben.", primaryLabel: all, offersWrite: false)
+                    systemImage: "trophy.fill", title: L("Alles gemeistert!"),
+                    text: L(
+                        "Du beherrschst bereits alle Begriffe in diesem Lernset. Übe trotzdem alle, damit sie frisch bleiben."),
+                    primaryLabel: all, offersWrite: false)
             case .missed, .cardIds:
                 return MessageContent(
-                    systemImage: "checkmark.circle", title: "Keine falschen Begriffe",
-                    text: "Hier gibt es gerade nichts nachzuholen.", primaryLabel: all, offersWrite: false)
+                    systemImage: "checkmark.circle", title: L("Keine falschen Begriffe"),
+                    text: L("Hier gibt es gerade nichts nachzuholen."), primaryLabel: all, offersWrite: false)
             case .all:
                 return MessageContent(
-                    systemImage: "square.stack.3d.up", title: "Noch keine Begriffe zum Üben",
-                    text: "Füge diesem Lernset Begriffe mit Übersetzung hinzu, dann kann es losgehen.",
-                    primaryLabel: "Begriffe hinzufügen", offersWrite: false)
+                    systemImage: "square.stack.3d.up", title: L("Noch keine Begriffe zum Üben"),
+                    text: L("Füge diesem Lernset Begriffe mit Übersetzung hinzu, dann kann es losgehen."),
+                    primaryLabel: L("Begriffe hinzufügen"), offersWrite: false)
             }
         default:
             return nil
         }
+    }
+}
+
+extension LearnFlow.State {
+    /// Whether `other` differs from this state in the answer field's text (`draft`) alone: the
+    /// app then updates only the field instead of every view that shows the state.
+    public func differsOnlyInDraft(from other: Self) -> Bool {
+        guard draft != other.draft else { return false }
+        var same = other
+        same.draft = draft
+        return same == self
     }
 }

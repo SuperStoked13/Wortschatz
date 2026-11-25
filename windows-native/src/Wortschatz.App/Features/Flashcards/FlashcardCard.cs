@@ -10,6 +10,7 @@ using Avalonia.Media;
 using Wortschatz.App.DesignSystem;
 using Wortschatz.App.Features.Study;
 using Wortschatz.Core;
+using static Wortschatz.Core.CoreText;
 
 namespace Wortschatz.App.Features.Flashcards;
 
@@ -125,8 +126,9 @@ public static class FlashcardMetrics
 
     /// <summary>The card's height for the room the stage has: an index-card shape, between 240 and 440.</summary>
     public static double CardHeight(double width, double availableHeight) => AppDevice.IsPhone
-        // Phone: an upright card down to the thumb (one hand), as high as the screen allows.
-        ? Math.Max(240, Math.Min(availableHeight, width * 1.45))
+        // Phone: an upright card down to the thumb (one hand), as high as the screen allows (1.45 left a hand's
+        // width of empty glass above the buttons on today's tall 20:9 phones).
+        ? Math.Max(Math.Min(240, Math.Max(140, availableHeight)), Math.Min(availableHeight, width * 1.75))
         : Math.Max(240, Math.Min(440, Math.Min(width * 0.58, availableHeight)));
 
     /// <summary>The card edge <paramref name="level"/> steps below the card: drop, inset on each side, opacity.</summary>
@@ -142,7 +144,7 @@ public static class FlashcardVerdictStyle
 {
     public static StatusPalette Palette(this FlashcardVerdict v) => v == FlashcardVerdict.Know ? WsTheme.P.Success : WsTheme.P.Learning;
     public static IconName Icon(this FlashcardVerdict v) => v == FlashcardVerdict.Know ? IconName.Check : IconName.Repeat;
-    public static string Title(this FlashcardVerdict v) => v == FlashcardVerdict.Know ? "Weiss ich" : "Lerne ich noch";
+    public static string Title(this FlashcardVerdict v) => v == FlashcardVerdict.Know ? L("Weiss ich") : L("Lerne ich noch");
     /// <summary>Sideways direction of the sorted card: "Weiss ich" to the right, "Lerne ich noch" to the left.</summary>
     public static double Direction(this FlashcardVerdict v) => v == FlashcardVerdict.Know ? 1 : -1;
 }
@@ -167,11 +169,8 @@ public sealed class FlashcardFace : Grid
     FlashcardVerdict? _verdict;
     Control? _verdictView;
 
-    public bool IsBack { get; }
-
     public FlashcardFace(FlashcardSide side, double width, double height)
     {
-        IsBack = side.IsBack;
         // Clicks anywhere on the side turn the card over (FlashcardView), also where nothing is drawn.
         Background = Brushes.Transparent;
         _width = width;
@@ -230,8 +229,8 @@ public sealed class FlashcardFace : Grid
         {
             double maxWidth = _width - 56 - 40;
             double maxHeight = _height - 56 - 32 - 22 - 24;
-            var (size, weight) = FitSize(side.Text, side.Lang, maxWidth, maxHeight);
-            var block = StudyText.InLang(side.Text, side.Lang, size, weight, P.Text, WsTheme.Prompt);
+            var (size, weight, shown) = FitSize(side.Text, side.Lang, maxWidth, maxHeight);
+            var block = StudyText.InLang(shown, side.Lang, size, weight, P.Text, WsTheme.Prompt);
             block.TextAlignment = TextAlignment.Center;
             block.HorizontalAlignment = HorizontalAlignment.Center;
             block.VerticalAlignment = VerticalAlignment.Center;
@@ -244,7 +243,7 @@ public sealed class FlashcardFace : Grid
         }
         else
         {
-            var empty = Ui.Text("Keine Angabe", 20, FontWeight.Medium, P.TextTertiary);
+            var empty = Ui.Text(L("Keine Angabe"), 20, FontWeight.Medium, P.TextTertiary);
             empty.HorizontalAlignment = HorizontalAlignment.Center;
             text = empty;
         }
@@ -252,7 +251,7 @@ public sealed class FlashcardFace : Grid
         grid.Children.Add(text);
 
         // Phone: no space bar; a tap turns the card.
-        var hint = Ui.H(6, Ui.KeyCap("Leertaste"), Ui.Text(AppDevice.IsPhone ? (side.IsBack ? "Antippen: Vorderseite" : "Antippen zum Umdrehen") : side.IsBack ? "Vorderseite" : "Umdrehen", 12, color: P.TextTertiary));
+        var hint = Ui.H(6, Ui.KeyCap(L("Leertaste")), Ui.Text(AppDevice.IsPhone ? (side.IsBack ? L("Antippen: Vorderseite") : L("Antippen zum Umdrehen")) : side.IsBack ? L("Vorderseite") : L("Umdrehen"), 12, color: P.TextTertiary));
         hint.HorizontalAlignment = HorizontalAlignment.Center;
         hint.Opacity = 0.85;
         Grid.SetRow(hint, 2);
@@ -264,7 +263,7 @@ public sealed class FlashcardFace : Grid
     /// The text's size (Mac: Typography.flashcard, a little larger than the study prompt, stepping down for sentences),
     /// then shrunk until it fits the card (Mac: minimumScaleFactor 0.55).
     /// </summary>
-    static (double Size, FontWeight Weight) FitSize(string text, Lang lang, double maxWidth, double maxHeight)
+    static (double Size, FontWeight Weight, string Text) FitSize(string text, Lang lang, double maxWidth, double maxHeight)
     {
         var (size, weight) = text.Length switch
         {
@@ -274,15 +273,19 @@ public sealed class FlashcardFace : Grid
             < 140 => (28.0, FontWeight.SemiBold),
             _ => (22.0, FontWeight.Medium),
         };
+        // Long words: smaller only down to a floor, then broken at syllables (StudyText.FitWords).
+        var (start, shown) = StudyText.FitWords(text, lang, size, StudyText.WordFloor(size), weight, maxWidth);
         var typeface = new Typeface(WsTheme.Prompt, FontStyle.Normal, weight);
-        double min = size * 0.55;
-        for (double s = size; s >= min; s -= 2)
+        var flow = lang.IsRTL() ? FlowDirection.RightToLeft : FlowDirection.LeftToRight;
+        double min = Math.Min(start, size * 0.55);
+        for (double s = start; s > min; s -= 2)
         {
-            var formatted = new FormattedText(text, CultureInfo.CurrentCulture, lang.IsRTL() ? FlowDirection.RightToLeft : FlowDirection.LeftToRight,
-                typeface, s, Brushes.Black) { MaxTextWidth = Math.Max(40, maxWidth), TextAlignment = TextAlignment.Center };
-            if (formatted.Height <= maxHeight) return (s, weight);
+            var t = s == start ? shown : StudyText.BreakLongWords(text, lang, typeface, s, maxWidth);
+            var formatted = new FormattedText(t, CultureInfo.CurrentCulture, flow, typeface, s, Brushes.Black)
+                { MaxTextWidth = Math.Max(40, maxWidth), TextAlignment = TextAlignment.Center };
+            if (formatted.Height <= maxHeight) return (s, weight, t);
         }
-        return (min, weight);
+        return (min, weight, StudyText.BreakLongWords(text, lang, typeface, min, maxWidth));
     }
 
     /// <summary>🔊 ★ ✎ in the card's corner (built by FlashcardView).</summary>
@@ -424,7 +427,6 @@ public sealed class FlashcardView : Panel
     readonly AnimatedValue _crossFade;
     int _turns;
     bool _isFlipped;
-    double _lastDirection = 1;
     FlashcardDepartureKind? _leaving;
     bool _starred, _speaking, _toolsBuilt;
     // Pointer: a press that moves at least 6 points is a drag, else a click (turn over).
@@ -458,7 +460,7 @@ public sealed class FlashcardView : Panel
         _glideLayer.Children.Add(_back);
         Children.Add(_glideLayer);
         Cursor = new Cursor(StandardCursorType.Hand);
-        AutomationProperties.SetName(this, "Karteikarte");
+        AutomationProperties.SetName(this, L("Karteikarte"));
         UpdateAccessibility();
         _angle.Changed += ApplyTurn;
         _crossFade.Changed += ApplyTurn;
@@ -489,9 +491,8 @@ public sealed class FlashcardView : Panel
         }
         if (leaving != _leaving)
         {
-            var old = _leaving;
             _leaving = leaving;
-            Depart(old, leaving, flung, releaseOffset);
+            Depart(leaving, flung, releaseOffset);
         }
         IsHitTestVisible = IsCurrent;
         UpdateAccessibility();
@@ -507,7 +508,7 @@ public sealed class FlashcardView : Panel
     /// </summary>
     void UpdateAccessibility()
     {
-        AutomationProperties.SetHelpText(this, _isFlipped ? "Vorderseite zeigen" : "Umdrehen");
+        AutomationProperties.SetHelpText(this, _isFlipped ? L("Vorderseite zeigen") : L("Umdrehen"));
         AutomationProperties.SetAccessibilityView(this, IsCurrent ? AccessibilityView.Default : AccessibilityView.Raw);
     }
 
@@ -537,7 +538,6 @@ public sealed class FlashcardView : Panel
         var verdict = ShownVerdict;
         _front.SetVerdict(verdict);
         _back.SetVerdict(verdict);
-        if (verdict is { } v) _lastDirection = v.Direction();
     }
 
     /// <summary>One more half-turn, so that the side <paramref name="showingBack"/> asks for is up.</summary>
@@ -561,7 +561,7 @@ public sealed class FlashcardView : Panel
     /// Leaving (sorted: the glide; back to the stack: sinking) or coming back ("Zurück" while it was still in flight:
     /// it glides back along its path).
     /// </summary>
-    void Depart(FlashcardDepartureKind? old, FlashcardDepartureKind? leaving, bool flung, double releaseOffset)
+    void Depart(FlashcardDepartureKind? leaving, bool flung, double releaseOffset)
     {
         var placement = Effects.Of(this);
         switch (leaving)
@@ -573,7 +573,6 @@ public sealed class FlashcardView : Panel
                 placement.Place(Placement.Identity, Motion.ReduceMotion ? Motion.Fade : FlashcardMotion.Arrive);
                 break;
             case FlashcardDepartureKind.Sorted sorted:
-                _lastDirection = sorted.Verdict.Direction();
                 if (Motion.ReduceMotion)
                 {
                     placement.Place(new Placement(Opacity: 0), Motion.Fade);
@@ -591,7 +590,6 @@ public sealed class FlashcardView : Panel
                     Motion.ReduceMotion ? Motion.Fade : FlashcardMotion.Sink);
                 break;
         }
-        _ = old;
     }
 
     /// <summary>The entrance of a card that comes on screen anew: up from the stack, or back from its side.</summary>
@@ -684,10 +682,10 @@ public sealed class FlashcardView : Panel
         foreach (var face in new[] { _front, _back })
         {
             var p = WsTheme.P;
-            var speak = Ui.IconButton(IconName.Speaker, "Vorlesen (Ctrl+R)", _c.SpeakVisibleSide, 32, ButtonKind.Plain, speaking ? p.Accent : p.TextSecondary);
-            var star = Ui.IconButton(Card.Starred ? IconName.StarFilled : IconName.Star, Card.Starred ? "Markierung entfernen (Ctrl+D)" : "Markieren (Ctrl+D)",
+            var speak = Ui.IconButton(IconName.Speaker, L("Vorlesen (Ctrl+R)"), _c.SpeakVisibleSide, 32, ButtonKind.Plain, speaking ? p.Accent : p.TextSecondary);
+            var star = Ui.IconButton(Card.Starred ? IconName.StarFilled : IconName.Star, Card.Starred ? L("Markierung entfernen (Ctrl+D)") : L("Markieren (Ctrl+D)"),
                 _c.ToggleStar, 32, ButtonKind.Plain, Card.Starred ? p.Star : p.TextSecondary);
-            var edit = Ui.IconButton(IconName.Pencil, "Karte bearbeiten (Ctrl+E)", () => EditRequested?.Invoke(), 32, ButtonKind.Plain);
+            var edit = Ui.IconButton(IconName.Pencil, L("Karte bearbeiten (Ctrl+E)"), () => EditRequested?.Invoke(), 32, ButtonKind.Plain);
             foreach (var b in new[] { speak, star, edit }) b.Focusable = false;
             if (speaking) Pulse(speak);
             if (starToggled) Effects.Pop(star, 1.25);
@@ -799,6 +797,24 @@ public sealed class FlashcardStackPeeks : Control
         InvalidateVisual();
     }
 
+    Geometry? _outside;
+    Rect _outsideOf;
+
+    /// <summary>
+    /// Everything but the front card's shape (the clip of the card behind it): made once per size, not on every frame of
+    /// a turn or a swipe (a geometry combination is the most expensive part of drawing the stack).
+    /// </summary>
+    Geometry OutsideFront(double width, Rect front)
+    {
+        if (_outside is null || _outsideOf != front)
+        {
+            _outside = new CombinedGeometry(GeometryCombineMode.Exclude, new RectangleGeometry(new Rect(-50, -50, width + 100, _cardHeight + 120)),
+                new RectangleGeometry(front, FlashcardMetrics.CornerRadius, FlashcardMetrics.CornerRadius));
+            _outsideOf = front;
+        }
+        return _outside;
+    }
+
     public override void Render(DrawingContext context)
     {
         var p = WsTheme.P;
@@ -820,9 +836,7 @@ public sealed class FlashcardStackPeeks : Control
                 if (level == 1 && _levels[0].Value > 0.001)
                 {
                     // A card hides the one behind it, so their tints never add up.
-                    var outside = new CombinedGeometry(GeometryCombineMode.Exclude, new RectangleGeometry(new Rect(-50, -50, width + 100, _cardHeight + 120)),
-                        new RectangleGeometry(Shape(0).Rect, FlashcardMetrics.CornerRadius, FlashcardMetrics.CornerRadius));
-                    using var clip = ctx.PushGeometryClip(outside);
+                    using var clip = ctx.PushGeometryClip(OutsideFront(width, Shape(0).Rect));
                     ctx.DrawRectangle(fill, pen, Shape(level));
                 }
                 else ctx.DrawRectangle(fill, pen, Shape(level));

@@ -80,11 +80,13 @@ function isTrusted(trust, ip) {
 /**
  * The client's address. X-Forwarded-For only counts when the direct peer is a trusted
  * proxy; the list is then read from the right, and the first untrusted entry wins
- * (entries further left could be made up by the client).
+ * (entries further left could be made up by the client). `proxySocket`: the request came
+ * over the Unix socket (LISTEN_SOCKET), whose only peer is the proxy, which opened the
+ * socket file; without the header it is nobody in particular ("").
  */
-export function clientIp(req, trust) {
-  const peer = normalizeIp(req.socket?.remoteAddress);
-  if (!peer || !isTrusted(trust, peer)) return peer;
+export function clientIp(req, trust, { proxySocket = false } = {}) {
+  const peer = proxySocket ? '' : normalizeIp(req.socket?.remoteAddress);
+  if (!proxySocket && (!peer || !isTrusted(trust, peer))) return peer;
   const header = req.headers['x-forwarded-for'];
   if (!header) return peer;
   const hops = String(header).split(',');

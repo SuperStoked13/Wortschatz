@@ -15,6 +15,7 @@ final class SetEditorRow: Identifiable {
         var definition: String
         var starred: Bool
         var flags: [ParseFlag]
+        var importKey: String?
     }
 
     /// The row's identity in the list (not the card id: new rows have none yet).
@@ -26,6 +27,10 @@ final class SetEditorRow: Identifiable {
     var starred: Bool
     /// Parser flags of an imported card ("bitte prüfen"); cleared by the first edit.
     var flags: [ParseFlag]
+    /// The pair of the import box this card shows (`SetEditorModel.importKey`), nil for a card
+    /// typed in or loaded from the set. Such cards follow the import box: another Trennung,
+    /// "Seiten tauschen" or more text changes them in place.
+    var importKey: String?
     /// Marked by the last save attempt: filled but incomplete, until fixed.
     var isInvalid = false
     /// Its term appears in another row too.
@@ -36,7 +41,7 @@ final class SetEditorRow: Identifiable {
 
     init(
         id: UUID = UUID(), cardID: String? = nil, term: String = "", definition: String = "", starred: Bool = false,
-        flags: [ParseFlag] = []
+        flags: [ParseFlag] = [], importKey: String? = nil
     ) {
         self.id = id
         self.cardID = cardID
@@ -44,24 +49,22 @@ final class SetEditorRow: Identifiable {
         self.definition = definition
         self.starred = starred
         self.flags = flags
+        self.importKey = importKey
     }
 
     convenience init(card: Card) {
         self.init(cardID: card.id, term: card.term, definition: card.definition, starred: card.starred)
     }
 
-    convenience init(parsed card: ParsedCard) {
-        self.init(term: card.term, definition: card.definition, flags: card.flags)
-    }
-
     convenience init(_ snapshot: Snapshot) {
         self.init(
             id: snapshot.id, cardID: snapshot.cardID, term: snapshot.term, definition: snapshot.definition,
-            starred: snapshot.starred, flags: snapshot.flags)
+            starred: snapshot.starred, flags: snapshot.flags, importKey: snapshot.importKey)
     }
 
     var snapshot: Snapshot {
-        Snapshot(id: id, cardID: cardID, term: term, definition: definition, starred: starred, flags: flags)
+        Snapshot(
+            id: id, cardID: cardID, term: term, definition: definition, starred: starred, flags: flags, importKey: importKey)
     }
 
     var trimmedTerm: String { JSCompat.trim(term) }

@@ -5,6 +5,7 @@ using Avalonia.Media;
 using Wortschatz.App.DesignSystem;
 using Wortschatz.App.Features.Study;
 using Wortschatz.Core;
+using static Wortschatz.Core.CoreText;
 
 namespace Wortschatz.App.Features.Flashcards;
 
@@ -20,26 +21,26 @@ public static class FlashcardsOptionsPanel
         int starred = controller.StarredCount;
         var front = new WsSegmented([names.Term.Label, names.Definition.Label], controller.Front == FlashcardFront.Term ? 0 : 1, 110);
         front.SelectionChanged += i => controller.SetFront(i == 0 ? FlashcardFront.Term : FlashcardFront.Definition);
-        var shuffle = new WsSwitch(controller.Deck.IsShuffled, "Mischen");
+        var shuffle = new WsSwitch(controller.Deck.IsShuffled, L("Mischen"));
         shuffle.Toggled += controller.SetShuffled;
-        var onlyStarred = new WsSwitch(controller.Deck.StarredOnly, $"Nur markierte ({starred})");
+        var onlyStarred = new WsSwitch(controller.Deck.StarredOnly, L($"Nur markierte ({starred})"));
         onlyStarred.Toggled += controller.SetStarredOnly;
         onlyStarred.IsEnabled = starred > 0 || controller.Deck.StarredOnly;
 
-        var cards = Form.Section("Karten", [
-            Form.Row("Vorderseite", front),
-            Form.Row("Mischen", shuffle, "Die Karten kommen in zufälliger Reihenfolge."),
+        var cards = Form.Section(L("Karten"), [
+            Form.Row(L("Vorderseite"), front),
+            Form.Row(L("Mischen"), shuffle, L("Die Karten kommen in zufälliger Reihenfolge.")),
         ]);
         var subset = Form.Section(null, [
-            Form.Row($"Nur markierte ({starred})", onlyStarred,
+            Form.Row(L($"Nur markierte ({starred})"), onlyStarred,
                 starred == 0 && !controller.Deck.StarredOnly
-                    ? "Markiere Begriffe mit dem Stern, um nur sie zu üben."
-                    : "Beginnt die Karteikarten mit den markierten Begriffen neu."),
-        ], "Karteikarten zählen nicht für «Gemeistert». Dafür fragen dich Lernen und Schreiben ab.");
+                    ? L("Markiere Begriffe mit dem Stern, um nur sie zu üben.")
+                    : L("Beginnt die Karteikarten mit den markierten Begriffen neu.")),
+        ], L("Karteikarten zählen nicht für «Gemeistert». Dafür fragen dich Lernen und Schreiben ab."));
 
-        var done = Ui.Primary("Fertig", onClose, "Esc", height: 40);
+        var done = Ui.Primary(L("Fertig"), onClose, "Esc", height: 40);
         done.HorizontalAlignment = HorizontalAlignment.Right;
-        var body = Ui.V(18, Ui.Text("Optionen", 20, FontWeight.Bold), cards, subset, done);
+        var body = Ui.V(18, Ui.Text(L("Optionen"), 20, FontWeight.Bold), cards, subset, done);
         var card = Ui.Hero(body, new Thickness(24, 22), 24);
         card.Width = 440;
         return card;

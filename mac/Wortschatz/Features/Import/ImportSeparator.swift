@@ -10,13 +10,13 @@ nonisolated enum ImportSeparator: String, CaseIterable, Identifiable, Sendable {
 
     var label: String {
         switch self {
-        case .auto: "Automatisch"
-        case .tab: "Tab"
-        case .comma: "Komma"
-        case .semicolon: "Strichpunkt"
-        case .dash: "Bindestrich"
-        case .lines: "Zeilenweise"
-        case .custom: "Eigenes…"
+        case .auto: String(localized: "Automatisch", comment: "Import separator: detect it")
+        case .tab: String(localized: "Tab", comment: "Separator: the tab character")
+        case .comma: String(localized: "Komma")
+        case .semicolon: String(localized: "Strichpunkt")
+        case .dash: String(localized: "Bindestrich")
+        case .lines: String(localized: "Zeilenweise")
+        case .custom: String(localized: "Eigenes…", comment: "Import separator: one the learner types")
         }
     }
 

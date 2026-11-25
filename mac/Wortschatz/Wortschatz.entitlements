@@ -6,5 +6,20 @@
 	<true/>
 	<key>com.apple.security.files.user-selected.read-write</key>
 	<true/>
+	<!-- Only for updates (Services/AppUpdater.swift): GitHub's release list, the appcast and the
+	     DMG. -->
+	<key>com.apple.security.network.client</key>
+	<true/>
+	<!-- The app is signed ad hoc (no Apple team): without this, the hardened runtime refuses to load
+	     the embedded Sparkle.framework ("different Team IDs") and the app quits at launch. The other
+	     protections of the hardened runtime stay on (no injected libraries via DYLD_ variables). -->
+	<key>com.apple.security.cs.disable-library-validation</key>
+	<true/>
+	<!-- Sparkle's installer service for sandboxed apps. -->
+	<key>com.apple.security.temporary-exception.mach-lookup.global-name</key>
+	<array>
+		<string>$(PRODUCT_BUNDLE_IDENTIFIER)-spks</string>
+		<string>$(PRODUCT_BUNDLE_IDENTIFIER)-spki</string>
+	</array>
 </dict>
 </plist>

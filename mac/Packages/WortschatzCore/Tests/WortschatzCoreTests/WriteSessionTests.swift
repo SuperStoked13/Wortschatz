@@ -554,7 +554,7 @@ struct WriteSessionTests {
         #expect(stats.elapsedMs > 0)
     }
 
-    @Test("finalStats: both directions add up per card, ties keep order, max 10")
+    @Test("finalStats: both directions add up per card, ties keep order, every missed card")
     func finalStatsBoth() {
         var s = Self.ordered(Self.makeCards(12), .both)
         // Round 1: every term question missed, every definition question correct except c12:d.
@@ -564,9 +564,9 @@ struct WriteSessionTests {
         #expect(stats.total == 24)
         #expect(stats.firstTryCorrect == 11)
         #expect(stats.accuracy == 11.0 / 24.0)
-        #expect(stats.hardest.count == 10)
+        #expect(stats.hardest.count == 12)
         #expect(stats.hardest.first == MissedCard(cardId: "c12", misses: 2))
-        #expect(stats.hardest.dropFirst().map(\.cardId) == ["c1", "c2", "c3", "c4", "c5", "c6", "c7", "c8", "c9"])
+        #expect(stats.hardest.dropFirst().map(\.cardId) == ["c1", "c2", "c3", "c4", "c5", "c6", "c7", "c8", "c9", "c10", "c11"])
         #expect(stats.missedCardIds.count == 12)
         #expect(stats.missedCardIds.first == "c1")
     }

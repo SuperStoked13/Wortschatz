@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<!--
+	Keys of the Wortschatz target that Xcode cannot generate (GENERATE_INFOPLIST_FILE adds the rest):
+	the updates through Sparkle (Services/AppUpdater.swift, Services/README.md › «Updates»).
+	Outside the Wortschatz/ folder on purpose: that folder is synchronized into every target, and
+	only this one updates itself.
+-->
+<dict>
+	<!-- Where the releases are: the app asks GitHub for the newest published release with an
+	     appcast.xml (`UpdateFeed`). -->
+	<key>WortschatzUpdateRepository</key>
+	<string>SuperStoked13/Wortschatz</string>
+	<!-- Only if GitHub's release list cannot be read (Sparkle needs some address). -->
+	<key>SUFeedURL</key>
+	<string>https://github.com/SuperStoked13/Wortschatz/releases/latest/download/appcast.xml</string>
+	<!-- The public half of the signing key; the private half is only in Anthony's keychain
+	     (Sparkle's generate_keys, account «wortschatz»). Every update and every appcast must be
+	     signed with it (Downloadseite/tools/release-mac.sh). -->
+	<key>SUPublicEDKey</key>
+	<string>Qv4NlhS9V0uMN/7LZwFKt0hRNftgIRWiYruIfx0i8Ys=</string>
+	<key>SURequireSignedFeed</key>
+	<true/>
+	<!-- Checks the DMG's signature before unpacking it (Sparkle requires it with signed feeds). -->
+	<key>SUVerifyUpdateBeforeExtraction</key>
+	<true/>
+	<!-- The app is sandboxed: Sparkle installs through its installer service. -->
+	<key>SUEnableInstallerLauncherService</key>
+	<true/>
+	<!-- Check daily without asking, load in the background, install on quit. -->
+	<key>SUEnableAutomaticChecks</key>
+	<true/>
+	<key>SUAutomaticallyUpdate</key>
+	<true/>
+	<key>SUAllowsAutomaticUpdates</key>
+	<true/>
+</dict>
+</plist>

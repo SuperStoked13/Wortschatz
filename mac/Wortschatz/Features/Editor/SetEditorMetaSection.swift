@@ -1,7 +1,8 @@
 import SwiftUI
 import WortschatzCore
 
-/// Titel, Beschreibung and the language pickers ("Ich lerne" ⇄ "Übersetzung").
+/// Titel, Beschreibung and the language pickers ("Ich lerne" ⇄ "Übersetzung"; a new set starts
+/// on "Automatisch").
 struct SetEditorMetaSection: View {
     let editor: SetEditorModel
     var focus: FocusState<SetEditorField?>.Binding
@@ -9,7 +10,7 @@ struct SetEditorMetaSection: View {
     var body: some View {
         VStack(alignment: .leading, spacing: Spacing.m) {
             SetEditorFieldBox(
-                label: "Titel", isFocused: focus.wrappedValue == .title, error: editor.titleError
+                label: String(localized: "Titel"), isFocused: focus.wrappedValue == .title, error: editor.titleError
             ) {
                 TextField(
                     "Titel", text: Binding(get: { editor.title }, set: { editor.setTitle($0) }),
@@ -30,7 +31,7 @@ struct SetEditorMetaSection: View {
             }
 
             SetEditorFieldBox(
-                label: "Beschreibung", isFocused: focus.wrappedValue == .description
+                label: String(localized: "Beschreibung"), isFocused: focus.wrappedValue == .description
             ) {
                 TextField(
                     "Beschreibung", text: Binding(get: { editor.details }, set: { editor.setDetails($0) }),
@@ -48,10 +49,13 @@ struct SetEditorMetaSection: View {
     }
 
     private var languages: some View {
+        // The pickers take the width of their text, so ⇄ sits evenly between them.
         HStack(alignment: .top, spacing: Spacing.m) {
             SetEditorLanguagePicker(
-                label: "Ich lerne", languages: SetEditorCopy.termLanguages,
-                selection: Binding(get: { editor.termLang }, set: { editor.setTermLang($0) }),
+                label: String(localized: "Ich lerne"), languages: SetEditorCopy.termLanguages,
+                selection: Binding(
+                    get: { editor.termIsAuto ? nil : editor.termLang },
+                    set: { lang in if let lang { editor.setTermLang(lang) } else { editor.setTermAuto() } }),
                 isDetected: editor.termDetected)
             Button {
                 editor.flipSides()
@@ -61,24 +65,28 @@ struct SetEditorMetaSection: View {
                     .frame(width: 18, height: 16)
             }
             .buttonStyle(.glass)
+            .buttonBorderShape(.capsule)
             .controlSize(.large)
             .padding(.top, 21)
             .help("Begriffe und Definitionen tauschen")
             .accessibilityLabel("Begriffe und Definitionen tauschen")
             SetEditorLanguagePicker(
-                label: "Übersetzung", languages: SetEditorCopy.definitionLanguages,
-                selection: Binding(get: { editor.defLang }, set: { editor.setDefLang($0) }),
+                label: String(localized: "Übersetzung"), languages: SetEditorCopy.definitionLanguages,
+                selection: Binding(
+                    get: { editor.defIsAuto ? nil : editor.defLang },
+                    set: { lang in if let lang { editor.setDefLang(lang) } else { editor.setDefAuto() } }),
                 isDetected: editor.defDetected)
             Spacer(minLength: 0)
         }
     }
 }
 
-/// A language pop-up with its label and the "Automatisch erkannt" note.
+/// A language pop-up with its label and the "Automatisch erkannt" note; "Automatisch" (nil)
+/// leaves the language to the recognition.
 private struct SetEditorLanguagePicker: View {
     let label: String
     let languages: [Lang]
-    @Binding var selection: Lang
+    @Binding var selection: Lang?
     let isDetected: Bool
 
     var body: some View {
@@ -88,21 +96,32 @@ private struct SetEditorLanguagePicker: View {
                 .foregroundStyle(.secondary)
                 .accessibilityHidden(true)
             Picker(label, selection: $selection) {
+                Text(SetEditorCopy.automatic).tag(Lang?.none)
+                Divider()
                 ForEach(languages, id: \.self) { lang in
-                    Text(Labels.langName(lang)).tag(lang)
+                    Text(Labels.langName(lang)).tag(Lang?.some(lang))
                 }
             }
             .labelsHidden()
             .pickerStyle(.menu)
             .controlSize(.large)
-            .frame(width: 180, alignment: .leading)
-            .accessibilityValue(isDetected ? "\(Labels.langName(selection)), automatisch erkannt" : Labels.langName(selection))
+            .fixedSize()
+            .accessibilityValue(accessibilityValue)
             Label(SetEditorCopy.detected, systemImage: "sparkles")
+                .fixedSize()
+                // Takes no width: the column is as wide as its picker (⇄ stays centred).
+                .frame(width: 0, alignment: .leading)
                 .font(.caption)
                 .foregroundStyle(Theme.accentText)
                 .opacity(isDetected ? 1 : 0)
                 .accessibilityHidden(true)
         }
+    }
+
+    private var accessibilityValue: String {
+        guard let selection else { return SetEditorCopy.automatic }
+        return isDetected
+            ? String(localized: "\(Labels.langName(selection)), automatisch erkannt") : Labels.langName(selection)
     }
 }
 

@@ -4,6 +4,7 @@ import WortschatzCore
 /// The study card (glass): the prompt's language, the prompt in large rounded type, the tools
 /// 🔊 (⌘R), ★ (⌘D) and ✎ (⌘E), and below it the written answer area.
 struct LearnPromptCard<Answer: View>: View {
+    @Environment(\.studyScale) private var studyScale
     let question: LearnFlow.QuestionInfo
     let isSpeaking: Bool
     let send: (LearnFlow.Event) -> Void
@@ -21,13 +22,16 @@ struct LearnPromptCard<Answer: View>: View {
                         .accessibilityHidden(true)
                     if question.isReview {
                         LearnReviewChip()
+                    } else if question.isRecheck {
+                        LearnRecheckChip()
                     }
                     Spacer(minLength: Spacing.s)
                     tools
                 }
                 ZStack(alignment: .leading) {
-                    Text(LearnText.spoken(question.prompt, lang: question.promptLang))
-                        .font(Typography.prompt(for: question.prompt))
+                    // Long words shrink a little, then break at syllables (`LongWordText`).
+                    LongWordText(
+                        text: question.prompt, lang: question.promptLang, size: Typography.promptSize(for: question.prompt) * studyScale)
                         .foregroundStyle(.primary)
                         .multilineTextAlignment(.leading)
                         .fixedSize(horizontal: false, vertical: true)
@@ -49,14 +53,16 @@ struct LearnPromptCard<Answer: View>: View {
 
     private var tools: some View {
         HStack(spacing: Spacing.xxs) {
-            LearnIconButton(label: "Vorlesen", help: "Vorlesen (⌘R)", systemImage: "speaker.wave.2.fill") {
+            LearnIconButton(
+                label: String(localized: "Vorlesen"), help: String(localized: "Vorlesen (⌘R)"), systemImage: "speaker.wave.2.fill"
+            ) {
                 send(.speakPrompt)
             }
             .symbolEffect(.variableColor.iterative, isActive: isSpeaking && !reduceMotion)
 
             LearnIconButton(
-                label: question.starred ? "Markierung entfernen" : "Markieren",
-                help: question.starred ? "Markierung entfernen (⌘D)" : "Markieren (⌘D)",
+                label: question.starred ? String(localized: "Markierung entfernen") : String(localized: "Markieren"),
+                help: question.starred ? String(localized: "Markierung entfernen (⌘D)") : String(localized: "Markieren (⌘D)"),
                 systemImage: question.starred ? "star.fill" : "star",
                 tint: question.starred ? Theme.star : nil
             ) {
@@ -66,8 +72,8 @@ struct LearnPromptCard<Answer: View>: View {
 
             // ⌘E wins over the Lernset menu's ⌘E while a card is on screen: it edits this card.
             LearnIconButton(
-                label: "Karte bearbeiten", help: "Karte bearbeiten (⌘E)", systemImage: "square.and.pencil",
-                shortcut: KeyboardShortcut("e", modifiers: .command)
+                label: String(localized: "Karte bearbeiten"), help: String(localized: "Karte bearbeiten (⌘E)"),
+                systemImage: "square.and.pencil", shortcut: KeyboardShortcut("e", modifiers: .command)
             ) {
                 onEdit()
             }
@@ -86,6 +92,16 @@ struct LearnReviewChip: View {
         TintedChip(text: LearnFlow.REVIEW_LABEL, systemImage: "arrow.counterclockwise", palette: Theme.mastered, size: .small)
             .help("Diesen Begriff hast du schon gemeistert. Ist deine Antwort falsch, ist er wieder am Lernen.")
             .accessibilityLabel("Wiederholungsfrage")
+    }
+}
+
+/// "Nachkontrolle" next to the prompt's language: a card missed earlier in the session comes back
+/// once more after it was mastered (Nachkontrolle nach Fehlern), in the colour of "Am Lernen".
+struct LearnRecheckChip: View {
+    var body: some View {
+        TintedChip(text: LearnFlow.RECHECK_LABEL, systemImage: "arrow.trianglehead.2.clockwise", palette: Theme.learning, size: .small)
+            .help(LearnFlow.RECHECK_HELP)
+            .accessibilityLabel(LearnFlow.RECHECK_LABEL)
     }
 }
 
@@ -192,11 +208,11 @@ struct LearnWrittenSection: View {
             isChecking: controller.isCheckingSynonym && !copy
         ) {
             LearnAnswerField(
-                text: Binding(get: { controller.state.draft }, set: { controller.send(.draftChanged($0)) }),
+                text: Binding(get: { controller.draft }, set: { controller.send(.draftChanged($0)) }),
                 selection: $selection,
                 isCopy: copy,
                 lang: question.answerLang,
-                placeholder: copy ? "Richtige Antwort abtippen" : question.placeholder,
+                placeholder: copy ? String(localized: "Richtige Antwort abtippen") : question.placeholder,
                 focus: focus,
                 wantsFocus: wantsFocus,
                 focusKey: "\(question.qid)|\(copy ? "copy" : "answer")",
@@ -222,6 +238,7 @@ struct LearnWrittenSection: View {
 
 /// The large answer (or copy) field, a plain text field; `StudyAnswerBox` draws its box.
 private struct LearnAnswerField: View {
+    @Environment(\.studyScale) private var studyScale
     @Binding var text: String
     @Binding var selection: TextSelection?
     let isCopy: Bool
@@ -238,9 +255,12 @@ private struct LearnAnswerField: View {
     let onKey: (KeyInput, _ isRepeat: Bool) -> Void
 
     var body: some View {
+        // Read here, so a text changed by the app (a special character) reaches the field: the
+        // screen around it is not rebuilt when only the text changes (`LearnController.draft`).
+        let _ = text
         field
             .textFieldStyle(.plain)
-            .font(Typography.answerField)
+            .font(Typography.answerField(studyScale))
             .cardFieldDirection(lang)
             .autocorrectionDisabled()
             .writingToolsBehavior(.disabled)
@@ -248,7 +268,7 @@ private struct LearnAnswerField: View {
             .focusWhenShown(focus, equals: .answer, isWanted: wantsFocus, key: focusKey, fieldIdentifier: isCopy ? "learn-copy" : "learn-answer")
             .onSubmit(onSubmit)
             .studyFieldKeys(onKey)
-            .accessibilityHint(isCopy ? "Tippe die richtige Antwort ab" : placeholder)
+            .accessibilityHint(isCopy ? String(localized: "Tippe die richtige Antwort ab") : placeholder)
             .accessibilityIdentifier(isCopy ? "learn-copy" : "learn-answer")
     }
 
@@ -271,6 +291,7 @@ private struct LearnAnswerField: View {
 /// wrong copy is rejected. While an answer is looked up as a synonym outside the set, a small
 /// "Prüfe …" shows at its end.
 struct StudyAnswerBox<Field: View>: View {
+    @Environment(\.studyScale) private var studyScale
     /// What was typed, after a correct answer; nil while the field asks.
     let correctAnswer: AttributedString?
     /// The answer's language: Arabic stays at the right edge, where the field had it.
@@ -292,7 +313,7 @@ struct StudyAnswerBox<Field: View>: View {
             if let correctAnswer {
                 HStack(spacing: Spacing.s) {
                     Text(correctAnswer)
-                        .font(Typography.answerField)
+                        .font(Typography.answerField(studyScale))
                         .foregroundStyle(Theme.success.text)
                         .lineLimit(3)
                         .cardTextLine(lang)
@@ -304,7 +325,7 @@ struct StudyAnswerBox<Field: View>: View {
                         .accessibilityHidden(true)
                 }
                 .accessibilityElement(children: .combine)
-                .accessibilityLabel(Text(AttributedString("Deine Antwort, richtig: ") + correctAnswer))
+                .accessibilityLabel(Text(AttributedString(String(localized: "Deine Antwort, richtig: ")) + correctAnswer))
                 .onAppear { checked += 1 }
                 .transition(Self.acceptedTransition)
             } else {
@@ -422,6 +443,7 @@ private struct LearnCorrectDetails: View {
 /// "Richtige Antwort" with 🔊, the note after a correcting edit, the copy field (if on) and
 /// "Bearbeiten ⌘E".
 private struct LearnMissDetails<Copy: View>: View {
+    @Environment(\.studyScale) private var studyScale
     let feedback: LearnFlow.Feedback
     let question: LearnFlow.QuestionInfo
     let onSpeak: (String, Lang) -> Void
@@ -431,7 +453,7 @@ private struct LearnMissDetails<Copy: View>: View {
     var body: some View {
         VStack(alignment: .leading, spacing: Spacing.m) {
             if feedback.kind == .wrong, LearnText.hasText(feedback.given) {
-                StudyFeedbackRow(title: "Deine Antwort") {
+                StudyFeedbackRow(title: String(localized: "Deine Antwort")) {
                     if let hint = feedback.hint, !feedback.editedCorrect {
                         HintChip(verbatim: hint, size: .small)
                     }
@@ -440,16 +462,19 @@ private struct LearnMissDetails<Copy: View>: View {
                 }
             }
 
-            StudyFeedbackRow(title: "Richtige Antwort") {
+            StudyFeedbackRow(title: String(localized: "Richtige Antwort")) {
                 EmptyView()
             } content: {
                 HStack(alignment: .center, spacing: Spacing.xs) {
                     Text(LearnText.spoken(question.expected, lang: question.answerLang))
-                        .font(Typography.answerField)
+                        .font(Typography.answerField(studyScale))
                         .foregroundStyle(Theme.success.text)
                         .fixedSize(horizontal: false, vertical: true)
                         .cardTextDirection(question.answerLang)
-                    LearnIconButton(label: "Antwort vorlesen", help: "Antwort vorlesen", systemImage: "speaker.wave.2") {
+                    LearnIconButton(
+                        label: String(localized: "Antwort vorlesen"), help: String(localized: "Antwort vorlesen"),
+                        systemImage: "speaker.wave.2"
+                    ) {
                         onSpeak(question.expected, question.answerLang)
                     }
                 }

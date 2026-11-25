@@ -50,19 +50,19 @@ enum KeyGlyph: Hashable, Sendable {
     /// German name for VoiceOver ("Eingabetaste", "Wahltaste-Eingabetaste", …).
     var accessibilityName: String {
         switch self {
-        case .returnKey: "Eingabetaste"
-        case .optionReturn: "Wahltaste-Eingabetaste"
-        case .commandReturn: "Befehlstaste-Eingabetaste"
-        case .escape: "Escape-Taste"
-        case let .digit(n): "Taste \(n)"
-        case .tab: "Tabulatortaste"
-        case .arrows: "Pfeiltasten"
-        case .leftArrow: "Pfeil nach links"
-        case .rightArrow: "Pfeil nach rechts"
-        case .space: "Leertaste"
-        case .delete: "Rückschritttaste"
-        case let .command(c): "Befehlstaste-\(c.uppercased())"
-        case let .shiftCommand(c): "Umschalt-Befehlstaste-\(c.uppercased())"
+        case .returnKey: String(localized: "Eingabetaste")
+        case .optionReturn: String(localized: "Wahltaste-Eingabetaste")
+        case .commandReturn: String(localized: "Befehlstaste-Eingabetaste")
+        case .escape: String(localized: "Escape-Taste")
+        case let .digit(n): String(localized: "Taste \(n)")
+        case .tab: String(localized: "Tabulatortaste")
+        case .arrows: String(localized: "Pfeiltasten")
+        case .leftArrow: String(localized: "Pfeil nach links")
+        case .rightArrow: String(localized: "Pfeil nach rechts")
+        case .space: String(localized: "Leertaste")
+        case .delete: String(localized: "Rückschritttaste")
+        case let .command(c): String(localized: "Befehlstaste-\(c.uppercased())")
+        case let .shiftCommand(c): String(localized: "Umschalt-Befehlstaste-\(c.uppercased())")
         }
     }
 

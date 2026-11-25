@@ -67,6 +67,22 @@ public class WriteClockTests
         Assert.False(WriteClock.IsUserActivity(new Event.SetDeleted()));
     }
 
+    // Lernen uses the same clock since 24.11.2026 (Mac: LearnController.isUserActivity).
+    [Fact]
+    public void UserActivityEventsOfLernen()
+    {
+        Assert.True(WriteClock.IsUserActivity(new LearnFlow.Event.DraftChanged("a")));
+        Assert.True(WriteClock.IsUserActivity(new LearnFlow.Event.Key(KeyInput.Return)));
+        Assert.True(WriteClock.IsUserActivity(new LearnFlow.Event.Choose(0)));
+        Assert.True(WriteClock.IsUserActivity(new LearnFlow.Event.OverlayPresented(LearnFlow.Overlay.Options)));
+        Assert.False(WriteClock.IsUserActivity(new LearnFlow.Event.Highlight(1)));
+        Assert.False(WriteClock.IsUserActivity(new LearnFlow.Event.Tick()));
+        Assert.False(WriteClock.IsUserActivity(new LearnFlow.Event.Resume()));
+        Assert.False(WriteClock.IsUserActivity(new LearnFlow.Event.AutoAdvanceFired(3)));
+        Assert.False(WriteClock.IsUserActivity(new LearnFlow.Event.ProgressChanged()));
+        Assert.False(WriteClock.IsUserActivity(new LearnFlow.Event.OptionsChanged(StudyOptions.Default)));
+    }
+
     [Fact]
     public void ContinuingTurnsALetterIntoSpaceOnlyWithAnInputMethodAfterAnAnswer()
     {

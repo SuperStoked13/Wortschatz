@@ -4,17 +4,19 @@
 
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
+import { once } from 'node:events';
 import fs from 'node:fs/promises';
 import http from 'node:http';
 import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
+import { execFileSync, spawn } from 'node:child_process';
 import { after, before, describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import zlib from 'node:zlib';
 import { createApp } from '../lib/app.mjs';
 import { loadConfig } from '../lib/config.mjs';
-import { createHttpServer } from '../lib/http.mjs';
+import { createHttpServer, listenOnSocket } from '../lib/http.mjs';
 import { createLogger } from '../lib/log.mjs';
 
 const PUBLIC_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'public');
@@ -134,7 +136,7 @@ describe('website', () => {
   });
 
   it('has no inline scripts or styles (the CSP would block them)', async () => {
-    for (const page of ['/', '/datenschutz', '/neuigkeiten', '/gibt-es-nicht']) {
+    for (const page of ['/', '/datenschutz', '/neuigkeiten', '/en', '/en/privacy', '/en/whats-new', '/gibt-es-nicht']) {
       const html = (await request(s.port, 'GET', page, { ip: nextIp() })).body.toString();
       assert.doesNotMatch(html, /<script(?![^>]*\bsrc=)[^>]*>/i, `${page}: inline script`);
       assert.doesNotMatch(html, /<style\b/i, `${page}: style element`);
@@ -221,6 +223,78 @@ describe('website', () => {
     assert.equal(res.status, 404);
     assert.match(res.body.toString(), /Seite nicht gefunden/);
   });
+
+  it('serves every page in English below /en, each linked to the same page in German', async () => {
+    const pairs = [
+      ['/', '/en'],
+      ['/neuigkeiten', '/en/whats-new'],
+      ['/datenschutz', '/en/privacy'],
+    ];
+    for (const [de, en] of pairs) {
+      const german = (await request(s.port, 'GET', de, { ip: nextIp() })).body.toString();
+      const res = await request(s.port, 'GET', en, { ip: nextIp() });
+      assert.equal(res.status, 200, en);
+      const english = res.body.toString();
+      assert.match(german, /<html lang="de-CH">/);
+      assert.match(english, /<html lang="en">/);
+      for (const html of [german, english]) {
+        assert.ok(html.includes(`<link rel="alternate" hreflang="de" href="${ORIGIN}${de}">`), `${de}: German alternate`);
+        assert.ok(html.includes(`<link rel="alternate" hreflang="en" href="${ORIGIN}${en}">`), `${en}: English alternate`);
+        const script = html.search(/<script src="\/assets\/js\/lang\.js\?v=[0-9a-f]+"><\/script>/);
+        assert.ok(script > 0 && script < html.indexOf('rel="stylesheet"'), 'lang.js, before the stylesheet (it would wait for it)');
+        assert.doesNotMatch(html, /\{\{/, 'no template tags');
+      }
+      assert.ok(german.includes(`class="nav-lang" href="${en}" hreflang="en"`), `${de}: switch to English`);
+      assert.ok(english.includes(`class="nav-lang" href="${de}" hreflang="de"`), `${en}: switch to German`);
+    }
+    const home = (await request(s.port, 'GET', '/en', { ip: nextIp() })).body.toString();
+    assert.match(home, /Download for macOS/);
+    assert.match(home, /The app is in German/);
+    assert.match(home, /<dd>macOS 26 or later<\/dd>/, 'system requirement in English');
+    assert.match(home, /<dd>64-bit \(x64\)<\/dd>/);
+    assert.match(home, /<dd>14 October 2026<\/dd>/);
+    assert.ok(home.includes(sha(s.files.mac)), 'same checksums');
+    assert.doesNotMatch(home, /Für macOS laden|Erster Start|Prüfsumme/, 'no German outside the app window');
+    assert.equal((await request(s.port, 'GET', '/en/', { ip: nextIp() })).headers.location, '/en');
+  });
+
+  it('shows the update list in English, with the German text where an entry has no English line', async () => {
+    const html = (await request(s.port, 'GET', '/en/whats-new', { ip: nextIp() })).body.toString();
+    assert.match(html, /<h1>What’s new<\/h1>/);
+    assert.match(html, /Arabic and Mandarin as study languages/);
+    assert.match(html, /class="change-kind change-kind-neu">New</);
+    assert.doesNotMatch(html, /Arabisch und Mandarin/);
+  });
+
+  it('links to Ko-fi from the home page in both languages, and loads nothing from there', async () => {
+    for (const page of ['/', '/en']) {
+      const html = (await request(s.port, 'GET', page, { ip: nextIp() })).body.toString();
+      assert.equal(html.match(/href="https:\/\/ko-fi\.com\/anthonybuilds13" target="_blank" rel="noopener"/g)?.length, 2, page);
+      assert.doesNotMatch(html, /(?:src|srcset)="https?:/, `${page}: nothing from other servers`);
+    }
+  });
+
+  it('answers errors in the language of the page, of the page before or of the browser', async () => {
+    const ask = (target, headers = {}) => request(s.port, 'GET', target, { ip: nextIp(), headers });
+    const plain = await ask('/gibt-es-nicht');
+    assert.match(plain.body.toString(), /Seite nicht gefunden/, 'no header: German');
+    assert.equal(plain.headers['content-language'], 'de');
+    for (const [target, headers] of [
+      ['/gibt-es-nicht', { 'Accept-Language': 'en-US,en;q=0.9,de;q=0.8' }],
+      ['/gibt-es-nicht', { 'Accept-Language': 'ja' }],
+      ['/en/gibt-es-nicht', { 'Accept-Language': 'de-CH' }],
+      ['/gibt-es-nicht', { Referer: `http://${HOST}/en/whats-new`, 'Accept-Language': 'de' }],
+    ]) {
+      const res = await ask(target, headers);
+      assert.equal(res.status, 404);
+      assert.match(res.body.toString(), /Page not found/, JSON.stringify(headers));
+      assert.match(res.body.toString(), /<html lang="en">/);
+      assert.equal(res.headers['content-language'], 'en');
+    }
+    for (const headers of [{ 'Accept-Language': 'fr-CH,de;q=0.8,en;q=0.5' }, { Referer: 'https://evil.example/en/x' }]) {
+      assert.match((await ask('/gibt-es-nicht', headers)).body.toString(), /Seite nicht gefunden/, JSON.stringify(headers));
+    }
+  });
 });
 
 describe('downloads', () => {
@@ -257,6 +331,14 @@ describe('downloads', () => {
     const file = await request(s.port, 'GET', data.url, { ip });
     assert.equal(file.headers['content-type'], 'application/vnd.microsoft.portable-executable');
     assert.equal(sha(file.body), sha(s.files.windows));
+  });
+
+  it('answers the page script in the language it asks for', async () => {
+    const res = await link(s.port, nextIp(), 'mac', { Accept: 'application/json', 'Accept-Language': 'en', Origin: 'https://evil.example', 'Sec-Fetch-Site': 'cross-site' });
+    assert.equal(res.status, 403);
+    assert.deepEqual(JSON.parse(res.body), { error: 403, title: 'Download not possible', message: 'Please download Wortschatz directly from the website.' });
+    const german = await link(s.port, nextIp(), 'mac', { Accept: 'application/json', Origin: 'https://evil.example', 'Sec-Fetch-Site': 'cross-site' });
+    assert.equal(JSON.parse(german.body).title, 'Download nicht möglich');
   });
 
   it('refuses link requests from other websites and from scripts without browser headers', async () => {
@@ -492,6 +574,383 @@ describe('without releases', () => {
   });
 });
 
+describe('downloads on GitHub', () => {
+  const REPO = 'https://github.com/SuperStoked13/Wortschatz/releases/download';
+  const MAC_SHA = 'a'.repeat(64);
+  const WIN_SHA = 'b'.repeat(64);
+  const macManifest = (extra = {}) => ({
+    file: 'Wortschatz-1.6.2-macOS.dmg',
+    version: '1.6.2',
+    url: `${REPO}/v1.6.2-mac/Wortschatz-1.6.2-macOS.dmg`,
+    size: 12_345_678,
+    sha256: MAC_SHA,
+    ...extra,
+  });
+  const windowsManifest = (extra = {}) => ({
+    file: 'Wortschatz-1.5-Windows.exe',
+    version: '1.5',
+    url: `${REPO}/v1.5/Wortschatz-1.5-Windows.exe`,
+    size: 92_000_000,
+    sha256: WIN_SHA.toUpperCase(),
+    ...extra,
+  });
+  const write = (s, name, manifest) => fs.writeFile(path.join(s.releasesDir, name), JSON.stringify(manifest));
+
+  let s;
+  before(async () => {
+    s = await startServer({}, { releases: false });
+    await write(s, 'mac.json', macManifest());
+    await write(s, 'windows.json', windowsManifest());
+    await s.app.reload('test');
+  });
+  after(() => s.close());
+
+  it('links straight to the files on GitHub, in both languages, without forms', async () => {
+    for (const page of ['/', '/en']) {
+      const html = (await request(s.port, 'GET', page, { ip: nextIp() })).body.toString();
+      assert.equal((html.match(new RegExp(`href="${REPO}/v1\\.5/Wortschatz-1\\.5-Windows\\.exe"`, 'g')) || []).length, 2, page);
+      assert.equal((html.match(new RegExp(`href="${REPO}/v1\\.6\\.2-mac/Wortschatz-1\\.6\\.2-macOS\\.dmg"`, 'g')) || []).length, 2, page);
+      assert.doesNotMatch(html, /action="\/download\//, page);
+      assert.match(html, /data-size="92000000"/, page);
+      assert.match(html, new RegExp(WIN_SHA), page);
+      assert.match(html, /92,0 MB|92\.0 MB/, page);
+    }
+  });
+
+  it('lists the checksums from the manifests', async () => {
+    const res = await request(s.port, 'GET', '/checksums.txt', { ip: nextIp() });
+    assert.equal(res.status, 200);
+    assert.match(res.body.toString(), new RegExp(`${MAC_SHA}  Wortschatz-1\\.6\\.2-macOS\\.dmg`));
+    assert.match(res.body.toString(), new RegExp(`${WIN_SHA}  Wortschatz-1\\.5-Windows\\.exe`));
+  });
+
+  it('asks a page from before the switch to reload instead of sending a file', async () => {
+    const de = await link(s.port, nextIp(), 'windows', { Accept: 'application/json' });
+    assert.equal(de.status, 410);
+    assert.equal(JSON.parse(de.body).title, 'Seite neu laden');
+    assert.match(JSON.parse(de.body).message, /GitHub/);
+    const en = await link(s.port, nextIp(), 'mac', { Accept: 'application/json', 'Accept-Language': 'en' });
+    assert.equal(en.status, 410);
+    assert.equal(JSON.parse(en.body).title, 'Reload the page');
+    const page = await link(s.port, nextIp(), 'mac');
+    assert.equal(page.status, 410);
+    assert.match(page.body.toString(), /Seite neu laden/);
+  });
+
+  it('tells the privacy page that downloads come from GitHub', async () => {
+    const de = (await request(s.port, 'GET', '/datenschutz', { ip: nextIp() })).body.toString();
+    assert.match(de, /Die Apps liegen auf GitHub/);
+    assert.doesNotMatch(de, /zählt der Server, wie oft/);
+    const en = (await request(s.port, 'GET', '/en/privacy', { ip: nextIp() })).body.toString();
+    assert.match(en, /The apps are hosted on GitHub/);
+    assert.doesNotMatch(en, /the server counts how often/);
+  });
+
+  it('says that the Mac app asks GitHub for updates once a version after 1.7.1 is live', async () => {
+    const pages = async () => {
+      const get = async (page) => (await request(s.port, 'GET', page, { ip: nextIp() })).body.toString();
+      return { de: await get('/datenschutz'), en: await get('/en/privacy'), help: await get('/'), helpEn: await get('/en') };
+    };
+    const before = await pages();
+    assert.match(before.de, /Wortschatz selbst sendet keine Daten\./);
+    assert.doesNotMatch(before.de, /nach Updates zu fragen/);
+    assert.doesNotMatch(before.en, /to check for updates/);
+    assert.match(before.help, /braucht keinen Internetzugang\./);
+    assert.match(before.helpEn, /doesn’t need internet access\./);
+
+    await write(s, 'mac.json', macManifest({ version: '1.8', file: 'Wortschatz-1.8-macOS.dmg', url: `${REPO}/v1.8-mac/Wortschatz-1.8-macOS.dmg` }));
+    await s.app.reload('test');
+    try {
+      const after = await pages();
+      assert.match(after.de, /Ins Internet geht nur die Mac-App, um nach Updates zu fragen/);
+      assert.match(after.de, /«Automatisch aktualisieren»/);
+      assert.doesNotMatch(after.de, /Wortschatz selbst sendet keine Daten\./);
+      assert.match(after.en, /Only the Mac app goes online, to check for updates/);
+      assert.match(after.help, /um bei GitHub nach neuen Versionen zu fragen/);
+      assert.doesNotMatch(after.help, /braucht keinen Internetzugang/);
+      assert.match(after.helpEn, /to ask GitHub for new versions/);
+      for (const html of Object.values(after)) assert.doesNotMatch(html, /\{\{/);
+    } finally {
+      await write(s, 'mac.json', macManifest());
+      await s.app.reload('test');
+    }
+  });
+
+  it('says that the Windows app asks GitHub for updates once a version after 1.7.1 is live, and names both apps when both do', async () => {
+    const pages = async () => {
+      const get = async (page) => (await request(s.port, 'GET', page, { ip: nextIp() })).body.toString();
+      return { de: await get('/datenschutz'), en: await get('/en/privacy'), help: await get('/'), helpEn: await get('/en') };
+    };
+    const windows18 = windowsManifest({ version: '1.8', file: 'Wortschatz-1.8-Windows.exe', url: `${REPO}/v1.8-windows/Wortschatz-1.8-Windows.exe` });
+    const before = await pages();
+    assert.doesNotMatch(before.help, /Neue Versionen holt Wortschatz selbst/);
+    assert.doesNotMatch(before.helpEn, /gets new versions by itself/);
+
+    await write(s, 'windows.json', windows18);
+    await s.app.reload('test');
+    try {
+      const windowsOnly = await pages();
+      assert.match(windowsOnly.de, /Ins Internet geht nur die Windows-App, um nach Updates zu fragen/);
+      assert.match(windowsOnly.de, /Internetadresse deines Computers und welche Version von Wortschatz er hat,/);
+      assert.match(windowsOnly.de, /«Automatisch aktualisieren»/);
+      assert.doesNotMatch(windowsOnly.de, /Wortschatz selbst sendet keine Daten\./);
+      assert.doesNotMatch(windowsOnly.de, /Mac-App, um nach Updates/);
+      assert.match(windowsOnly.en, /Only the Windows app goes online, to check for updates/);
+      assert.match(windowsOnly.help, /Neue Versionen holt Wortschatz selbst/);
+      assert.match(windowsOnly.help, /braucht keinen Internetzugang\./);
+      assert.match(windowsOnly.helpEn, /gets new versions by itself/);
+
+      await write(s, 'mac.json', macManifest({ version: '1.8', file: 'Wortschatz-1.8-macOS.dmg', url: `${REPO}/v1.8-mac/Wortschatz-1.8-macOS.dmg` }));
+      await s.app.reload('test');
+      const both = await pages();
+      assert.match(both.de, /Ins Internet gehen die Apps nur, um nach Updates zu fragen/);
+      assert.match(both.de, /\(beim Mac auch von macOS\)/);
+      assert.doesNotMatch(both.de, /geht nur die (Mac|Windows)-App/);
+      assert.match(both.en, /The apps only go online to check for updates/);
+      assert.match(both.en, /“Update Automatically”/);
+      assert.match(both.help, /um bei GitHub nach neuen Versionen zu fragen/);
+      assert.match(both.help, /Neue Versionen holt Wortschatz selbst/);
+      for (const html of [...Object.values(windowsOnly), ...Object.values(both)]) assert.doesNotMatch(html, /\{\{/);
+    } finally {
+      await write(s, 'mac.json', macManifest());
+      await write(s, 'windows.json', windowsManifest());
+      await s.app.reload('test');
+    }
+  });
+
+  it('accepts only release files of DOWNLOAD_REPO on GitHub, complete with size and checksum', async () => {
+    // The address itself is checked in detail in units.test.mjs (githubReleaseUrl).
+    const bad = [
+      windowsManifest({ url: `${REPO.replace('SuperStoked13', 'someone-else')}/v1.5/Wortschatz-1.5-Windows.exe` }),
+      windowsManifest({ url: 'javascript:alert(1)//Wortschatz-1.5-Windows.exe' }),
+      windowsManifest({ url: null }),
+      windowsManifest({ sha256: 'xyz' }),
+      windowsManifest({ sha256: undefined }),
+      windowsManifest({ size: '92000000' }),
+    ];
+    for (const manifest of bad) {
+      await write(s, 'windows.json', manifest);
+      await s.app.reload('test');
+      assert.equal(s.app.state.releases.windows, null, JSON.stringify(manifest));
+      const html = (await request(s.port, 'GET', '/', { ip: nextIp() })).body.toString();
+      assert.match(html, /Windows-Version folgt/);
+    }
+    await write(s, 'windows.json', windowsManifest());
+    await s.app.reload('test');
+    assert.equal(s.app.state.releases.windows.url, `${REPO}/v1.5/Wortschatz-1.5-Windows.exe`);
+  });
+
+  it('follows DOWNLOAD_REPO', async () => {
+    const other = await startServer({ DOWNLOAD_REPO: 'example/wortschatz-fork' }, { releases: false });
+    try {
+      await write(other, 'windows.json', windowsManifest());
+      await write(other, 'mac.json', macManifest({ url: 'https://github.com/example/wortschatz-fork/releases/download/v2/Wortschatz-1.6.2-macOS.dmg' }));
+      await other.app.reload('test');
+      assert.equal(other.app.state.releases.windows, null);
+      assert.equal(other.app.state.releases.mac.url, 'https://github.com/example/wortschatz-fork/releases/download/v2/Wortschatz-1.6.2-macOS.dmg');
+    } finally {
+      await other.close();
+    }
+  });
+});
+
+describe('moving the downloads to GitHub', () => {
+  let s;
+  before(async () => {
+    s = await startServer();
+  });
+  after(() => s.close());
+
+  it('answers a link from before the move without touching the file', async () => {
+    const ip = nextIp();
+    const issued = await link(s.port, ip, 'mac', { Accept: 'application/json' });
+    assert.equal(issued.status, 200);
+    const { url } = JSON.parse(issued.body);
+    await fs.writeFile(
+      path.join(s.releasesDir, 'mac.json'),
+      JSON.stringify({
+        file: 'Wortschatz-1.0-macOS.dmg',
+        version: '1.0',
+        url: 'https://github.com/SuperStoked13/Wortschatz/releases/download/v1.0/Wortschatz-1.0-macOS.dmg',
+        size: s.files.mac.length,
+        sha256: sha(s.files.mac),
+      }),
+    );
+    await s.app.reload('test');
+    for (const method of ['GET', 'HEAD']) {
+      const res = await request(s.port, method, url, { ip });
+      assert.equal(res.status, 410, method);
+      assert.notEqual(res.headers['content-type'], 'application/x-apple-diskimage');
+      assert.ok(res.body.length < 50_000);
+    }
+  });
+
+  it('keeps the other platform on this server, and the privacy page names both', async () => {
+    const html = (await request(s.port, 'GET', '/', { ip: nextIp() })).body.toString();
+    assert.match(html, /href="https:\/\/github\.com\/SuperStoked13\/Wortschatz\/releases\/download\/v1\.0\/Wortschatz-1\.0-macOS\.dmg"/);
+    assert.match(html, /action="\/download\/windows"/);
+    assert.doesNotMatch(html, /action="\/download\/mac"/);
+    const windows = await link(s.port, nextIp(), 'windows', { Accept: 'application/json' });
+    assert.equal(windows.status, 200);
+    const privacy = (await request(s.port, 'GET', '/datenschutz', { ip: nextIp() })).body.toString();
+    assert.match(privacy, /Die Apps liegen auf GitHub/);
+    assert.match(privacy, /zählt der Server, wie oft/);
+  });
+});
+
+/** A socket file as a crash leaves it: a process that listened on it and then died without closing. */
+function leaveStaleSocket(file) {
+  execFileSync(process.execPath, ['-e', "require('net').createServer().listen(process.argv[1], () => process.exit(0))", file]);
+}
+
+function socketRequest(socketPath, method, target, { headers = {} } = {}) {
+  return new Promise((resolve, reject) => {
+    const req = http.request({ socketPath, method, path: target, headers: { Host: HOST, ...headers } }, (res) => {
+      const chunks = [];
+      res.on('data', (chunk) => chunks.push(chunk));
+      res.on('end', () => resolve({ status: res.statusCode, headers: res.headers, body: Buffer.concat(chunks) }));
+    });
+    req.on('error', reject);
+    req.end();
+  });
+}
+
+describe('behind a Unix socket (container without network)', () => {
+  let s;
+  let proxied;
+  let socketPath;
+  before(async () => {
+    s = await startServer({ TRUST_PROXY: 'private', RATE_REQUEST_BURST: '5', RATE_REQUESTS_PER_SECOND: '0.01' });
+    socketPath = path.join(await fs.mkdtemp(path.join(os.tmpdir(), 'wortschatz-sock-')), 'web.sock');
+    proxied = createHttpServer(s.app.handleProxied);
+    await listenOnSocket(proxied, socketPath);
+  });
+  after(async () => {
+    proxied.closeAllConnections();
+    await new Promise((resolve) => proxied.close(resolve));
+    await s.close();
+  });
+
+  it('serves the pages, and only owner and group may connect', async () => {
+    const res = await socketRequest(socketPath, 'GET', '/', { headers: { 'X-Forwarded-For': nextIp() } });
+    assert.equal(res.status, 200);
+    assert.match(res.body.toString(), /Wortschatz/);
+    assert.equal((await fs.stat(socketPath)).mode & 0o777, 0o660);
+  });
+
+  it('counts every visitor by the address the proxy names', async () => {
+    const visitor = nextIp();
+    const statuses = [];
+    for (let i = 0; i < 7; i += 1) statuses.push((await socketRequest(socketPath, 'GET', '/healthz', { headers: { 'X-Forwarded-For': visitor } })).status);
+    assert.deepEqual(statuses.slice(0, 5), [200, 200, 200, 200, 200]);
+    assert.equal(statuses.at(-1), 429);
+    // Another visitor is not affected, and a made-up address further left changes nothing.
+    assert.equal((await socketRequest(socketPath, 'GET', '/healthz', { headers: { 'X-Forwarded-For': nextIp() } })).status, 200);
+    assert.equal((await socketRequest(socketPath, 'GET', '/healthz', { headers: { 'X-Forwarded-For': `${nextIp()}, ${visitor}` } })).status, 429);
+  });
+
+  it('never treats a request over the socket as local, also without the header', async () => {
+    const statuses = [];
+    for (let i = 0; i < 7; i += 1) statuses.push((await socketRequest(socketPath, 'GET', '/healthz')).status);
+    assert.equal(statuses.at(-1), 429);
+    // The health check inside the container (straight to HOST:PORT, no proxy) stays exempt.
+    for (let i = 0; i < 7; i += 1) assert.equal((await request(s.port, 'GET', '/healthz')).status, 200);
+  });
+
+  it('never takes the socket away from a server that still listens on it', async () => {
+    await assert.rejects(listenOnSocket(http.createServer(), socketPath), { code: 'EADDRINUSE' });
+    assert.equal((await socketRequest(socketPath, 'GET', '/healthz', { headers: { 'X-Forwarded-For': nextIp() } })).status, 200);
+  });
+
+  it('warns once when the proxy sends no usable address', async () => {
+    const lines = [];
+    const stream = { write: (line) => { lines.push(String(line)); } };
+    const quiet = await startServer({ TRUST_PROXY: 'private' }, { logger: createLogger('info', { stdout: stream, stderr: stream }) });
+    const file = path.join(await fs.mkdtemp(path.join(os.tmpdir(), 'wortschatz-sock-')), 'web.sock');
+    const proxy = createHttpServer(quiet.app.handleProxied);
+    try {
+      await listenOnSocket(proxy, file);
+      await socketRequest(file, 'GET', '/healthz', { headers: { 'X-Forwarded-For': nextIp() } });
+      assert.equal(lines.filter((line) => line.includes('proxy.socket')).length, 0);
+      await socketRequest(file, 'GET', '/healthz');
+      await socketRequest(file, 'GET', '/healthz', { headers: { 'X-Forwarded-For': 'kaputt' } });
+      assert.equal(lines.filter((line) => line.includes('proxy.socket')).length, 1);
+    } finally {
+      proxy.closeAllConnections();
+      await new Promise((resolve) => proxy.close(resolve));
+      await quiet.close();
+    }
+  });
+
+  it('replaces a socket left over, but nothing else', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'wortschatz-sock-'));
+    const stale = path.join(dir, 'stale.sock');
+    leaveStaleSocket(stale);
+    assert.ok((await fs.lstat(stale)).isSocket());
+    const second = http.createServer((req, res) => res.end('ok'));
+    await listenOnSocket(second, stale);
+    assert.equal((await socketRequest(stale, 'GET', '/')).body.toString(), 'ok');
+    second.closeAllConnections();
+    await new Promise((resolve) => second.close(resolve));
+    await fs.writeFile(path.join(dir, 'kein-socket'), 'wichtig');
+    const third = http.createServer();
+    await assert.rejects(listenOnSocket(third, path.join(dir, 'kein-socket')), /kein Socket/);
+    assert.equal(await fs.readFile(path.join(dir, 'kein-socket'), 'utf8'), 'wichtig');
+    // Nor a link that points somewhere else, also to a socket.
+    leaveStaleSocket(path.join(dir, 'anderer.sock'));
+    await fs.symlink(path.join(dir, 'anderer.sock'), path.join(dir, 'link.sock'));
+    await assert.rejects(listenOnSocket(http.createServer(), path.join(dir, 'link.sock')), /kein Socket/);
+    assert.ok((await fs.lstat(path.join(dir, 'anderer.sock'))).isSocket());
+    await fs.rm(dir, { recursive: true, force: true });
+  });
+});
+
+describe('server.mjs with LISTEN_SOCKET', () => {
+  it('listens on both, and removes the socket when it stops', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'wortschatz-proc-'));
+    const socketPath = path.join(dir, 'web.sock');
+    // A leftover from a crash: the server has to take its place.
+    leaveStaleSocket(socketPath);
+    const port = await new Promise((resolve) => {
+      const probe = net.createServer().listen(0, '127.0.0.1', () => {
+        const { port: free } = probe.address();
+        probe.close(() => resolve(free));
+      });
+    });
+    const child = spawn(process.execPath, [fileURLToPath(new URL('../server.mjs', import.meta.url))], {
+      env: {
+        PATH: process.env.PATH,
+        SITE_ORIGIN: ORIGIN,
+        PORT: String(port),
+        LISTEN_SOCKET: socketPath,
+        TRUST_PROXY: 'private',
+        RELEASES_DIR: path.join(dir, 'releases'),
+        DATA_DIR: path.join(dir, 'data'),
+        LOG_LEVEL: 'error',
+      },
+      stdio: ['ignore', 'ignore', 'pipe'],
+    });
+    let errors = '';
+    child.stderr.on('data', (chunk) => {
+      errors += chunk;
+    });
+    try {
+      let res;
+      for (let i = 0; i < 100 && !res; i += 1) {
+        res = await socketRequest(socketPath, 'GET', '/healthz', { headers: { 'X-Forwarded-For': nextIp() } }).catch(() => null);
+        if (!res) await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+      assert.equal(res?.status, 200, errors);
+      assert.equal((await request(port, 'GET', '/healthz')).status, 200);
+    } finally {
+      child.kill('SIGTERM');
+      await once(child, 'exit');
+    }
+    await assert.rejects(fs.stat(socketPath), { code: 'ENOENT' });
+    await fs.rm(dir, { recursive: true, force: true });
+  });
+});
+
 describe('fair use and robustness', () => {
   let s;
   before(async () => {
@@ -679,6 +1138,31 @@ describe('password', () => {
     assert.ok(home.body.toString().includes(sha(s.files.mac)));
     assert.equal((await request(s.port, 'GET', '/checksums.txt', { ip, headers: { Cookie: `x=1; ${cookie}` } })).status, 200);
     assert.equal((await request(s.port, 'GET', '/login', { ip, headers: { Cookie: cookie } })).headers.location, '/', 'signed in: no form');
+  });
+
+  it('signs in on the English login page and goes on to the English pages', async () => {
+    const ip = nextIp();
+    assert.equal((await request(s.port, 'GET', '/en', { ip })).headers.location, '/en/login');
+    assert.equal((await request(s.port, 'GET', '/en/whats-new', { ip })).headers.location, '/en/login?weiter=%2Fen%2Fwhats-new');
+    const page = await request(s.port, 'GET', '/en/login?weiter=%2Fneuigkeiten', { ip });
+    assert.equal(page.status, 200);
+    const html = page.body.toString();
+    assert.match(html, /<html lang="en">/);
+    assert.match(html, /action="\/en\/login"/);
+    assert.match(html, /name="weiter" value="\/en\/whats-new"/, 'goes on in English');
+    assert.match(html, /href="\/login\?weiter=%2Fneuigkeiten" hreflang="de"/, 'the switch keeps where to go, in German');
+    assert.equal((await request(s.port, 'GET', '/en/privacy', { ip })).status, 200, 'privacy open in English too');
+
+    const english = (password, next) =>
+      request(s.port, 'POST', '/en/login', { ip, headers: FORM, body: `weiter=${encodeURIComponent(next)}&passwort=${encodeURIComponent(password)}` });
+    const wrong = await english('falsch123', '/');
+    assert.equal(wrong.status, 401);
+    assert.match(wrong.body.toString(), /That password isn’t right/);
+    assert.equal((await english(PASSWORD, '/neuigkeiten')).headers.location, '/en/whats-new', 'German next, English login: English page');
+    assert.equal((await english(PASSWORD, '//evil.example')).headers.location, '/en');
+    assert.equal((await signIn(ip, PASSWORD, {}, '/en')).headers.location, '/', 'and the other way round');
+    const out = await request(s.port, 'POST', '/en/logout', { ip, headers: { ...FORM, Cookie: cookieOf(await english(PASSWORD, '/')) } });
+    assert.equal(out.headers.location, '/en/login');
   });
 
   it('only accepts its own cookie and its own form', async () => {

@@ -11,5 +11,6 @@
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\src\Wortschatz.App\Wortschatz.App.csproj" />
+    <ProjectReference Include="..\..\src\Wortschatz.Core\Wortschatz.Core.csproj" />
   </ItemGroup>
 </Project>

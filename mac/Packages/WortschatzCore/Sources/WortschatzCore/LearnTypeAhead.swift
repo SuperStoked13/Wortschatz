@@ -2,7 +2,8 @@ import Foundation
 
 // Typing on a multiple-choice question: instead of a digit or a click, the learner starts typing
 // the answer ("la vo…") and the one option those letters start is highlighted, so Return chooses
-// it. The letters must leave no doubt: an article alone never picks anything ("la" starts many
+// it; typed out ("la voiture"), it is chosen at once (`TypeAhead.isTypedOut`; not in typeahead.js,
+// Windows since 23.11.2026). The letters must leave no doubt: an article alone never picks anything ("la" starts many
 // words), at least `TYPE_AHEAD_MIN_LETTERS` letters after it are needed, and exactly one option
 // may match. Case, accents and the kind of apostrophe do not matter; an option can also be
 // started without its article ("voi" → la voiture) or at one of its alternatives ("laide" in
@@ -28,16 +29,21 @@ extension LearnFlow {
         public var isActive: Bool
         /// Enough letters for a pick, should a single option match.
         public var hasEnoughLetters: Bool
+        /// The picked option is typed out: to its end or to the end of one of its alternatives
+        /// ("le cerveau" of "le cerveau, les cerveaux"), and no other option matches. It is chosen
+        /// without Return. Not before a note in brackets: "Aussenminister" may go on with "(in)".
+        public var isTypedOut: Bool
 
         public init(
             selected: Int? = nil, matching: [Int] = [], ranges: [Int: Range<Int>] = [:], isActive: Bool = false,
-            hasEnoughLetters: Bool = false
+            hasEnoughLetters: Bool = false, isTypedOut: Bool = false
         ) {
             self.selected = selected
             self.matching = matching
             self.ranges = ranges
             self.isActive = isActive
             self.hasEnoughLetters = hasEnoughLetters
+            self.isTypedOut = isTypedOut
         }
     }
 
@@ -62,21 +68,23 @@ extension LearnFlow {
         let content = articleOnly ? [] : Array(input.chars[(contentStart ?? 0)...])
         let letters = content.filter { $0.isLetter || $0.isNumber }.count
 
-        var strong: [(index: Int, range: Range<Int>, complete: Bool)] = []
-        var weak: [(index: Int, range: Range<Int>, complete: Bool)] = []
+        var strong: [(index: Int, range: Range<Int>, complete: Bool, typedOut: Bool)] = []
+        var weak: [(index: Int, range: Range<Int>, complete: Bool, typedOut: Bool)] = []
         for (index, choice) in choices.enumerated() {
             let option = TypeAheadText(choice, noSpaces: noSpaces)
             let starts = option.starts(prefixes: prefixes)
             // The whole input from the start of the option, an alternative or a word after an article.
             if let start = starts.first(where: { option.chars[$0...].starts(with: input.chars) }) {
-                strong.append((index, option.range(start, input.chars.count), option.isComplete(start + input.chars.count)))
+                let end = start + input.chars.count
+                strong.append((index, option.range(start, input.chars.count), option.isComplete(end), option.endsWord(end)))
                 continue
             }
             // Another article than the option's ("le voi" for "la voiture"): the content alone.
             if contentStart != nil, !content.isEmpty,
                 let start = starts.first(where: { option.chars[$0...].starts(with: content) })
             {
-                weak.append((index, option.range(start, content.count), option.isComplete(start + content.count)))
+                let end = start + content.count
+                weak.append((index, option.range(start, content.count), option.isComplete(end), option.endsWord(end)))
             }
         }
         // Options that match with the typed article win over those matching only after it.
@@ -96,7 +104,7 @@ extension LearnFlow {
         return TypeAhead(
             selected: selected, matching: matches.map(\.index),
             ranges: Dictionary(uniqueKeysWithValues: matches.map { ($0.index, $0.range) }), isActive: true,
-            hasEnoughLetters: enough)
+            hasEnoughLetters: enough, isTypedOut: selected != nil && matches.count == 1 && matches[0].typedOut)
     }
 
     /// The digit 0–9 a key types, ASCII or Arabic-Indic (٠–٩, ۰–۹: an Arabic keyboard chooses like
@@ -191,6 +199,14 @@ struct TypeAheadText {
         var i = end
         while i < chars.count, chars[i] == " " { i += 1 }
         return i >= chars.count || [",", ";", "/", "("].contains(chars[i])
+    }
+
+    /// Whether the option or one of its alternatives ends at folded position `end` (a note in
+    /// brackets does not end it: "Aussenminister(in)").
+    func endsWord(_ end: Int) -> Bool {
+        var i = end
+        while i < chars.count, chars[i] == " " { i += 1 }
+        return i >= chars.count || [",", ";", "/"].contains(chars[i])
     }
 
     /// Where typing may start: the option itself and each alternative ("laid, laide"), and the

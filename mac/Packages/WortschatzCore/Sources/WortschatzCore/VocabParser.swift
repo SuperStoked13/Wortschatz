@@ -162,7 +162,7 @@ public struct ParseResult: Codable, Sendable, Equatable, Hashable {
     public var swapped: Bool
     /// Skipped lines, ascending by line number.
     public var skipped: [SkippedLine]
-    /// German warnings for the detection bar.
+    /// Warnings for the detection bar (in the app's language).
     public var warnings: [String]
 
     public init(
@@ -198,7 +198,16 @@ public struct ParseResult: Codable, Sendable, Equatable, Hashable {
 public enum VocabParser {
     /// Warning of the JS catch-all fallback. The Swift port has no failure path; the constant is
     /// kept for callers that compare warnings.
-    public static let FAILURE_WARNING = "Der Text konnte nicht verarbeitet werden."
+    public static var FAILURE_WARNING: String { L("Der Text konnte nicht verarbeitet werden.") }
+
+    /// The warning about `count` skipped lines without vocabulary (skipped lines other than
+    /// unpaired ones), exactly as `parseVocab` puts it into `warnings` – for callers that leave it
+    /// out because they list the skipped lines themselves (compare with this, not with a word of it).
+    public static func skippedLinesWarning(_ count: Int) -> String {
+        count == 1
+            ? L("1 Zeile ohne Vokabeln wurde übersprungen.")
+            : L("%@ Zeilen ohne Vokabeln wurden übersprungen.", "\(count)")
+    }
 
     /// Turns pasted, file-imported, PDF-extracted or OCR'd text into term/definition pairs.
     /// `nil` is treated as "" (JS `input == null`).
@@ -391,11 +400,11 @@ extension VocabParser {
         for entry in seenEntries where entry.lines.count > 1 { ctx.warnings.duplicate(entry.term.string, entry.lines) }
         let skipCount = ctx.skipped.filter { $0.reason != .unpaired }.count
         if skipCount > 0 {
-            ctx.warnings.add(skipCount == 1
-                ? "1 Zeile ohne Vokabeln wurde übersprungen."
-                : "\(skipCount) Zeilen ohne Vokabeln wurden übersprungen.")
+            ctx.warnings.add(skippedLinesWarning(skipCount))
         }
-        if cards.count >= 3 && !distinct { ctx.warnings.add("Die Sprachen der beiden Seiten konnten nicht sicher erkannt werden.") }
+        if cards.count >= 3 && !distinct {
+            ctx.warnings.add(L("Die Sprachen der beiden Seiten konnten nicht sicher erkannt werden."))
+        }
 
         func pickLang(_ lang: Int?, _ conf: Double, _ hint: Lang?) -> Lang {
             if let lang, conf >= 0.55 || hint == nil { return VocabParser.lang(lang) }

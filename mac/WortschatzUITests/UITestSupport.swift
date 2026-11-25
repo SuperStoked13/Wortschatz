@@ -65,10 +65,11 @@ final class PasteboardSwap {
 @MainActor
 extension XCUIApplication {
     /// The DEBUG app with launch arguments (sample data, see `AppModel.launch`), without window
-    /// restoration from an earlier run.
+    /// restoration from an earlier run, in German (the tests look for German texts, whatever
+    /// language the Mac has).
     static func wortschatz(_ arguments: String...) -> XCUIApplication {
         let app = XCUIApplication()
-        app.launchArguments = arguments + ["-ApplePersistenceIgnoreState", "YES"]
+        app.launchArguments = arguments + ["-ApplePersistenceIgnoreState", "YES", "-AppleLanguages", "(de)", "-AppleLocale", "de_CH"]
         return app
     }
 

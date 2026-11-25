@@ -4,6 +4,7 @@ using Avalonia.Controls;
 using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Threading;
+using static Wortschatz.Core.CoreText;
 
 namespace Wortschatz.App.DesignSystem;
 
@@ -167,7 +168,7 @@ public sealed class ToastOverlay : StackPanel
         }
         if (toast.DurationMs is null)
         {
-            var close = Ui.IconButton(IconName.X, "Schliessen", () => _model.DismissToast(toast.Id), 22, ButtonKind.Plain);
+            var close = Ui.IconButton(IconName.X, L("Schliessen"), () => _model.DismissToast(toast.Id), 22, ButtonKind.Plain);
             row.Children.Add(close);
         }
         bool plain = toast.ActionLabel is null && toast.DurationMs is not null;
@@ -181,7 +182,7 @@ public sealed class ToastOverlay : StackPanel
             capsule.Margin = new Thickness(12, 0);
             capsule.CornerRadius = new CornerRadius(22);
         }
-        AutomationProperties.SetName(capsule, toast.ActionLabel is { } a ? $"{toast.Text}. {a} möglich." : toast.Text);
+        AutomationProperties.SetName(capsule, toast.ActionLabel is { } a ? L($"{toast.Text}. {a} möglich.") : toast.Text);
         AutomationProperties.SetLiveSetting(capsule, toast.Tone == ToastTone.Danger ? AutomationLiveSetting.Assertive : AutomationLiveSetting.Polite);
         return capsule;
     }

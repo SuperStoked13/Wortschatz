@@ -2,8 +2,8 @@ import SwiftUI
 import WortschatzCore
 
 /// The sidebar (spec §4.1): "Übersicht", then the section "Lernsets" with a row per set
-/// (mastery gauge, title, "52 Begriffe"), and the daily streak (Lernserie) and "Einstellungen"
-/// at its foot.
+/// (mastery gauge, title, "52 Begriffe") with "+" beside its heading, and the daily streak
+/// (Lernserie) and "Einstellungen" at its foot; the app's logo in the toolbar; after an update, «Aktualisiert auf …» above them (`UpdateNoticeCard`).
 /// Searchable by title, description and terms; Return in the search field opens the first
 /// match. ↑↓ move the selection; Return then triggers the detail's primary action (Lernen).
 struct LibrarySidebar: View {
@@ -29,7 +29,13 @@ struct LibrarySidebar: View {
                         }
                 }
             } header: {
-                Text(query.isEmpty ? "Lernsets" : "Treffer")
+                HStack(spacing: Spacing.xs) {
+                    Text(query.isEmpty ? String(localized: "Lernsets") : String(localized: "Treffer (Suche)", defaultValue: "Treffer", comment: "Sidebar header above the search results"))
+                    Spacer(minLength: Spacing.s)
+                    // "+" beside the heading, where the Windows app has it (Anthony, 25.11.2026).
+                    SidebarNewSetButton()
+                }
+                .padding(.vertical, Spacing.xxs)
             }
         }
         .focused($isListFocused)
@@ -47,6 +53,14 @@ struct LibrarySidebar: View {
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
             VStack(alignment: .leading, spacing: 0) {
+                #if os(macOS)
+                if let notice = AppUpdater.shared.notice {
+                    UpdateNoticeCard(notice: notice) {
+                        withAnimation(Motion.snappy) { AppUpdater.shared.dismissNotice() }
+                    }
+                    .transition(.opacity)
+                }
+                #endif
                 if !model.library.isEmpty {
                     SidebarStreakFooter(streak: model.library.stats.streak)
                 }
@@ -57,7 +71,7 @@ struct LibrarySidebar: View {
         .onSubmit(of: .search) {
             if let first = results.first { model.showSet(first.summary.id) }
         }
-        .toolbar { NewSetToolbarButton() }
+        .toolbar { SidebarLogo() }
     }
 
     /// The List's selection, routed through the model.
@@ -68,24 +82,56 @@ struct LibrarySidebar: View {
     }
 }
 
-/// "+" (Neues Lernset) in the sidebar's toolbar. Hidden while studying: the collapsed sidebar's
-/// items move into the study toolbar. It follows the screen on show (also while one dissolves),
-/// so the toolbar changes in one go with the study screen's own items. Its own content, so the
-/// route changes of a transition re-evaluate only the button, not the whole list.
-private struct NewSetToolbarButton: ToolbarContent {
+/// "+" (Neues Lernset) beside the "Lernsets" heading, where the Windows app has it. ⌘N does the
+/// same.
+private struct SidebarNewSetButton: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        Button {
+            model.openEditor(.new)
+        } label: {
+            Image(systemName: "plus")
+                .font(.system(size: 12, weight: .semibold))
+                .frame(width: 24, height: 24)
+                .background(.fill.tertiary, in: Circle())
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(.primary)
+        // Centred over the rows' play badges, in line with the search field's edge.
+        .padding(.trailing, 9)
+        .help("Neues Lernset (⌘N)")
+        .accessibilityLabel("Neues Lernset")
+    }
+}
+
+/// The app's icon and name in the sidebar's corner of the toolbar, where the Windows app shows
+/// them in its title bar. Hidden while studying, like the sidebar: it follows the screen on show
+/// (also while one dissolves), so the toolbar changes in one go with the study screen's own
+/// items. Its own content, so the route changes of a transition re-evaluate only this.
+private struct SidebarLogo: ToolbarContent {
     @Environment(AppModel.self) private var model
 
     var body: some ToolbarContent {
+        #if os(macOS)
         if !model.routeOnScreen.isStudy {
             ToolbarItem {
-                Button {
-                    model.openEditor(.new)
-                } label: {
-                    Label("Neues Lernset", systemImage: "plus")
+                HStack(spacing: 6) {
+                    Image(nsImage: NSApp.applicationIconImage)
+                        .resizable()
+                        .frame(width: 20, height: 20)
+                    Text(verbatim: "Wortschatz")
+                        .font(.headline)
                 }
-                .help("Neues Lernset (⌘N)")
+                .padding(.horizontal, Spacing.xxs)
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel(Text(verbatim: "Wortschatz"))
             }
+            // Not a button: no glass capsule behind it.
+            .sharedBackgroundVisibility(.hidden)
         }
+        #endif
     }
 }
 
@@ -135,7 +181,8 @@ private struct SidebarStreakFooter: View {
     }
 
     private var title: String {
-        streak.current > 0 ? "\(Labels.plural(streak.current, "Tag", "Tage")) Lernserie" : "Noch keine Lernserie"
+        streak.current > 0
+            ? String(localized: "\(Labels.plural(streak.current, "Tag", "Tage")) Lernserie") : String(localized: "Noch keine Lernserie")
     }
 }
 
@@ -201,15 +248,15 @@ private struct SidebarSetRow: View {
     }
 
     private var runningHelp: String {
-        if let learn = summary.learn { return "Lernen läuft: \(learn.detail)" }
-        if let write = summary.write { return "Schreiben läuft: \(write.detail)" }
+        if let learn = summary.learn { return String(localized: "Lernen läuft: \(learn.detail)") }
+        if let write = summary.write { return String(localized: "Schreiben läuft: \(write.detail)") }
         return ""
     }
 
     private var accessibilityValue: String {
-        var parts = [StudyCopy.terms(summary.stats.total), "\(summary.stats.percent) Prozent gemeistert"]
+        var parts = [StudyCopy.terms(summary.stats.total), String(localized: "\(summary.stats.percent) Prozent gemeistert")]
         if summary.learn != nil || summary.write != nil { parts.append(runningHelp) }
-        if let card = match?.firstCard { parts.append("Treffer: \(card.term) – \(card.definition)") }
+        if let card = match?.firstCard { parts.append(String(localized: "Treffer: \(card.term) – \(card.definition)")) }
         return parts.joined(separator: ", ")
     }
 }

@@ -28,6 +28,7 @@ struct WriteScreen: View {
         ZStack {
             if let controller {
                 WriteScreenContent(controller: controller, isRevealed: isRevealed)
+                    .modifier(SameTermPresenter(question: controller.sameTerm, answer: controller.answerSameTerm))
             } else {
                 AppBackdrop(intensity: AppBackdrop.studyIntensity)
             }
@@ -253,9 +254,9 @@ struct WriteToolbarProgress: View {
                 .contentTransition(.numericText())
                 .fixedSize()
             HStack(spacing: isCompact ? Spacing.xs : Spacing.s) {
-                counter(counters.remaining, label: "Verbleibend", color: Theme.new.fill)
-                counter(counters.incorrect, label: "Falsch", color: Theme.failure.fill)
-                counter(counters.correct, label: "Richtig", color: Theme.success.fill)
+                counter(counters.remaining, label: String(localized: "Verbleibend"), color: Theme.new.fill)
+                counter(counters.incorrect, label: String(localized: "Falsch"), color: Theme.failure.fill)
+                counter(counters.correct, label: String(localized: "Richtig"), color: Theme.success.fill)
             }
             WriteProgressLine(value: counters.progress)
                 .frame(width: isCompact ? 56 : 88)

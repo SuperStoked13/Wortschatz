@@ -191,13 +191,13 @@ struct LearnReviewTests {
             defer { first = false }
             return !first
         }
-        // The miss sent it to stage 0; the next round learns it again: multiple choice, then
-        // written (the only card left, so it may come right after itself).
+        // The miss sent it to stage 0; the next round learns it again: written twice (answered
+        // right before; the only card left, so it may come right after itself).
         #expect(s.stage[missed] == 0)
         #expect(!LearnEngine.isFinished(s))
         s = LearnEngine.nextRound(s, cards: cards, rng: mulberry32(seed: 9), now: Self.T0 + 60_000)
         #expect(s.queue.map(\.qid) == ["2.1:\(missed)", "2.1.2:\(missed)"])
-        #expect(s.queue.map(\.type) == [.mc, .written])
+        #expect(s.queue.map(\.type) == [.written, .written])
         s = Self.play(s, at: Self.T0 + 60_000) { _ in true }
         #expect(LearnEngine.isFinished(s))
         let stats = LearnEngine.finalStats(s)
@@ -338,18 +338,17 @@ struct LearnReviewTests {
         #expect(Mastery.cardStatus(progress[cardId]) == .learning)
     }
 
-    @Test func switchingTheOptionAsksToRestart() {
+    /// Since 24.11.2026 the switch applies to the running session (before: «Neu starten?»).
+    @Test func switchingTheOptionAppliesAtOnce() {
         let cards = Self.makeCards(6)
+        let progress = Self.mastered(Array(cards.prefix(2)))
         let (start, _) = LearnFlow.start(
-            set: Self.set(cards), progress: [:], options: .default, rng: mulberry32(seed: 2), now: Self.T0)
-        let env = LearnFlow.Env(rng: mulberry32(seed: 2), now: Self.T0 + 1000)
+            set: Self.set(cards), progress: progress, options: .default, rng: mulberry32(seed: 2), now: Self.T0)
+        let env = LearnFlow.Env(rng: mulberry32(seed: 2), now: Self.T0 + 1000, progress: progress)
         var (s, _) = LearnFlow.reduce(start, .overlayPresented(.options), env: env)
         (s, _) = LearnFlow.reduce(s, .reviewChanged(true), env: env)
         (s, _) = LearnFlow.reduce(s, .overlayDismissed, env: env)
-        #expect(s.prompt == .restartForOptions([.review]))
-        #expect(LearnFlow.restartMessage([.review]).hasPrefix("Die Einstellung für Wiederholungsfragen gilt ab einem Neustart."))
-        let (restarted, _) = LearnFlow.reduce(s, .promptAnswered(confirmed: true), env: env)
-        #expect(restarted.session?.review != nil)
-        #expect(LearnFlow.sessionSettings(restarted.session!).review)
+        #expect(s.prompt == nil)
+        #expect(s.session?.review != nil)
     }
 }

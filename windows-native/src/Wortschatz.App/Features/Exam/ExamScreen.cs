@@ -1,14 +1,15 @@
 using Avalonia;
 using Avalonia.Automation;
 using Avalonia.Controls;
-using Avalonia.Controls.Primitives;
 using Avalonia.Input;
 using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Threading;
+using Avalonia.VisualTree;
 using Wortschatz.App.DesignSystem;
 using Wortschatz.App.Features.Study;
 using Wortschatz.Core;
+using static Wortschatz.Core.CoreText;
 
 namespace Wortschatz.App.Features.Exam;
 
@@ -86,7 +87,7 @@ public sealed class ExamScreen : Screen
     bool AskBeforeLeaving(Action leave)
     {
         if (_stage != Stage.Sheet || AnsweredCount == 0 || Model.Prompt is not null) return false;
-        Model.Ask(PromptRequest.Confirm("Prüfung beenden?", "Die Prüfung wird nicht bewertet, deine Antworten gehen verloren.", "Beenden", () =>
+        Model.Ask(PromptRequest.Confirm(L("Prüfung beenden?"), L("Die Prüfung wird nicht bewertet, deine Antworten gehen verloren."), L("Beenden"), () =>
         {
             _timer?.Stop();
             _stage = Stage.Setup;
@@ -105,9 +106,9 @@ public sealed class ExamScreen : Screen
             HandIn();
             return;
         }
-        Model.Ask(PromptRequest.Confirm("Prüfung abgeben?",
-            open == 1 ? "Eine Frage ist noch offen. Sie zählt als falsch." : $"{open} Fragen sind noch offen. Sie zählen als falsch.",
-            "Abgeben", () => HandIn()));
+        Model.Ask(PromptRequest.Confirm(L("Prüfung abgeben?"),
+            open == 1 ? L("Eine Frage ist noch offen. Sie zählt als falsch.") : L($"{open} Fragen sind noch offen. Sie zählen als falsch."),
+            L("Abgeben"), () => HandIn()));
     }
 
     /// <summary>Keys are ignored until then: an Enter meant for the next question must not skip the results.</summary>
@@ -156,7 +157,7 @@ public sealed class ExamScreen : Screen
     protected override Control Build()
     {
         var root = new Grid { RowDefinitions = new RowDefinitions("Auto,*") };
-        root.Children.Add(StudyChrome.TopRow(StudyChrome.BackPill(Set?.Title ?? "Zurück", Exit), _stage == Stage.Sheet ? SheetStatus() : null, null));
+        root.Children.Add(StudyChrome.TopRow(StudyChrome.BackPill(Set?.Title ?? L("Zurück"), Exit), _stage == Stage.Sheet ? SheetStatus() : null, null));
         _leaveGuard ??= AskBeforeLeaving;
         Model.LeaveGuard = _leaveGuard;
         Control main;
@@ -194,10 +195,10 @@ public sealed class ExamScreen : Screen
     /// <summary>No card with both sides in the set (Mac: ExamEmptyView).</summary>
     Control EmptyView()
     {
-        var view = EmptyStateView.Create(IconName.Exam, "Nichts zu prüfen",
-            "Dieses Lernset hat noch keine Begriffe mit Übersetzung. Füge welche hinzu, dann geht es los.",
-            Ui.Secondary("Zurück zum Lernset", Exit, keyHint: "Esc", height: 44),
-            Ui.Primary("Begriffe hinzufügen", AddCards, "↵", IconName.Plus));
+        var view = EmptyStateView.Create(IconName.Exam, L("Nichts zu prüfen"),
+            L("Dieses Lernset hat noch keine Begriffe mit Übersetzung. Füge welche hinzu, dann geht es los."),
+            Ui.Secondary(L("Zurück zum Lernset"), Exit, keyHint: "Esc", height: 44),
+            Ui.Primary(L("Begriffe hinzufügen"), AddCards, "↵", IconName.Plus));
         view.MaxWidth = 760;
         return view;
     }
@@ -219,30 +220,30 @@ public sealed class ExamScreen : Screen
             Refresh();
         }
         // Only the counts below the set's size, then "Alle N" (Mac: countChoices / countBinding).
-        var counts = ExamSettings.CountChoices.Where(c => c == 0 || c < available).Select(c => (c, c == 0 ? $"Alle {available}" : $"{c}")).ToList();
+        var counts = ExamSettings.CountChoices.Where(c => c == 0 || c < available).Select(c => (c, c == 0 ? L($"Alle {available}") : $"{c}")).ToList();
         int shownCount = _settings.Count <= 0 || _settings.Count >= available ? 0 : _settings.Count;
-        var countCaption = planned >= available ? "Alle Begriffe, in zufälliger Reihenfolge." : $"{planned} von {available} Begriffen, zufällig ausgewählt.";
+        var countCaption = planned >= available ? L("Alle Begriffe, in zufälliger Reihenfolge.") : L($"{planned} von {available} Begriffen, zufällig ausgewählt.");
         var timeCaption = _settings.Minutes <= 0
-            ? "So viel Zeit, wie du brauchst. Die Zeit wird trotzdem gemessen."
-            : $"Ist die Zeit um, wird abgegeben. Empfohlen: etwa {Labels.Plural(Math.Max(1, (int)Math.Ceiling(planned * 0.5)), "Minute", "Minuten")} für {Labels.Plural(planned, "Wort", "Wörter")}.";
-        var tolerance = Row("Kleine Fehler", IconName.CheckCircle, ExamCopy.ToleranceText(_settings.Tolerance),
+            ? L("So viel Zeit, wie du brauchst. Die Zeit wird trotzdem gemessen.")
+            : L($"Ist die Zeit um, wird abgegeben. Empfohlen: etwa {Labels.Plural(Math.Max(1, (int)Math.Ceiling(planned * 0.5)), "Minute", "Minuten")} für {Labels.Plural(planned, "Wort", "Wörter")}.");
+        var tolerance = Row(L("Kleine Fehler"), IconName.CheckCircle, ExamCopy.ToleranceText(_settings.Tolerance),
             Segmented(EnumRaw.All<ExamTolerance>().Select(t => (t, ExamCopy.ToleranceTitle(t))).ToList(), _settings.Tolerance,
                 v => Change(_settings with { Tolerance = v }), 104));
         ToolTip.SetTip(tolerance, ExamCopy.SmallMistakesText);
         var rows = new List<Control>
         {
-            Row("Wörter", IconName.Stack, countCaption, Segmented(counts, shownCount, v => Change(_settings with { Count = v }), counts.Count > 4 ? 64 : 76)),
-            Row("Zeitlimit", IconName.Clock, timeCaption,
-                Menu<int>(ExamSettings.MinuteChoices.Select(m => (m, m == 0 ? "Ohne" : $"{m} Min.")).ToList(), _settings.Minutes, v => Change(_settings with { Minutes = v }))),
-            Row("Antworten auf", IconName.Repeat, LearnOptionsCopy.DirectionText(_settings.AnswerWith, names),
-                Segmented<AnswerWith>([(AnswerWith.Term, names.Term.Label), (AnswerWith.Definition, names.Definition.Label), (AnswerWith.Both, "Beides")], _settings.AnswerWith,
+            Row(L("Wörter"), IconName.Stack, countCaption, Segmented(counts, shownCount, v => Change(_settings with { Count = v }), counts.Count > 4 ? 64 : 76)),
+            Row(L("Zeitlimit"), IconName.Clock, timeCaption,
+                Menu<int>(ExamSettings.MinuteChoices.Select(m => (m, m == 0 ? L("Ohne") : L($"{m} Min."))).ToList(), _settings.Minutes, v => Change(_settings with { Minutes = v }))),
+            Row(L("Antworten auf"), IconName.Repeat, LearnOptionsCopy.DirectionText(_settings.AnswerWith, names),
+                Segmented<AnswerWith>([(AnswerWith.Term, names.Term.Label), (AnswerWith.Definition, names.Definition.Label), (AnswerWith.Both, L("Beides"))], _settings.AnswerWith,
                     v => Change(_settings with { AnswerWith = v }), 100)),
             tolerance,
         };
         // Starred cards that can be asked (both sides filled in; Mac: starredCount).
         int starred = Core.Exam.Scope(set.Cards, ExamSettings.Default).Count(c => c.Starred);
         if (starred > 0)
-            rows.Add(Row($"Nur markierte ({starred})", IconName.Star, "Nur die Begriffe mit Stern abfragen.", Switch(_settings.StarredOnly, v => Change(_settings with { StarredOnly = v }))));
+            rows.Add(Row(L($"Nur markierte ({starred})"), IconName.Star, L("Nur die Begriffe mit Stern abfragen."), Switch(_settings.StarredOnly, v => Change(_settings with { StarredOnly = v }))));
         var list = new StackPanel { Spacing = 16 };
         for (int i = 0; i < rows.Count; i++)
         {
@@ -259,10 +260,10 @@ public sealed class ExamScreen : Screen
         };
         disc.Child.HorizontalAlignment = HorizontalAlignment.Center;
         disc.Child.VerticalAlignment = VerticalAlignment.Center;
-        var eyebrow = Ui.Eyebrow("Prüfungsmodus");
-        var title = Ui.Text("Prüfung einrichten", 32, FontWeight.Bold, font: WsTheme.Prompt);
+        var eyebrow = Ui.Eyebrow(L("Prüfungsmodus"));
+        var title = Ui.Text(L("Prüfung einrichten"), 32, FontWeight.Bold, font: WsTheme.Prompt);
         AutomationProperties.SetHeadingLevel(title, 1);
-        var lead = Ui.Text("Alle Fragen auf einer Seite, mit Zeitlimit und einer Note wie in der Schule.", 17, color: P.TextSecondary, wrap: TextWrapping.Wrap, align: TextAlignment.Center);
+        var lead = Ui.Text(L("Alle Fragen auf einer Seite, mit Zeitlimit und einer Note wie in der Schule."), 17, color: P.TextSecondary, wrap: TextWrapping.Wrap, align: TextAlignment.Center);
         foreach (var c in new Control[] { eyebrow, title, lead }) c.HorizontalAlignment = HorizontalAlignment.Center;
         disc.Margin = new Thickness(0, 0, 0, 6);
         var header = Ui.V(6, disc, eyebrow, title, lead);
@@ -270,7 +271,7 @@ public sealed class ExamScreen : Screen
         var card = Ui.Glass(list, 26, AppDevice.IsPhone ? new Thickness(18, 18) : new Thickness(26, 22), strong: true);
         var notes = Ui.V(6,
             Note(IconName.Info, ExamCopy.SmallMistakesText),
-            Note(IconName.Sparkles, "Die Prüfung zählt nicht für «Gemeistert». Was falsch ist, kannst du danach gezielt lernen."));
+            Note(IconName.Sparkles, L("Die Prüfung zählt nicht für «Gemeistert». Was falsch ist, kannst du danach gezielt lernen.")));
         var stack = Ui.V(22, header, card, notes);
         stack.MaxWidth = 700;
         stack.Margin = PageMargin(18);
@@ -325,7 +326,7 @@ public sealed class ExamScreen : Screen
 
     static Control Switch(bool value, Action<bool> changed)
     {
-        var s = new WsSwitch(value, "Nur markierte");
+        var s = new WsSwitch(value, L("Nur markierte"));
         s.Toggled += changed;
         return s;
     }
@@ -366,7 +367,9 @@ public sealed class ExamScreen : Screen
         _timer.Tick += (_, _) => Tick();
         _timer.Start();
         base.Refresh();
-        Announcer.Announce($"Prüfung gestartet: {Labels.Plural(sheet.Count, "Frage", "Fragen")}" + (_settings.Minutes > 0 ? $", {ExamCopy.Minutes(_settings.Minutes)}." : "."));
+        Announcer.Announce(_settings.Minutes > 0
+            ? L($"Prüfung gestartet: {Labels.Plural(sheet.Count, "Frage", "Fragen")}, {ExamCopy.Minutes(_settings.Minutes)}.")
+            : L($"Prüfung gestartet: {Labels.Plural(sheet.Count, "Frage", "Fragen")}."));
         Dispatcher.UIThread.Post(() => _fields.Values.FirstOrDefault()?.Focus(), DispatcherPriority.Input);
     }
 
@@ -382,8 +385,8 @@ public sealed class ExamScreen : Screen
         if (_settings.Minutes * 60 > 120 && !_minuteAnnounced && RemainingMs <= 60_000)
         {
             _minuteAnnounced = true;
-            Model.ShowToast(new ToastMessage("Noch eine Minute", ToastTone.Warning));
-            Announcer.Announce("Noch eine Minute");
+            Model.ShowToast(new ToastMessage(L("Noch eine Minute"), ToastTone.Warning));
+            Announcer.Announce(L("Noch eine Minute"));
         }
         UpdateClock();
     }
@@ -404,7 +407,7 @@ public sealed class ExamScreen : Screen
         _clock.FontFeatures = FontFeatureCollection.Parse("tnum");
         var clock = Ui.H(7, _clockIcon, _clock);
         _clockView = clock;
-        ToolTip.SetTip(clock, _settings.Minutes > 0 ? "Verbleibende Zeit" : "Ohne Zeitlimit: so lange läuft die Prüfung schon");
+        ToolTip.SetTip(clock, _settings.Minutes > 0 ? L("Verbleibende Zeit") : L("Ohne Zeitlimit: so lange läuft die Prüfung schon"));
         _answeredTop = Ui.Text("", 14, FontWeight.Medium, P.TextSecondary);
         _answeredTop.FontFeatures = FontFeatureCollection.Parse("tnum");
         _answeredTopView = _answeredTop;
@@ -431,22 +434,27 @@ public sealed class ExamScreen : Screen
             _clock.Foreground = WsTheme.B(color);
             _clockIcon.Child = Icons.Icon(IconName.Clock, 17, color, 2);
         }
-        AutomationProperties.SetName(_clockView, $"{(limited ? "Verbleibende Zeit" : "Verstrichene Zeit")}: {ExamTime.Spoken(seconds)}");
+        string spoken = ExamTime.Spoken(seconds);
+        AutomationProperties.SetName(_clockView, limited ? L($"Verbleibende Zeit: {spoken}") : L($"Verstrichene Zeit: {spoken}"));
     }
 
-    /// <summary>The answered questions: "5/20" on top, the pill in the bar, the filled number circles.</summary>
-    void UpdateAnswered()
+    /// <summary>
+    /// The answered questions: "5/20" on top, the pill in the bar, the filled number circles (only the circle of
+    /// <paramref name="changed"/> when one answer was typed: the others stay as they are).
+    /// </summary>
+    void UpdateAnswered(int? changed = null)
     {
         int answered = AnsweredCount, total = _questions.Count;
         if (_answeredTop is not null)
         {
             _answeredTop.Text = $"{answered}/{total}";
-            if (_answeredTopView is not null) ToolTip.SetTip(_answeredTopView, $"{answered} von {total} Fragen beantwortet");
-            AutomationProperties.SetName(_answeredTop, $"{answered} von {total} Fragen beantwortet");
+            if (_answeredTopView is not null) ToolTip.SetTip(_answeredTopView, L($"{answered} von {total} Fragen beantwortet"));
+            AutomationProperties.SetName(_answeredTop, L($"{answered} von {total} Fragen beantwortet"));
         }
-        if (_answeredPill is not null) _answeredPill.Text = $"{answered} von {total} beantwortet";
+        if (_answeredPill is not null) _answeredPill.Text = L($"{answered} von {total} beantwortet");
         _answeredLine?.SetValue(total == 0 ? 0 : (double)answered / total, Motion.Snappy);
-        foreach (var q in _questions) UpdateRow(q.Number);
+        if (changed is { } number) UpdateRow(number);
+        else foreach (var q in _questions) UpdateRow(q.Number);
     }
 
     // MARK: Sheet
@@ -471,7 +479,7 @@ public sealed class ExamScreen : Screen
 
         // "20 Fragen · Antworten auf Französisch" and the keys (Mac: ExamSheetView.intro).
         var introLabel = Ui.H(8, Icons.Icon(IconName.Stack, 15, P.TextSecondary), Ui.Text(IntroText(set), 14, FontWeight.Medium, P.TextSecondary));
-        var keys = Ui.H(6, Ui.KeyCap("↵"), Ui.Text("nächste Frage", 12, color: P.TextTertiary), new Border { Width = 4 }, Ui.KeyCap("Ctrl ↵"), Ui.Text("abgeben", 12, color: P.TextTertiary));
+        var keys = Ui.H(6, Ui.KeyCap("↵"), Ui.Text(L("nächste Frage"), 12, color: P.TextTertiary), new Border { Width = 4 }, Ui.KeyCap("Ctrl ↵"), Ui.Text(L("abgeben"), 12, color: P.TextTertiary));
         AutomationProperties.SetAccessibilityView(keys, AccessibilityView.Raw);
         keys.IsVisible = AppDevice.ShowsKeyHints;
         var intro = Ui.Row(introLabel, keys, 12);
@@ -496,18 +504,18 @@ public sealed class ExamScreen : Screen
         var count = Labels.Plural(_questions.Count, "Frage", "Fragen");
         var langs = _questions.Select(q => q.AnswerLang).Distinct().ToList();
         if (set is null || langs.Count != 1 || langs[0] == Lang.Other || set.TermLang == set.DefLang) return count;
-        return $"{count} · Antworten auf {Labels.LangName(langs[0])}";
+        return L($"{count} · Antworten auf {Labels.LangName(langs[0])}");
     }
 
     /// <summary>"Französisch", or "Begriff"/"Definition" when both sides share a language (Mac: promptLabel).</summary>
     static string PromptLabel(ExamQuestion q, VocabSet? set)
     {
-        if (set is null || set.TermLang == set.DefLang || q.PromptLang == Lang.Other) return q.Ask == AskSide.Term ? "Definition" : "Begriff";
+        if (set is null || set.TermLang == set.DefLang || q.PromptLang == Lang.Other) return q.Ask == AskSide.Term ? L("Definition") : L("Begriff");
         return Labels.LangName(q.PromptLang);
     }
 
     static string Placeholder(ExamQuestion q, VocabSet? set) =>
-        set is null || set.TermLang == set.DefLang || q.AnswerLang == Lang.Other ? "Antwort" : $"Auf {Labels.LangName(q.AnswerLang)} …";
+        set is null || set.TermLang == set.DefLang || q.AnswerLang == Lang.Other ? L("Antwort") : L($"Auf {Labels.LangName(q.AnswerLang)} …");
 
     /// <summary>One question: its number in a circle, the language above the prompt, the answer field (Mac: ExamQuestionRow).</summary>
     Control QuestionRow(ExamQuestion q, VocabSet? set)
@@ -519,7 +527,7 @@ public sealed class ExamScreen : Screen
             field = Ui.Field(Placeholder(q, set), "", 16, 44);
             if (q.AnswerLang.IsRTL()) field.FlowDirection = FlowDirection.RightToLeft;
             Study.StudyAnswerBox.ForAnswers(field, q.AnswerLang);
-            AutomationProperties.SetName(field, $"Antwort zu Frage {number}");
+            AutomationProperties.SetName(field, L($"Antwort zu Frage {number}"));
             field.KeyDown += (_, e) =>
             {
                 if (e.Key is Key.Enter or Key.Return && e.KeyModifiers == KeyModifiers.None)
@@ -533,7 +541,7 @@ public sealed class ExamScreen : Screen
                     e.Handled = true;
                 }
             };
-            field.TextChanged += (_, _) => UpdateAnswered();
+            field.TextChanged += (_, _) => UpdateAnswered(number);
             field.GotFocus += (_, _) =>
             {
                 if (_accents.TryGetValue(number, out var a)) a.IsVisible = true;
@@ -560,7 +568,7 @@ public sealed class ExamScreen : Screen
         var prompt = StudyText.InLang(q.Prompt, q.PromptLang, 19, FontWeight.SemiBold, font: WsTheme.Prompt);
         prompt.TextWrapping = TextWrapping.Wrap;
         prompt.TextTrimming = TextTrimming.None;
-        AutomationProperties.SetName(prompt, $"Frage {number}, {label}: {q.Prompt}");
+        AutomationProperties.SetName(prompt, L($"Frage {number}, {label}: ") + q.Prompt);
         var promptStack = Ui.V(4, eyebrow, prompt);
 
         var badgeText = Ui.Text($"{number}", 13, FontWeight.Bold, font: WsTheme.Prompt);
@@ -647,10 +655,18 @@ public sealed class ExamScreen : Screen
         if (Core.Exam.Passes(_result.Grade)) Services.Haptics.Success();
         else Services.Haptics.Failure();
         Model.Sounds.Play(Core.Exam.Passes(_result.Grade) ? Services.SoundEffects.Sound.Finished : Services.SoundEffects.Sound.RoundDone);
-        if (timedOut) Model.ShowToast(new ToastMessage("Die Zeit ist um. Deine Prüfung wurde abgegeben.", ToastTone.Warning));
-        Announcer.Announce($"Note {Core.Exam.GradeText(_result.Grade)}. {ExamCopy.ScoreLine(_result)}.");
+        if (timedOut) Model.ShowToast(new ToastMessage(L("Die Zeit ist um. Deine Prüfung wurde abgegeben."), ToastTone.Warning));
+        Announcer.Announce(L($"Note {Core.Exam.GradeText(_result.Grade)}. {ExamCopy.ScoreLine(_result)}."));
         base.Refresh();
         _resultAppeared = false;
+        // The grade on top: the results opened where the last answer was (in the middle of the list, Joan's phone
+        // 06.11.2026) – the closing keyboard scrolled the page once more, so again a moment later.
+        void Top()
+        {
+            if (View.GetVisualDescendants().OfType<ScrollViewer>().FirstOrDefault() is { } scroll) scroll.Offset = default;
+        }
+        Dispatcher.UIThread.Post(Top, DispatcherPriority.Background);
+        DispatcherTimer.RunOnce(Top, TimeSpan.FromMilliseconds(450));
     }
 
     // MARK: Results
@@ -681,25 +697,25 @@ public sealed class ExamScreen : Screen
             BoxShadow = BoxShadows.Parse($"0 7 36 0 {WsButton.Hex(pal.Fill, 0.35)}"), HorizontalAlignment = HorizontalAlignment.Center,
             RenderTransformOrigin = RelativePoint.Center,
         };
-        var noteLabel = Ui.Text("Note", 13, FontWeight.SemiBold, Colors.White, font: WsTheme.Prompt);
+        var noteLabel = Ui.Text(L("Note"), 13, FontWeight.SemiBold, Colors.White, font: WsTheme.Prompt);
         noteLabel.Opacity = 0.85;
         var gradeText = Ui.Text(Core.Exam.GradeText(grade), 50, FontWeight.Bold, Colors.White, font: WsTheme.Prompt);
         foreach (var t in new[] { noteLabel, gradeText }) t.HorizontalAlignment = HorizontalAlignment.Center;
         var inner = Ui.V(0, noteLabel, gradeText);
         inner.VerticalAlignment = VerticalAlignment.Center;
         circle.Child = inner;
-        AutomationProperties.SetName(circle, $"Note {Core.Exam.GradeText(grade)}");
+        AutomationProperties.SetName(circle, L($"Note {Core.Exam.GradeText(grade)}"));
         if (_resultAppeared) Effects.Of(circle).Enter(new Placement(Scale: 0.86, Opacity: 0), Motion.Arrive(0.6).Delayed(0.1));
         int seconds = (int)Math.Round(r.ElapsedMs / 1000);
         var verdict = Ui.Text(Core.Exam.Verdict(grade), 34, FontWeight.Bold, wrap: TextWrapping.Wrap, font: WsTheme.Prompt, align: TextAlignment.Center);
         AutomationProperties.SetHeadingLevel(verdict, 1);
-        var subtitle = Ui.Text($"{ExamCopy.ScoreLine(r)} in {ExamTime.Clock(seconds)}", 18, color: P.TextSecondary, wrap: TextWrapping.Wrap, align: TextAlignment.Center);
+        var subtitle = Ui.Text(L($"{ExamCopy.ScoreLine(r)} in {ExamTime.Clock(seconds)}"), 18, color: P.TextSecondary, wrap: TextWrapping.Wrap, align: TextAlignment.Center);
         verdict.HorizontalAlignment = subtitle.HorizontalAlignment = HorizontalAlignment.Center;
         var hero = Ui.V(10, circle, verdict, subtitle);
         circle.Margin = new Thickness(0, 0, 0, 8);
         if (r.TimedOut)
         {
-            var late = Ui.H(8, Icons.Icon(IconName.Clock, 16, P.Warning.Text, 2), Ui.Text("Die Zeit war um, die Prüfung wurde abgegeben.", 14, FontWeight.Medium, P.Warning.Text));
+            var late = Ui.H(8, Icons.Icon(IconName.Clock, 16, P.Warning.Text, 2), Ui.Text(L("Die Zeit war um, die Prüfung wurde abgegeben."), 14, FontWeight.Medium, P.Warning.Text));
             late.HorizontalAlignment = HorizontalAlignment.Center;
             hero.Children.Add(late);
         }
@@ -711,18 +727,18 @@ public sealed class ExamScreen : Screen
     {
         var minorCaption = r.Tolerance switch
         {
-            ExamTolerance.Strict => "kein Punkt",
-            ExamTolerance.Half => "je ½ Punkt",
-            _ => "ganzer Punkt",
+            ExamTolerance.Strict => L("kein Punkt"),
+            ExamTolerance.Half => L("je ½ Punkt"),
+            _ => L("ganzer Punkt"),
         };
         var tiles = new List<Control>
         {
-            StatTile.Create("Richtig", $"{r.Count(ExamMark.Correct)}", IconName.Check, P.Success.Fill, caption: "ganzer Punkt"),
-            StatTile.Create("Kleine Fehler", $"{r.Count(ExamMark.Minor)}", IconName.CheckCircle, P.Info.Fill, caption: minorCaption),
-            StatTile.Create("Falsch", $"{r.Count(ExamMark.Wrong)}", IconName.X, P.Failure.Fill, caption: "kein Punkt"),
+            StatTile.Create(L("Richtig"), $"{r.Count(ExamMark.Correct)}", IconName.Check, P.Success.Fill, caption: L("ganzer Punkt")),
+            StatTile.Create(L("Kleine Fehler"), $"{r.Count(ExamMark.Minor)}", IconName.CheckCircle, P.Info.Fill, caption: minorCaption),
+            StatTile.Create(L("Falsch"), $"{r.Count(ExamMark.Wrong)}", IconName.X, P.Failure.Fill, caption: L("kein Punkt")),
         };
         int blank = r.Count(ExamMark.Blank);
-        if (blank > 0) tiles.Add(StatTile.Create("Ohne Antwort", $"{blank}", IconName.Minimize, P.New.Fill, caption: "kein Punkt"));
+        if (blank > 0) tiles.Add(StatTile.Create(L("Ohne Antwort"), $"{blank}", IconName.Minimize, P.New.Fill, caption: L("kein Punkt")));
         return StatTile.Row(12, tiles.ToArray());
     }
 
@@ -730,7 +746,7 @@ public sealed class ExamScreen : Screen
     Control AnswerList(ExamResult r)
     {
         var set = Set;
-        var title = Ui.Text("Deine Antworten", 22, FontWeight.SemiBold, font: WsTheme.Prompt);
+        var title = Ui.Text(L("Deine Antworten"), 22, FontWeight.SemiBold, font: WsTheme.Prompt);
         AutomationProperties.SetHeadingLevel(title, 2);
         var tolerance = Ui.Text(ExamCopy.ToleranceText(r.Tolerance), 14, color: P.TextSecondary);
         ToolTip.SetTip(tolerance, ExamCopy.SmallMistakesText);
@@ -785,12 +801,12 @@ public sealed class ExamScreen : Screen
                 spokenAnswer = item.Given;
                 break;
             default:
-                middle.Children.Add(Ui.Text("Keine Antwort", answerSize, color: P.TextTertiary));
-                spokenAnswer = "Keine Antwort";
+                middle.Children.Add(Ui.Text(L("Keine Antwort"), answerSize, color: P.TextTertiary));
+                spokenAnswer = L("Keine Antwort");
                 break;
         }
         // "Richtig: la maison", or "Gesucht war:" when the answer was right (a synonym) or matched another card.
-        var expectedLabel = item.Mark == ExamMark.Correct || item.Matched is not null ? "Gesucht war:" : "Richtig:";
+        var expectedLabel = item.Mark == ExamMark.Correct || item.Matched is not null ? L("Gesucht war:") : L("Richtig:");
         if (expected)
         {
             var value = Wrapped(StudyText.InLang(q.Expected, q.AnswerLang, 14, FontWeight.SemiBold, P.Success.Text));
@@ -808,9 +824,9 @@ public sealed class ExamScreen : Screen
 
         var (pointsText, pointsLabel) = item.Points switch
         {
-            1 => ("1", "1 Punkt"),
-            0.5 => ("½", "ein halber Punkt"),
-            _ => ("0", "kein Punkt"),
+            1 => ("1", L("1 Punkt")),
+            0.5 => ("½", L("ein halber Punkt")),
+            _ => ("0", L("kein Punkt")),
         };
         var points = Ui.Text(pointsText, 17, FontWeight.Bold, item.Points > 0 ? P.Text : P.TextTertiary, font: WsTheme.Prompt, align: TextAlignment.Right);
         points.MinWidth = 28;
@@ -874,8 +890,8 @@ public sealed class ExamScreen : Screen
             {
                 var pill = BarPill(Ui.H(8, Icons.Icon(IconName.Stack, 15, P.TextSecondary), Ui.Text(SetupSummary(), 14, FontWeight.Medium, P.TextSecondary)));
                 return StudyActionBarView.Create(pill, [
-                    Ui.Secondary("Zurück zum Lernset", Exit, keyHint: "Esc", height: 44),
-                    Ui.Primary("Prüfung starten", Start, "↵", IconName.Exam, height: 44),
+                    Ui.Secondary(L("Zurück zum Lernset"), Exit, keyHint: "Esc", height: 44),
+                    Ui.Primary(L("Prüfung starten"), Start, "↵", IconName.Exam, height: 44),
                 ]);
             }
             case Stage.Sheet:
@@ -886,7 +902,7 @@ public sealed class ExamScreen : Screen
                 _answeredLine = new ProgressLine(0, P.Accent, 80);
                 var pill = BarPill(Ui.H(10, _answeredPill, _answeredLine));
                 UpdateAnswered();
-                return StudyActionBarView.Create(pill, [Ui.Primary("Abgeben", RequestHandIn, "Ctrl ↵", IconName.Check, height: 44)], 820);
+                return StudyActionBarView.Create(pill, [Ui.Primary(L("Abgeben"), RequestHandIn, "Ctrl ↵", IconName.Check, height: 44)], 820);
             }
             default:
                 return new ViewThatFits(ResultsBar);
@@ -901,27 +917,27 @@ public sealed class ExamScreen : Screen
     {
         var r = _result!;
         int toPractise = r.CardIdsToPractise.Count;
-        var again = StudyChrome.Floating(Ui.Secondary(compact ? "Neu" : "Neue Prüfung", RequestNewExam, IconName.RotateCcw, "Ctrl ⇧ R", 44));
+        var again = StudyChrome.Floating(Ui.Secondary(compact ? L("Neu") : L("Neue Prüfung"), RequestNewExam, IconName.RotateCcw, "Ctrl ⇧ R", 44));
         again.Focusable = false;
-        ToolTip.SetTip(again, "Eine neue Prüfung mit diesem Lernset einrichten (Ctrl+Shift+R)");
+        ToolTip.SetTip(again, L("Eine neue Prüfung mit diesem Lernset einrichten (Ctrl+Shift+R)"));
         var items = new List<Control?>();
         if (toPractise > 0)
         {
             var questions = Labels.Plural(toPractise, "Frage", "Fragen");
-            var learn = Ui.Secondary(compact ? "Lernen" : "Falsche lernen", LearnMistakes, IconName.Sparkles, height: 44);
-            ToolTip.SetTip(learn, $"Die {questions} mit Fehlern in Lernen üben");
-            var retake = Ui.Secondary(compact ? "Prüfen" : "Falsche prüfen", RetakeMistakes, IconName.Exam, height: 44);
-            ToolTip.SetTip(retake, $"Eine neue Prüfung nur mit den {questions} mit Fehlern");
+            var learn = Ui.Secondary(compact ? L("Lernen") : L("Falsche lernen"), LearnMistakes, IconName.Sparkles, height: 44);
+            ToolTip.SetTip(learn, L($"Die {questions} mit Fehlern in Lernen üben"));
+            var retake = Ui.Secondary(compact ? L("Prüfen") : L("Falsche prüfen"), RetakeMistakes, IconName.Exam, height: 44);
+            ToolTip.SetTip(retake, L($"Eine neue Prüfung nur mit den {questions} mit Fehlern"));
             items.Add(learn);
             items.Add(retake);
         }
-        var done = Ui.Primary("Fertig", Exit, "↵", height: 44);
+        var done = Ui.Primary(L("Fertig"), Exit, "↵", height: 44);
         if (AppDevice.IsPhone)
         {
             // Phone: «Neue Prüfung» as a round button beside «Fertig» – as a line of its own the bar took three lines
             // (a fifth of the screen) under the results.
-            var renew = StudyChrome.FloatingIconButton(IconName.RotateCcw, "Neue Prüfung", RequestNewExam);
-            AutomationProperties.SetName(renew, "Neue Prüfung");
+            var renew = StudyChrome.FloatingIconButton(IconName.RotateCcw, L("Neue Prüfung"), RequestNewExam);
+            AutomationProperties.SetName(renew, L("Neue Prüfung"));
             var last = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*"), ColumnSpacing = 8 };
             last.Children.Add(renew);
             StudyChrome.Floating(done);
@@ -995,6 +1011,6 @@ public static class ExamTime
     {
         int m = Math.Max(0, seconds) / 60, s = Math.Max(0, seconds) % 60;
         if (m == 0) return Labels.Plural(s, "Sekunde", "Sekunden");
-        return s == 0 ? Labels.Plural(m, "Minute", "Minuten") : $"{Labels.Plural(m, "Minute", "Minuten")} {Labels.Plural(s, "Sekunde", "Sekunden")}";
+        return s == 0 ? Labels.Plural(m, "Minute", "Minuten") : L($"{Labels.Plural(m, "Minute", "Minuten")} {Labels.Plural(s, "Sekunde", "Sekunden")}");
     }
 }

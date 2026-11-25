@@ -219,7 +219,8 @@ private enum WriteSnapshotScript {
                 let misses = (state.session?.round ?? 1) == 1 && missEvery.map { asked % $0 == 2 } == true
                 answer(c, misses ? nearMiss(expected) : expected)
             case .copy:
-                answer(c, state.question?.expected ?? "")
+                // Typed out as shown, the copy continues by itself.
+                c.send(.inputChanged(state.question?.expected ?? ""))
             case .feedback, .summary:
                 c.send(.proceed)
             case .starting, .results, .empty, .missing:
