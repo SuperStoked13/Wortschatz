@@ -4,6 +4,10 @@
 Der Server schaut alle 5 Minuten nach, testet, baut und schaltet um. Klappt etwas nicht, bleibt die bisherige Version
 online.
 
+> **Noch nicht umgestellt (Stand 25.11.2026):** Die Downloadseite holt ihre Downloads vorerst nicht aus diesem Repo.
+> Ein Release hier startet nur die Updates der Apps und erscheint erst nach der Umstellung auf der Seite – das erste
+> Release hier mit Joan absprechen.
+
 ## So geht's
 
 1. **Versionsnummer erhöhen** (Windows: `<Version>` in `windows-native/src/Wortschatz.App/Wortschatz.App.csproj`,

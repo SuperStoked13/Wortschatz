@@ -12,6 +12,8 @@ man die Apps lädt. Überblick und Befehle: `README.md`.
 - Pushes gehen **nie** live. Live geht nur ein **GitHub-Release** („Latest“, kein Entwurf/keine Vorabversion),
   Anleitung: `VEROEFFENTLICHEN.md`. Der Server prüft alle 5 Minuten, testet, baut, schaltet um, prüft und schaltet bei
   Fehlern automatisch zurück.
+- **Noch nicht umgestellt (Stand 25.11.2026):** Die Downloadseite holt ihre Downloads vorerst nicht aus diesem Repo – ein
+  Release hier startet nur die Updates der Apps, nicht die Seite. Das erste Release hier mit Joan absprechen.
 
 ## Neuigkeiten-Liste – bei App-Änderungen immer mitführen
 Die Seite `/neuigkeiten` zeigt `Downloadseite/public/_neuigkeiten.md`. **Ohne Nachfrage:** Wer an einer App etwas
