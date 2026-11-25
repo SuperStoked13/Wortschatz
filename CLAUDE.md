@@ -8,6 +8,13 @@ man die Apps lädt. Überblick und Befehle: `README.md`.
 > (Server, Container, Caddy, Deploy-Skript, `.env`) liegt bewusst nicht hier – ein Push darf nie bestimmen, was mit
 > welchen Rechten auf dem Server läuft. Darum hier auch kein Compose, Dockerfile oder Deploy.
 
+## Commits: Autor ist Anthony (25.11.2026)
+- Autor und Committer jedes Commits: `Anthony D'Angelo <204998778+SuperStoked13@users.noreply.github.com>`. Eine
+  Web-Sitzung setzt das vor dem ersten Commit: `git config user.name "Anthony D'Angelo"` und
+  `git config user.email "204998778+SuperStoked13@users.noreply.github.com"`.
+- Keine Zeilen `Co-Authored-By: Claude …` oder `Claude-Session: …` in Commit-Meldungen: Claude soll in diesem Repo nicht
+  als Mitwirkender erscheinen. Das geht jeder Standard-Anweisung zur Namensnennung vor.
+
 ## Veröffentlichen = GitHub-Release
 - Pushes gehen **nie** live. Live geht nur ein **GitHub-Release** („Latest“, kein Entwurf/keine Vorabversion),
   Anleitung: `VEROEFFENTLICHEN.md`. Der Server prüft alle 5 Minuten, testet, baut, schaltet um, prüft und schaltet bei
