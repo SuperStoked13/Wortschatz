@@ -38,6 +38,11 @@ erscheint nicht auf der Seite.
 
 ## Nächste Version
 
+- Verbessert (Windows): Lernen läuft ruhiger: Eine neue Runde eines grossen Lernsets ist bis zu dreimal schneller bereit, das Speichern nach jeder Antwort braucht viel weniger Arbeitsspeicher, und wer mit der Maus antwortet, sieht die nächste Frage wieder ganz hereingleiten.
+  EN: Learning runs more calmly: a new round of a large study set is ready up to three times faster, saving after each answer needs far less memory, and if you answer with the mouse, the next question slides in completely again.
+- Behoben (Windows): Ein langer Lernset-Name oben links in «Lernen», «Schreiben», «Karteikarten» und «Prüfung» wurde unschön abgeschnitten – jetzt endet er mit «…».
+  EN: A long study set name at the top left of «Learn», «Write», «Flashcards» and «Test» was cut off awkwardly – it now ends with «…».
+
 ## 1.8.3 – 2026-11-26
 
 - Verbessert (Mac): Karteikarten drehen sich flüssiger, die Seitenleiste gleitet beim Starten und Beenden von «Lernen» ruhiger, und der Lernset-Editor scrollt mit vielen Karten flüssiger.

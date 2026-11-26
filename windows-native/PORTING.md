@@ -277,6 +277,12 @@ Sprachen eines neuen Lernsets zuerst «Automatisch» (ohne Erkennung beim Sicher
 Windows: `ImportPanel.cs` › `SyncImport`, `ImportedCards`, `_importEdits`, `ClearImportText` (rückgängig machbar);
 `Draft.ImportKey`; Sprachwahl mit «Automatisch» und Trennlinie (`SetEditorScreen.LangBox`, `TermIsAuto`,
 `ResolvedLanguages`); Bild-Szene `08f-editor-import-edits` (Mac: editor-importEdits).
+**Windows erledigt (26.11.2026) – Lernrunden wie Mac 4444ee7:** `LearnEngine.ChoicePool` portiert (Angaben jeder Karte
+einmal pro Runde; `Synonyms.IsSameCard`/`PromptKeys`/`IsBlank` dafür `internal`), dazu die Code-Points der Formen einmal
+pro Karte (`WordClass.ShapePoints` mit Spans). Gleiche Optionen wie vorher (Parität, alle Antwortlisten echter Lernsets
+alt/neu gleich). Die übrigen Punkte von 4444ee7/42244f0 sind Mac-eigen (Codable-Reihenfolge, SwiftUI/AppKit); Windows
+hatte die Übersichtsdaten schon faul gebaut. Speichern: Windows kodiert nur noch geänderte Karten und Fortschritte
+(`LibraryDocument.ToFileBytes`, README › «Optimierung 26.11.2026») – für den Mac wäre das ebenfalls ein Gewinn.
 
 Nicht nötig auf dem Mac (nur Windows): ältere Downloads löschen, Fenster nach Bildschirmwechsel zurückholen, Übernahme
 der früheren Windows-App.

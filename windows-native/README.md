@@ -44,6 +44,50 @@ suchen» (fragt bei einem Fund «Jetzt neu starten» oder «Später»). Release-
   9.1» mit «+1 weitere» und die `.old` ist weg; «Jetzt neu starten» startet 9.1 sofort. Die echte App fragt GitHub
   (neuestes veröffentlichtes Release mit `windows-update.json`; ohne neuere Version → «Wortschatz ist aktuell»).
 
+## Optimierung 26.11.2026: weniger Abfall beim Lernen, Mausfehler, langer Lernset-Name
+
+Joan: «detailed optimization, performance, efficiency and smoothness check … without any redundant code». Diesmal
+zuerst **gemessen** – auf einem Windows-11-Laptop mit einer Mess-Kopie der App (Bildabstände, Taste bis Bild, Speicher,
+Aufräumpausen der Laufzeit aus deren Ereignissen; nie veröffentlicht, nicht im Repo) und einer Kopie von Joans
+grösster Bibliothek (1705 Karten, 541 im grössten Set) –, dann umgesetzt, was die Messung zeigte.
+- **Befund:** Flüssig war die App schon: während Animationen 99 % der Bilder bei 60 fps (am Netzteil), Start warm
+  0,77 s, Leerlauf ~1 % eines Kerns. Aber beim Lernen fielen **~20 MB Abfall pro Antwort** an (40 Antworten: 850 MB,
+  13 schwere Aufräumläufe), fast alles vom Speichern der ganzen Bibliothek nach jeder Antwort (zweimal: Antwort und
+  Weiter). Vom Arbeitsspeicher (~240 MB privat) sind nur ~14 MB Daten der App, der Rest Laufzeit, Skia/Grafik und die
+  beim Start entpackten Assemblies.
+- **Speichern** (`LibraryDocument.ToFileBytes`): schreibt die Datei direkt; Karten und Lernfortschritt-Einträge sind
+  unveränderliche Records, ihr JSON wird einmal pro Objekt kodiert (`ConditionalWeakTable`) und danach kopiert;
+  sortierte Schlüssel ohne LINQ und ohne Abfall (`SortedKeys`, `PooledByteBuffer`). Pro Speichern 9 → 0,64 MB Abfall
+  (≈ die Datei selbst), byte-gleiche Datei (Prüfsumme alt/neu, Paritätstests). Nachbau der Lernschleife unter Linux:
+  pro Antwort 12,6 → 4,5 MB.
+- **Lernrunden** (`LearnEngine.ChoicePool`, Port von Anthonys Mac-Änderung 4444ee7): neue Runde mit 541 Karten 10 → 3 ms
+  (längste 24 → 7 ms), Abfall 11 → 2 MB; alle 3410 Antwortlisten der echten Lernsets alt/neu gleich.
+- **Maus:** Ein Feld der Mehrfachauswahl markierte sich bei `PointerEntered` – auch wenn die nächste Frage unter dem
+  ruhenden Zeiger erschien; das baute den Bildschirm ~40 ms nach der neuen Frage neu und brach ihre Einblendung ab
+  (Laptop: 5 von 11 Fragen). Jetzt erst bei Bewegung (`PointerMoved`): 0 von 10.
+- **Lernset-Name** oben links in den Lernbildschirmen (Joan: «unschön abgeschnitten»): Grid statt StackPanel, endet
+  mit «…» (`StudyChrome.BackPill`).
+- **Kleineres:** gehaltene Taste baut Lernen/Schreiben nicht mehr neu (schnitt Animationen ab); Prüfung baut die
+  Sonderzeichen-Leiste erst beim ersten Fokus (541 Fragen Französisch: ~30'000 Controls weniger); Einstellungen ›
+  Daten misst die Backup-Grösse einmal pro Bibliotheksstand (vorher bei jedem Aufbau die ganze Bibliothek kodiert,
+  Seite 53–58 ms); Lernset-Seite und Editor halten nur noch die sichtbaren Zeilen fest (`TrackRow`); Suche faltet
+  jeden Text nur einmal (`StudyCopy.Fold`, vorher dreimal vorhanden); Ordner für ältere Downloads im Hintergrund;
+  Synonymlisten entpacken ohne vierfachen Puffer. Toter Code weg: `IsAnimating`, `MotionState.Current`,
+  `Palette.FlameText`, `StoreChange.Touches`, `LearnReview/LearnRecheck.Clone`, drei gleiche `Detach`, ein using.
+  Bewusst behalten, weil Android/Pro/Abgleich (privates Repo) sie brauchen: `AppPreferences.TimesKey`,
+  `StoreMessages.BadState`, `AppModel.OpenAt`/`ReceiveShared`, `AppDevice.DeviceName`, `ScrollToRow`, zwei usings in
+  `ImportPanel`.
+- **Laptop vorher/nachher** (gleiche Fahrt, gleiche Datenkopie, am Netzteil; 40 Antworten Lernen): Abfall 830 → 276 MB,
+  Aufräumläufe 119 → 40 (schwere 13 → 4), Pausen zusammen 395 → 153 ms, längste 14 → 10 ms; Bilder während Animationen
+  weiterhin 99,4 % unter 25 ms; Speicher privat Spitze 431 → 419 MB. Auf Akku war alles langsamer, der Unterschied gleich.
+- **Geprüft:** 726 Kern-Tests, alle 175 Bilder des Bild-Werkzeugs (Desktop, Handy, Einstellungen, Editor, Hülle,
+  Nachkontrolle) pixelgleich mit zwei Referenzläufen, Downloadseite-Tests, Builds von `main` und `pro` des privaten
+  Repos (mit Abgleich bzw. Pro).
+- **Offen gelassen (Entscheid Joan):** exe **ohne Kompression** (`EnableCompressionInSingleFile=false`): Start 0,77 →
+  0,69 s, ~50 MB weniger Arbeitsspeicher, aber 189 statt 78 MB Download. Trimmen (kleiner und schneller) bräuchte
+  Tests von COM/WinRT auf Windows. Multiple Choice baut beim Markieren noch den ganzen Bildschirm neu
+  (`LearnScreen.Render`, ~150 Controls, wenige ms) – nach dem Mausfehler kaum noch spürbar.
+
 ## Optimierung: flüssiger, weniger Speicher, toter Code weg (25.11.2026, Windows 1.7.1)
 
 Joan: «optimize and remove leftovers … run as smooth and efficiently as possible», aussen soll alles gleich aussehen.
