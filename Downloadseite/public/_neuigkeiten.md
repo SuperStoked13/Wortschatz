@@ -38,6 +38,11 @@ erscheint nicht auf der Seite.
 
 ## Nächste Version
 
+## 1.8.4 – 2026-11-26
+
+- Verbessert (Mac): Mit grossen Lernsets reagieren «Lernen» und «Schreiben» schneller auf eine Antwort, und Karteikarten gleiten beim Hereinkommen und Wegziehen ruhiger.
+  EN: With large study sets, «Learn» and «Write» respond faster to an answer, and flashcards move more smoothly when they slide in or you drag them away.
+
 ## 1.8.3 – 2026-11-26
 
 - Verbessert (Mac): Karteikarten drehen sich flüssiger, die Seitenleiste gleitet beim Starten und Beenden von «Lernen» ruhiger, und der Lernset-Editor scrollt mit vielen Karten flüssiger.
