@@ -58,7 +58,7 @@ nonisolated enum Theme {
 
     // MARK: Feedback
 
-    /// Correct answers: green. Tint for glass is `success.fill.opacity(Theme.glassTintOpacity)`.
+    /// Correct answers: green.
     static let success = StatusPalette(
         fill: .dynamic(light: 0x1FA855, dark: 0x30D158, lightHC: 0x0B7A3B, darkHC: 0x5BE57A),
         text: .dynamic(light: 0x0B7A3B, dark: 0x4ADE80, lightHC: 0x075C2C, darkHC: 0x86EFAC),
@@ -103,9 +103,6 @@ nonisolated enum Theme {
 
     /// Hairline border for surfaces (stronger with increased contrast).
     static let hairline = Color.dynamic(light: 0x101828, dark: 0xFFFFFF, alpha: 0.10, darkAlpha: 0.12, hcAlpha: 0.45)
-
-    /// Opacity of a status tint layered into glass (`Glass.tint`).
-    static let glassTintOpacity = 0.30
 }
 
 // MARK: - Status presentation

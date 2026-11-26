@@ -8,4 +8,6 @@ The set screen (spec §4.4, port of src/screens/set.js).
 - `SetTermsSection.swift`: filter (Alle/Neu/Am Lernen/Gemeistert/Markiert/Schwierig), inline search and the
   `Table` (Begriff | Definition | Status | ★ | 🔊), sortable, row context menu, double-click edits.
 - `TextExportSheet.swift`: "Als Text exportieren" (separators, preview, Kopieren, Sichern… ↩).
+- `SetOptionsSheet.swift`: "Optionen" outside a session (Lernen or Schreiben, with what the set does differently
+  from the standard); every change is stored for the set and applies at once.
 - `SetDetailCopy.swift`: the German helper texts (studyNote, answerLabel, progressCaption, …).

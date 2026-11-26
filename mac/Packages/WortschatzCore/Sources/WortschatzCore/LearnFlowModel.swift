@@ -95,13 +95,13 @@ extension LearnFlow {
         guard let f = feedback?.objectValue, let last = state.last, !last.correct else { return nil }
         let cardId = last.cardId
         guard let qid = f["qid"]?.stringValue, JSCompat.identical(qid, last.qid) else { return nil }
-        guard let rawId = f["cardId"], rawId != .null, jsString(rawId) == cardId else { return nil }
+        guard let rawId = f["cardId"], rawId != .null, JSCompat.jsString(rawId) == cardId else { return nil }
         guard state.order.contains(cardId) else { return nil }
         let type: QuestionType = f["type"] == .string("mc") ? .mc : .written
         guard type == last.type else { return nil }
         if type == .mc {
             guard let choices = cleanChoices(f["choices"], cardId) else { return nil }
-            let chosen = f["chosen"].flatMap { $0 == .null ? nil : jsString($0) }
+            let chosen = f["chosen"].flatMap { $0 == .null ? nil : JSCompat.jsString($0) }
             // A chosen option must be one of the wrong ones (nil = "Weiss ich nicht").
             if let chosen, chosen == cardId || !choices.contains(where: { $0.cardId == chosen }) { return nil }
             return PendingFeedback(mcQid: qid, cardId: cardId, ask: last.ask, choices: choices, chosen: chosen)
@@ -454,22 +454,11 @@ extension LearnFlow {
         var out: [Choice] = []
         for c in list {
             guard let o = c.objectValue, let raw = o["cardId"], raw != .null, raw != .string("") else { continue }
-            let id = jsString(raw)
+            let id = JSCompat.jsString(raw)
             guard seen.insert(id).inserted else { continue }
             out.append(Choice(cardId: id, text: o["text"]?.stringValue ?? ""))
         }
         return out.count >= 2 && seen.contains(cardId) ? out : nil
     }
 
-    /// JS `String(v)`.
-    private static func jsString(_ v: JSONValue) -> String {
-        switch v {
-        case .null: "null"
-        case let .bool(b): b ? "true" : "false"
-        case let .number(n): JSCompat.numberToString(n)
-        case let .string(s): s
-        case let .array(a): a.map { $0 == .null ? "" : jsString($0) }.joined(separator: ",")
-        case .object: "[object Object]"
-        }
-    }
 }

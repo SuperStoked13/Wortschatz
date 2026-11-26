@@ -47,6 +47,9 @@ struct ChoiceTile: View {
             Text(label)
         }
         .buttonStyle(ChoiceTileStyle(number: number, state: state, lang: lang))
+        // Answered, a tile takes no clicks anyway (`LearnFlow` ignores them): out of hit testing,
+        // the wrong one shaking under the pointer does not make AppKit look again on every frame.
+        .allowsHitTesting(!state.isAnswered)
         .focusEffectDisabled()
         .accessibilityLabel(Text(LearnText.spoken(text, lang: lang)))
         .accessibilityValue(accessibilityState)

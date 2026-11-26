@@ -33,13 +33,19 @@ public enum SameTermCards {
     /// brackets, for the prompt and each of its alternatives: «etw. entführen» and
     /// «jmdn. entführen» → «entfuhren».
     public static func termKeys(_ prompt: String, lang: Lang) -> Set<String> {
-        var keys = Set<String>()
-        for text in [prompt] + Grading.splitAlternatives(prompt, lang: lang) {
-            let key = termKey(text, lang: lang)
-            if !key.isEmpty { keys.insert(key) }
+        // Once per prompt: a wrong answer compares the asked card with every card of the set
+        // (15 ms per answer for 540 cards, measured 26.11.2026).
+        termKeySets.value(for: "\(lang.rawValue)\u{1}\(prompt)") { _ in
+            var keys = Set<String>()
+            for text in [prompt] + Grading.splitAlternatives(prompt, lang: lang) {
+                let key = termKey(text, lang: lang)
+                if !key.isEmpty { keys.insert(key) }
+            }
+            return keys
         }
-        return keys
     }
+
+    private static let termKeySets = TextMemo<Set<String>>()
 
     /// Placeholders of vocabulary lists that are not part of the word («etw.», «jmdn.», «sth», «sb»).
     static let placeholders: Set<String> = [

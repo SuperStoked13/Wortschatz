@@ -24,11 +24,6 @@ struct StatusCounts: Hashable, Sendable {
         self.init(fresh: counts.fresh, learning: counts.learning, mastered: counts.mastered)
     }
 
-    /// From `LearnEngine.checkpoint(_:).counts`.
-    nonisolated init(_ counts: LearnEngine.CheckpointCounts) {
-        self.init(fresh: counts.fresh, learning: counts.learning, mastered: counts.mastered)
-    }
-
     nonisolated var total: Int { fresh + learning + mastered }
 
     nonisolated func count(_ status: CardStatus) -> Int {

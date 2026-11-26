@@ -29,9 +29,9 @@ snapshot harness (below).
 
 | File | API |
 |---|---|
-| `Theme.swift` | `Theme.accent`, `accentText`, `accentSoft`; status palettes `Theme.mastered / learning / new` and `Theme.palette(for: CardStatus)`; feedback `Theme.success / failure / warning / info` (each a `StatusPalette` with `fill`, `text`, `soft`); `Theme.star`, `flame`, `solidSurface`, `solidBackdrop`, `hairline`, `glassTintOpacity`. `CardStatus.label / palette / systemImage`. `Color.dynamic(light:dark:lightHC:darkHC:…)`, `Color(hex:)`. All colours adapt to dark mode and increased contrast. |
+| `Theme.swift` | `Theme.accent`, `accentText`, `accentSoft`; status palettes `Theme.mastered / learning / new` and `Theme.palette(for: CardStatus)`; feedback `Theme.success / failure / warning / info` (each a `StatusPalette` with `fill`, `text`, `soft`); `Theme.star`, `flame`, `solidSurface`, `solidBackdrop`, `hairline`. `CardStatus.label / palette / systemImage`. `Color.dynamic(light:dark:lightHC:darkHC:…)`, `Color(hex:)`. All colours adapt to dark mode and increased contrast. |
 | `Typography.swift` | `Typography.prompt` (40 pt semibold rounded), `prompt(for: text)` (40/32/25 pt by length), `display`, `title`, `headline`, `answer`, `answerField`, `statValue`, `gaugeValue`, `feedbackTitle`, `eyebrow`, `count`, `keycap`, `specialCharacter`; `.eyebrowStyle()` |
-| `Metrics.swift` | `Spacing.xxs…huge` (4-pt grid), `Radii.keycap/small/tile/panel/card`, `LayoutMetrics.studyColumnWidth` (760) etc., `Motion.spring/snappy/gentle/fade` (state changes), `Motion.arrive/fadeIn/depart(_:)` (curves that land exactly: screens coming and going, short glides), `Motion.animation(_:reduceMotion:)`, `.motionAnimation(_:value:)`, `EnvironmentValues.isSnapshotRendering` |
+| `Metrics.swift` | `Spacing.xxs…huge` (4-pt grid), `Radii.small/tile/panel/card`, `LayoutMetrics.studyColumnWidth` (760) etc., `Motion.spring/snappy/gentle/fade` (state changes), `Motion.arrive/fadeIn/depart(_:)` (curves that land exactly: screens coming and going, short glides), `Motion.animation(_:reduceMotion:)`, `.motionAnimation(_:value:)`, `EnvironmentValues.isSnapshotRendering` |
 | `Effects.swift` | `.shake(trigger:amplitude:)` (wrong answers), `.pop(trigger:scale:)` — both no-ops under Reduce Motion |
 | `StudyEntrance.swift` | How screens come and go (into Lernen/Schreiben and back): dissolve, sidebar slide, invisible build, fade-in. `.entranceReveal(_:)` fades a whole screen in place (never scale or move whole screens: text and glass tremble, AppKit re-checks the pointer every frame); `.entranceShift(x:y:)` lets SwiftUI-drawn content glide a few points meanwhile |
 
@@ -40,15 +40,15 @@ snapshot harness (below).
 | Component | Use |
 |---|---|
 | `AppBackdrop(intensity:)` / `.appBackdrop()` | Accent-tinted `MeshGradient` behind a screen. Slow drift, paused when the window is inactive, static under Reduce Motion, opaque under Reduce Transparency. |
-| `.glassSurface(tint:interactive:cornerRadius:)` / `.glassSurface(tint:interactive:in:)` | The glass primitive with accessibility fallbacks. Tint example: `Theme.success.fill.opacity(Theme.glassTintOpacity)`. |
-| `GlassCard { }` | Study card, hero (radius 30, padding 32; both adjustable, `tint`, `isInteractive`). |
+| `.glassSurface(tint:interactive:cornerRadius:)` / `.glassSurface(tint:interactive:in:)` | The glass primitive with accessibility fallbacks. Tint example: `Theme.success.fill.opacity(0.3)`. |
+| `GlassCard { }` | Study card, hero (radius 30, padding 32; both adjustable, `tint`). |
 | `GlassPanel { }` | Compact glass for grouped info on the control layer (a floating summary strip). |
 | `ContentPanel { }`, `.contentSurface(cornerRadius:isHighlighted:)` | The content layer's grouped surface (never glass): set cards in a grid, panels inside scrolling content or sheets (mastery panel, import detection). Quiet translucent fill + hairline, opaque under Reduce Transparency; `isHighlighted` for hover. |
 | `KeyActionGate` | Used by `PrimaryActionButton` / `SecondaryButton` with a bound key: auto-repeats never trigger them, and right after Return changed the screen (`AppModel` navigation calls `returnKeyMoved(by:)`) they wait 280 ms. |
 | `PrimaryActionButton("Weiter") { }` | `.glassProminent` capsule, accent, inline ↩ keycap, bound to `.defaultAction`. Options: `verbatim:` title, `systemImage`, `key:` (`.commandReturn` …), `bindsShortcut: false` when a flow reducer handles the key (hint stays, VoiceOver gets a hint), `tint`, `isFullWidth`, `controlSize`. |
 | `SecondaryButton("Weiss ich nicht", key: .optionReturn) { }` | `.glass` capsule with optional keycap; same options plus `role`. |
 | `Keycap(.returnKey)`, `KeyHint(.optionReturn, "Weiss ich nicht")`, `KeyHintRow([...])` | `KeyGlyph`: `.returnKey ↩`, `.optionReturn ⌥↩`, `.commandReturn ⌘↩`, `.escape esc`, `.digit(1…4)`, `.tab`, `.arrows`, `.command("E")`, `.shiftCommand("L")`; each has `symbol`, `accessibilityName` (German) and `keyboardShortcut`. Keycaps follow the current foreground style (they work inside prominent buttons). |
-| `StatusCounts(fresh:learning:mastered:)` | Input of the progress views; inits from `SetProgress`, `LearnEngine.Counts`, `LearnEngine.CheckpointCounts`. `percent` follows mastery.js (never 100 before all mastered, never 0 once one is). |
+| `StatusCounts(fresh:learning:mastered:)` | Input of the progress views; inits from `SetProgress` and `LearnEngine.Counts`. `percent` follows mastery.js (never 100 before all mastered, never 0 once one is). |
 | `ProgressCapsule(counts:style:isGlass:)` | Learn toolbar capsule: segmented bar + "Neu · Am Lernen · Gemeistert". `.compact` for narrow spaces; `isGlass: false` inside a toolbar. |
 | `StatusBar(counts:height:)` | The segmented bar alone (set cards, rows). |
 | `MasteryGauge(counts:size:)` | `.small` (18 pt, sidebar rows), `.medium` (set cards, %), `.large` (set header, % + "gemeistert"). |

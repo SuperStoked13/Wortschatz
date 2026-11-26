@@ -83,7 +83,7 @@ public struct FlashcardDeck: Codable, Sendable, Equatable {
     public init(cards: [Card], starredOnly: Bool = false, shuffled: Bool = false, rng: RNG = systemRNG(), now: Double) {
         let ids = Self.eligibleIDs(cards, starredOnly: starredOnly)
         round = 1
-        queue = shuffled ? Self.shuffled(ids, rng) : ids
+        queue = shuffled ? JSRandom.shuffled(ids, rng) : ids
         sorts = []
         knownEarlier = []
         isFlipped = false
@@ -201,7 +201,7 @@ public struct FlashcardDeck: Codable, Sendable, Equatable {
         guard phase == .roundDone else { return }
         knownEarlier += sorts.filter { $0.verdict == .know }.map(\.cardID)
         let again = sorts.filter { $0.verdict == .stillLearning }.map(\.cardID)
-        queue = isShuffled ? Self.shuffled(again, rng) : cardOrder.map { Self.ordered(again, by: $0) } ?? again
+        queue = isShuffled ? JSRandom.shuffled(again, rng) : cardOrder.map { Self.ordered(again, by: $0) } ?? again
         sorts = []
         round += 1
         isFlipped = false
@@ -217,7 +217,7 @@ public struct FlashcardDeck: Codable, Sendable, Equatable {
         let start = min(queue.count, sorts.count + 1)
         let rest = Array(queue[start...])
         guard rest.count > 1 else { return }
-        queue.replaceSubrange(start..., with: shuffled ? Self.shuffled(rest, rng) : Self.ordered(rest, by: cardOrder))
+        queue.replaceSubrange(start..., with: shuffled ? JSRandom.shuffled(rest, rng) : Self.ordered(rest, by: cardOrder))
     }
 
     /// `ids` in the order of `cardOrder` (ids it does not know last, as they were).
@@ -298,17 +298,6 @@ public struct FlashcardDeck: Codable, Sendable, Equatable {
             || !card.definition.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
-    /// Fisher–Yates on a copy.
-    static func shuffled<T>(_ list: [T], _ rng: RNG) -> [T] {
-        var a = list
-        var i = a.count - 1
-        while i > 0 {
-            let r = Int((rng() * Double(i + 1)).rounded(.down))
-            a.swapAt(i, min(max(r, 0), i))
-            i -= 1
-        }
-        return a
-    }
 }
 
 // MARK: - Copy

@@ -72,7 +72,7 @@ extension View {
     ///
     /// - Parameters:
     ///   - tint: A colour that tints the glass; pass it with its opacity, e.g.
-    ///     `Theme.success.fill.opacity(Theme.glassTintOpacity)`.
+    ///     `Theme.success.fill.opacity(0.3)`.
     ///   - interactive: Glass that reacts to pointer and press (for custom controls).
     func glassSurface<S: InsettableShape>(
         tint: Color? = nil,
@@ -104,13 +104,12 @@ struct GlassCard<Content: View>: View {
     var padding: CGFloat = Spacing.xxl
     var cornerRadius: CGFloat = Radii.card
     var tint: Color?
-    var isInteractive = false
     @ViewBuilder var content: Content
 
     var body: some View {
         content
             .padding(padding)
-            .glassSurface(tint: tint, interactive: isInteractive, cornerRadius: cornerRadius)
+            .glassSurface(tint: tint, cornerRadius: cornerRadius)
     }
 }
 

@@ -15,6 +15,8 @@ the app automatically.
 | `LearnFinishView.swift` | Finish screen (trophy, confetti, stat tiles, "Am häufigsten falsch") and the message screens (all mastered, empty). |
 | `LearnOptionsPanel.swift` | The options form (Abfrage, Fragetypen, Fragen pro Runde, Abtippen, Vorlesen, Wiederholungsfragen und Nachkontrolle, Toleranz; oben die eigenen Optionen des Sets mit «Auf Standard zurücksetzen»). |
 | `LearnCardEditor.swift` | "Karte bearbeiten" sheet. |
+| `SameTermSheet.swift` | «Andere Karte mit dem gleichen Begriff»: a wrong written answer that is the answer of another card with the same word (`SameTermCards`) – what it counts as (Lernen and Schreiben). |
+| `AnswerStreak.swift` | Correct answers in a row while the screen is open: the flame in the action bar's pill, a milestone every five (Lernen and Schreiben). |
 | `LearnSnapshots.swift` | DEBUG snapshot scenes `learn-*` (scripted `LearnFlow` on the sample library). |
 
 ## Keys

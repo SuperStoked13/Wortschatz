@@ -11,7 +11,7 @@ Swift files in this folder are compiled into the app automatically.
 | `SetEditorCardList.swift` | Cards header with issue chips, pinned column header, `SetEditorRowView`, "Karte hinzufügen" and key hints. |
 | `SetEditorChrome.swift` | Header, the glass save bar ("Lernset erstellen ⌘↩" / "Sichern ⌘↩", "Abbrechen esc"), drop overlay, prompt buttons. |
 | `SetEditorCopy.swift` | German texts and pure helpers (port of editor-util.js): `termKey`, `titleFromFileName`, flag tooltips, `formatLabel`, paste shapes. |
-| `SetEditorSnapshots.swift` | DEBUG snapshot scenes `editor-*` (new, pasted user list, applied, edit, validation, review). |
+| `SetEditorSnapshots.swift` | DEBUG snapshot scenes `editor-*` (new, pasted user list, applied, edit, validation, review, import edits). |
 
 Keys: Return moves on (title → description → import box or first card; term → definition → next card, a new card
 after a filled last one); ⇥ in the last definition adds a card; ⌫ in an empty term removes the card (neither while an

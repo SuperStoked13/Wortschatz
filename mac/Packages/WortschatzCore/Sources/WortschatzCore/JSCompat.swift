@@ -19,6 +19,19 @@ public enum JSCompat {
         }
     }
 
+    /// `String(v)` of the JS code for a stored JSON value (null → "null", arrays joined with ",",
+    /// objects → "[object Object]").
+    static func jsString(_ v: JSONValue) -> String {
+        switch v {
+        case .null: "null"
+        case let .bool(b): b ? "true" : "false"
+        case let .number(n): numberToString(n)
+        case let .string(s): s
+        case let .array(a): a.map { $0 == .null ? "" : jsString($0) }.joined(separator: ",")
+        case .object: "[object Object]"
+        }
+    }
+
     /// JS `s.trim() === ''`, without building the trimmed copy.
     public static func isBlank(_ s: String) -> Bool {
         !s.unicodeScalars.contains { !isWhitespace($0) }

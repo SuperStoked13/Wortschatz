@@ -28,7 +28,7 @@ import WortschatzCore
 ///
 /// ## API for the screens
 /// - Study: `continueLearn(setID:)` / `continueWrite(setID:)` (resume or start, the "Lernen ↩"
-///   button and ⌘L / ⇧⌘L), `startLearn(setID:subset:forceNew:)` / `startWrite(…)` (subset
+///   button and ⌘L / ⇧⌘L), `startLearn(setID:subset:)` / `startWrite(…)` (subset
 ///   shortcuts; they ask first when a session with answers would end),
 ///   `restartLearn(setID:)` / `restartWrite(setID:)` ("Neu starten", asks first),
 ///   `study(_:setID:subset:forceNew:)` (plain navigation, no questions: for the study screens
@@ -600,20 +600,18 @@ final class AppModel {
     /// Starts a new Learn session (for subsets: "Nur markierte", "Nur schwierige"). A running
     /// session with answers only ends after asking (`startSubset` in set.js).
     /// `reviewMastered`: see `StudyRequest`.
-    func startLearn(setID: String, subset: StudySubset = .all, forceNew: Bool = true, reviewMastered: Bool = false) {
-        startSession(.learn, setID: setID, subset: subset, forceNew: forceNew, reviewMastered: reviewMastered)
+    func startLearn(setID: String, subset: StudySubset = .all, reviewMastered: Bool = false) {
+        startSession(.learn, setID: setID, subset: subset, reviewMastered: reviewMastered)
     }
 
     /// Starts a new Write session; asks first like `startLearn`.
-    func startWrite(setID: String, subset: StudySubset = .all, forceNew: Bool = true) {
-        startSession(.write, setID: setID, subset: subset, forceNew: forceNew)
+    func startWrite(setID: String, subset: StudySubset = .all) {
+        startSession(.write, setID: setID, subset: subset)
     }
 
-    private func startSession(
-        _ mode: StudyMode, setID: String, subset: StudySubset, forceNew: Bool, reviewMastered: Bool = false
-    ) {
-        guard forceNew, let summary = latestLibrary.summary(for: setID) else {
-            study(mode, setID: setID, subset: subset, forceNew: forceNew, reviewMastered: reviewMastered)
+    private func startSession(_ mode: StudyMode, setID: String, subset: StudySubset, reviewMastered: Bool = false) {
+        guard let summary = latestLibrary.summary(for: setID) else {
+            study(mode, setID: setID, subset: subset, forceNew: true, reviewMastered: reviewMastered)
             return
         }
         let running: (detail: String, hasAnswers: Bool)? =

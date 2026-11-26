@@ -502,8 +502,8 @@ public enum LearnEngine {
 
         let ranked = rankedDistractors(pool, card, ask, rng)
         // The most alike, in random order; the correct option's position is uniform over all slots.
-        var choices = shuffled(Array(ranked.prefix(size - 1)), rng)
-        choices.insert(correct, at: randomIndex(rng, choices.count + 1))
+        var choices = JSRandom.shuffled(Array(ranked.prefix(size - 1)), rng)
+        choices.insert(correct, at: JSRandom.index(rng, choices.count + 1))
         return choices
     }
 
@@ -535,7 +535,7 @@ public enum LearnEngine {
     ) -> LearnState {
         let sub = normalizeSubset(subset)
         let selected = cardList(cards).filter { askable($0) && cardInSubset($0, sub, progress) }
-        let order = shuffled(selected.map(\.id), rng)
+        let order = JSRandom.shuffled(selected.map(\.id), rng)
 
         var stage: [String: Int] = [:]
         var seen: [String: Bool] = [:]
@@ -584,21 +584,21 @@ public enum LearnEngine {
         var order: [String] = []
         var known = Set<String>()
         for v in src["order"]?.arrayValue ?? [] where v != .null && v != .string("") {
-            let id = jsString(v)
+            let id = JSCompat.jsString(v)
             if known.insert(id).inserted { order.append(id) }
         }
         func ids(_ v: JSONValue?) -> [String] {
             var seen = Set<String>()
             var out: [String] = []
             for x in v?.arrayValue ?? [] where x != .null {
-                let id = jsString(x)
+                let id = JSCompat.jsString(x)
                 if known.contains(id) && seen.insert(id).inserted { out.append(id) }
             }
             return out
         }
         func knownId(_ v: JSONValue?) -> String? {
             guard let v, v != .null else { return nil }
-            let id = jsString(v)
+            let id = JSCompat.jsString(v)
             return known.contains(id) ? id : nil
         }
         func trueMap(_ v: JSONValue?) -> [String: Bool] {
@@ -1133,18 +1133,6 @@ public enum LearnEngine {
 
     private static func questionType(_ v: JSONValue?) -> QuestionType { v == .string("mc") ? .mc : .written }
 
-    /// JS `String(v)` for ids read from JSON.
-    private static func jsString(_ v: JSONValue) -> String {
-        switch v {
-        case .null: "null"
-        case let .bool(b): b ? "true" : "false"
-        case let .number(n): JSCompat.numberToString(n)
-        case let .string(s): s
-        case let .array(a): a.map { $0 == .null ? "" : jsString($0) }.joined(separator: ",")
-        case .object: "[object Object]"
-        }
-    }
-
     private static func hasText(_ s: String) -> Bool {
         s.unicodeScalars.contains { !JSCompat.isWhitespace($0) }
     }
@@ -1187,25 +1175,6 @@ public enum LearnEngine {
 
     private static func normalizeLearn(_ learn: LearnOptions) -> LearnSessionOptions {
         normalizeLearn(roundSize: learn.roundSize, mc: learn.mc, written: learn.written)
-    }
-
-    /// Integer in [0, n) from the rng, clamped so a misbehaving rng never breaks an index.
-    private static func randomIndex(_ rng: RNG, _ n: Int) -> Int {
-        let r = (rng() * Double(n)).rounded(.down)
-        if !(r >= 0) { return 0 }
-        if r > Double(n - 1) { return n - 1 }
-        return Int(r)
-    }
-
-    /// Fisher–Yates on a copy, consuming `rng` like the JS.
-    private static func shuffled<T>(_ list: [T], _ rng: RNG) -> [T] {
-        var a = list
-        var i = a.count - 1
-        while i > 0 {
-            a.swapAt(i, randomIndex(rng, i + 1))
-            i -= 1
-        }
-        return a
     }
 
     // MARK: - Internals: options
@@ -1359,13 +1328,13 @@ public enum LearnEngine {
         let shape = WordClass.shapeOf(JSCompat.trim(Synonyms.answerSide(card, ask: side)), side: sides.side(side))
         let here = at[card.id] ?? -1
         var ranked: [(choice: Choice, order: Int, key: Int)] = []
-        for (order, c) in shuffled(candidates, rng).enumerated() {
+        for (order, c) in JSRandom.shuffled(candidates, rng).enumerated() {
             let i = at[c.choice.cardId] ?? 0
             let otherCls = pool.classes[i]
             let tier = cls.isEmpty || otherCls.isEmpty ? 1 : otherCls == cls ? 2 : 0
             var points = WordClass.shapePoints(shape, shapes[c.index])
             if here >= 0 { points += WordClass.nearPoints(abs(i - here)) }
-            ranked.append((c.choice, order, tier * 100 + points + randomIndex(rng, 3)))
+            ranked.append((c.choice, order, tier * 100 + points + JSRandom.index(rng, 3)))
         }
         ranked.sort { $0.key != $1.key ? $0.key > $1.key : $0.order < $1.order }
         return ranked.map(\.choice)
@@ -1379,7 +1348,7 @@ public enum LearnEngine {
         var out: [Choice] = []
         for c in list {
             guard let o = c.objectValue, let raw = o["cardId"], raw != .null, raw != .string("") else { continue }
-            let id = jsString(raw)
+            let id = JSCompat.jsString(raw)
             guard ids.insert(id).inserted else { continue }
             out.append(Choice(cardId: id, text: o["text"]?.stringValue ?? ""))
         }
@@ -1450,7 +1419,7 @@ public enum LearnEngine {
         switch answerWith {
         case .term: .term
         case .definition: .definition
-        case .both: randomIndex(rng, 2) == 0 ? .term : .definition
+        case .both: JSRandom.index(rng, 2) == 0 ? .term : .definition
         }
     }
 
@@ -1564,7 +1533,7 @@ public enum LearnEngine {
         let hasNew = !fresh.isEmpty || !p.reviewDue.isEmpty
         func takeNew() -> (id: String, kind: QuestionKind) {
             if let first = fresh.first, let review = p.reviewDue.first {
-                return randomIndex(rng, 3) == 0 ? (review, .review) : (first, .learn)
+                return JSRandom.index(rng, 3) == 0 ? (review, .review) : (first, .learn)
             }
             if let first = fresh.first { return (first, .learn) }
             return (p.reviewDue[0], .review)
@@ -1586,7 +1555,7 @@ public enum LearnEngine {
         let forced = ready.filter { $0.wait >= $0.max }
         if !forced.isEmpty { return pick(best(forced, index) { $0.wait - $0.max }) }
         guard let c = best(ready, index, score: { $0.wait - $0.min }) else { return takeNew() }
-        if full || randomIndex(rng, c.max - c.min + 1) < c.wait - c.min + 1 { return (c.id, c.kind) }
+        if full || JSRandom.index(rng, c.max - c.min + 1) < c.wait - c.min + 1 { return (c.id, c.kind) }
         return takeNew()
     }
 

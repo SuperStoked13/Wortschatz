@@ -16,6 +16,11 @@ App-side services (spec §4.1, §4.4). Swift files in this folder are compiled i
   Setting: Einstellungen › Allgemein › Antworten › "Weitere Synonyme erkennen" (UserDefaults `extendedSynonyms`).
 - `PasteboardImage` – import sources from the pasteboard (⌘V, "Bild aus Zwischenablage") and from dropped item
   providers.
+- `SoundEffects` – the quiet study sounds (correct, miss, streak milestone, round and session end, flashcards),
+  synthesized once in the background and played on a serial queue, never on the main thread; muted per set or in
+  Einstellungen.
+- `InputSource` – the keyboard's current input source (its own file: Carbon's `EventModifiers` would clash with
+  SwiftUI's).
 ## Updates (nur die App der Downloadseite)
 
 - `AppUpdater` – Sparkle 2 (Swift package, 2.10.x), `#if os(macOS) && !PRO`: only the app of the download page updates

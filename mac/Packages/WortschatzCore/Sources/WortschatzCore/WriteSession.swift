@@ -294,7 +294,7 @@ public enum WriteSession {
         }
 
         let at = now.isFinite ? now : 0
-        let finalOrder = shuffle ? separateSiblings(shuffled(order, rng), questions) : order
+        let finalOrder = shuffle ? separateSiblings(JSRandom.shuffled(order, rng), questions) : order
         var zeros: [String: Int] = [:]
         for id in finalOrder { zeros[id] = 0 }
         return SessionState(
@@ -326,7 +326,7 @@ public enum WriteSession {
         for (key, value) in jsEntries(src["questions"]) {
             guard let q = value.objectValue, let cardId = q["cardId"], cardId != .null else { continue }
             let ask: AskSide = q["ask"]?.stringValue == "definition" ? .definition : .term
-            questions[key] = SessionQuestion(qid: key, cardId: jsString(cardId), ask: ask)
+            questions[key] = SessionQuestion(qid: key, cardId: JSCompat.jsString(cardId), ask: ask)
         }
 
         func known(_ v: JSONValue?) -> String? {
@@ -681,7 +681,7 @@ public enum WriteSession {
             // The question asked now keeps its place (turned around when its side went).
             let keepsHead = head != nil && s.queue.first == head
             let rest = Array(s.queue.dropFirst(keepsHead ? 1 : 0))
-            var arranged = shuffle ? separateSiblings(shuffled(rest, rng), s.questions) : setOrder(rest)
+            var arranged = shuffle ? separateSiblings(JSRandom.shuffled(rest, rng), s.questions) : setOrder(rest)
             // Never the same card twice in a row.
             func card(_ qid: String?) -> String? { qid.flatMap { s.questions[$0]?.cardId } }
             if shuffle, keepsHead, let first = card(head), card(arranged.first) == first,
@@ -800,20 +800,6 @@ public enum WriteSession {
         }
     }
 
-    /// Fisher–Yates on a copy (`shuffled`), consuming `rng` like the JS. Tolerates an rng
-    /// returning values outside [0, 1) (or NaN).
-    private static func shuffled(_ list: [String], _ rng: RNG) -> [String] {
-        var a = list
-        var i = a.count - 1
-        while i > 0 {
-            let r = (rng() * Double(i + 1)).rounded(.down)
-            let j = !(r >= 0) ? 0 : r > Double(i) ? i : Int(r)
-            a.swapAt(i, j)
-            i -= 1
-        }
-        return a
-    }
-
     /// With `.both` a card has two questions; avoid asking them back to back, which would give
     /// the answer away. Deterministic: only swaps/moves items, no randomness.
     private static func separateSiblings(_ qids: [String], _ questions: [String: SessionQuestion]) -> [String] {
@@ -849,7 +835,7 @@ public enum WriteSession {
                 }
                 .map(\.element)
         }
-        return separateSiblings(shuffled(qids, rng), s.questions)
+        return separateSiblings(JSRandom.shuffled(qids, rng), s.questions)
     }
 
     private static func allDone(_ s: SessionState) -> Bool {
@@ -895,18 +881,6 @@ public enum WriteSession {
         case let .object(o)?: o.map { (key: $0.key, value: $0.value) }
         case let .array(a)?: a.enumerated().map { (key: String($0.offset), value: $0.element) }
         default: []
-        }
-    }
-
-    /// JS `String(v)`.
-    private static func jsString(_ v: JSONValue) -> String {
-        switch v {
-        case .null: "null"
-        case let .bool(b): b ? "true" : "false"
-        case let .number(n): JSCompat.numberToString(n)
-        case let .string(s): s
-        case let .array(a): a.map { $0 == .null ? "" : jsString($0) }.joined(separator: ",")
-        case .object: "[object Object]"
         }
     }
 

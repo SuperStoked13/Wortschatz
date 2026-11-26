@@ -232,13 +232,13 @@ public enum Exam {
         rng: RNG = systemRNG()
     ) -> [ExamQuestion] {
         let pool = scope(cards, settings: settings, cardIds: cardIds)
-        let picked = shuffled(pool, rng).prefix(questionCount(settings, available: pool.count))
+        let picked = JSRandom.shuffled(pool, rng).prefix(questionCount(settings, available: pool.count))
         return picked.enumerated().map { index, card in
             let ask: AskSide =
                 switch settings.answerWith {
                 case .term: .term
                 case .definition: .definition
-                case .both: randomIndex(rng, 2) == 0 ? .term : .definition
+                case .both: JSRandom.index(rng, 2) == 0 ? .term : .definition
                 }
             let askTerm = ask == .term
             return ExamQuestion(
@@ -362,24 +362,6 @@ public enum Exam {
         s.unicodeScalars.contains { !JSCompat.isWhitespace($0) }
     }
 
-    /// Integer in [0, n) from the rng, clamped so a misbehaving rng never breaks an index.
-    static func randomIndex(_ rng: RNG, _ n: Int) -> Int {
-        let r = (rng() * Double(n)).rounded(.down)
-        if !(r >= 0) { return 0 }
-        if r > Double(n - 1) { return n - 1 }
-        return Int(r)
-    }
-
-    /// Fisher–Yates on a copy.
-    static func shuffled<T>(_ list: [T], _ rng: RNG) -> [T] {
-        var a = list
-        var i = a.count - 1
-        while i > 0 {
-            a.swapAt(i, randomIndex(rng, i + 1))
-            i -= 1
-        }
-        return a
-    }
 }
 
 /// Texts of the exam settings and results (German source, translated with `L`).

@@ -71,6 +71,12 @@ public enum JSONValue: Sendable, Hashable, Codable {
     /// Converts any Encodable value (encoded with `JSONEncoder`) into a JSONValue.
     /// Non-finite doubles are encoded as the strings "NaN", "Infinity", "-Infinity".
     public init<T: Encodable>(encoding value: T) throws {
+        // Straight into JSON values, with the same result as the text round trip below
+        // (`JSONValueEncoder`); that one for whatever the direct way does not handle.
+        if let direct = try? JSONValueEncoder.encode(value) {
+            self = direct
+            return
+        }
         let encoder = JSONEncoder()
         encoder.nonConformingFloatEncodingStrategy = .convertToString(
             positiveInfinity: "Infinity", negativeInfinity: "-Infinity", nan: "NaN")

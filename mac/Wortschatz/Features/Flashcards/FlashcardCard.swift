@@ -201,6 +201,8 @@ struct FlashcardView: View {
     var releaseOffset: CGFloat = 0
     /// Read-aloud, for the 🔊 button's waves (nil for a card that is leaving).
     var speech: SpeechService?
+    /// It comes onto a deck already on screen (rising, sliding in): false for the first card.
+    var arrives = true
     var onFlip: () -> Void = {}
     var onSpeak: () -> Void = {}
     var onStar: () -> Void = {}
@@ -223,6 +225,10 @@ struct FlashcardView: View {
     /// that turn and lift with the card made AppKit work out every frame again what lies under the
     /// pointer (and redraw a customized pointer), about a tenth of every frame (measured 26.11.2026).
     @State private var isTurning = false
+    /// While the card rises from the stack, slides back in or is called back ("Zurück"): its tools
+    /// are drawn as during a turn (`isTurning`), so they do not move under the pointer live.
+    @State private var isArriving = false
+    @State private var arrivalID = 0
 
     init(
         card: Card,
@@ -235,6 +241,7 @@ struct FlashcardView: View {
         flung: Bool = false,
         releaseOffset: CGFloat = 0,
         speech: SpeechService? = nil,
+        arrives: Bool = true,
         onFlip: @escaping () -> Void = {},
         onSpeak: @escaping () -> Void = {},
         onStar: @escaping () -> Void = {},
@@ -251,6 +258,7 @@ struct FlashcardView: View {
         self.flung = flung
         self.releaseOffset = releaseOffset
         self.speech = speech
+        self.arrives = arrives
         self.onFlip = onFlip
         self.onSpeak = onSpeak
         self.onStar = onStar
@@ -268,6 +276,11 @@ struct FlashcardView: View {
     /// This card is the one being swiped.
     private var isSwiped: Bool {
         isCurrent && swipe?.cardID == card.id
+    }
+
+    /// The card moves (turns, arrives, follows a swipe): its tools are drawn, not live.
+    private var isMoving: Bool {
+        isTurning || isArriving || (isSwiped && swipe?.isEngaged == true)
     }
 
     /// Where the swipe has taken the card (+ to the right).
@@ -294,8 +307,8 @@ struct FlashcardView: View {
     var body: some View {
         surface
             .background {
-                // ⌘E edits the card also while it turns (its ✎ button is only drawn then).
-                if isTurning && isCurrent {
+                // ⌘E edits the card also while it moves (its ✎ button is only drawn then).
+                if isMoving && isCurrent {
                     Button("Karte bearbeiten", action: onEdit)
                         .keyboardShortcut("e", modifiers: .command)
                         .opacity(0)
@@ -312,8 +325,12 @@ struct FlashcardView: View {
                 if let verdict { lastDirection = verdict.direction }
             }
             .onChange(of: leaving) { old, new in
-                if old != nil, new == nil { holdCrystalWhileArriving() }
+                if old != nil, new == nil {
+                    holdCrystalWhileArriving()
+                    markArriving()
+                }
             }
+            .onAppear { if isCurrent && arrives { markArriving() } }
             .modifier(placement)
             .animation(departure, value: leaving)
             .allowsHitTesting(isCurrent)
@@ -389,11 +406,26 @@ struct FlashcardView: View {
     private func face(_ side: FlashcardSide, isUp: Bool) -> some View {
         FlashcardFace(side: side, height: height, verdict: shownVerdict) {
             FlashcardTools(
-                starred: card.starred, speech: speech, isInteractive: isCurrent && isUp && !isTurning, onSpeak: onSpeak,
+                starred: card.starred, speech: speech, isInteractive: isCurrent && isUp && !isMoving,
+                forwardsTaps: isCurrent && isUp, onSpeak: onSpeak,
                 onStar: onStar, onEdit: onEdit)
         }
         .allowsHitTesting(isUp && !isTurning)
         .accessibilityHidden(!isUp)
+    }
+
+    /// The card comes onto the deck (rising, sliding back in, called back): its tools stay drawn
+    /// until it is in place.
+    private func markArriving() {
+        guard !reduceMotion else { return }
+        isArriving = true
+        arrivalID += 1
+        let id = arrivalID
+        Task { @MainActor in
+            // The arrival's curve and its short delay.
+            try? await Task.sleep(for: .seconds(FlashcardMotion.arriveDuration + 0.06))
+            if id == arrivalID { isArriving = false }
+        }
     }
 
     /// Called back (from its flight or from under the stack): the crystal stays on until the card
@@ -870,6 +902,9 @@ struct FlashcardTools: View {
     let starred: Bool
     var speech: SpeechService?
     var isInteractive = true
+    /// Drawn tools of the side that is up while the card moves (`FlashcardView.isMoving`): a click
+    /// still does what the button would (a plain tap: no hover or tooltip that AppKit follows).
+    var forwardsTaps = false
     var onSpeak: () -> Void = {}
     var onStar: () -> Void = {}
     var onEdit: () -> Void = {}
@@ -895,18 +930,42 @@ struct FlashcardTools: View {
                     systemImage: "square.and.pencil",
                     shortcut: KeyboardShortcut("e", modifiers: .command), action: onEdit)
             } else {
-                icon("speaker.wave.2.fill")
-                icon(starred ? "star.fill" : "star", tint: starred ? Theme.star : nil)
-                icon("square.and.pencil")
+                icon("speaker.wave.2.fill", label: String(localized: "Vorlesen"), action: onSpeak)
+                icon(
+                    starred ? "star.fill" : "star", tint: starred ? Theme.star : nil,
+                    label: starred ? String(localized: "Markierung entfernen") : String(localized: "Markieren"), action: onStar)
+                icon("square.and.pencil", label: String(localized: "Karte bearbeiten"), action: onEdit)
             }
         }
     }
 
-    private func icon(_ systemImage: String, tint: Color? = nil) -> some View {
+    private func icon(_ systemImage: String, tint: Color? = nil, label: String, action: @escaping () -> Void) -> some View {
         Image(systemName: systemImage)
             .font(.system(size: 15, weight: .medium))
             .foregroundStyle(tint.map(AnyShapeStyle.init) ?? AnyShapeStyle(.secondary))
             .frame(width: 32, height: 32)
+            .modifier(DrawnToolTap(isOn: forwardsTaps, label: label, action: action))
+    }
+}
+
+/// A drawn tool that still answers a click and VoiceOver like its button (`FlashcardTools.forwardsTaps`).
+private struct DrawnToolTap: ViewModifier {
+    let isOn: Bool
+    let label: String
+    let action: () -> Void
+
+    func body(content: Content) -> some View {
+        if isOn {
+            content
+                .contentShape(Rectangle())
+                .onTapGesture(perform: action)
+                .accessibilityElement()
+                .accessibilityLabel(label)
+                .accessibilityAddTraits(.isButton)
+                .accessibilityAction(.default) { action() }
+        } else {
+            content
+        }
     }
 }
 
@@ -929,6 +988,8 @@ struct FlashcardDeckView: View {
     @State private var turnSerial = 0
     /// The card that turned last: once another card is on the deck, the stack goes back under it.
     @State private var turnCardID: String?
+    /// The deck is on screen: cards inserted from now on come in (`FlashcardView.arrives`).
+    @State private var hasAppeared = false
 
     private var deck: FlashcardDeck { controller.deck }
 
@@ -987,6 +1048,7 @@ struct FlashcardDeckView: View {
                     flung: entry.flung,
                     releaseOffset: entry.releaseOffset,
                     speech: entry.leaving == nil ? controller.speech : nil,
+                    arrives: hasAppeared,
                     onFlip: controller.flip,
                     onSpeak: controller.speakVisibleSide,
                     onStar: controller.toggleStar,
@@ -999,6 +1061,7 @@ struct FlashcardDeckView: View {
             }
         }
         .frame(height: height + FlashcardMetrics.stackDepth, alignment: .top)
+        .onAppear { hasAppeared = true }
         .onChange(of: TurnKey(cardID: deck.currentCardID, isFlipped: deck.isFlipped)) { old, new in
             guard old.cardID == new.cardID, old.isFlipped != new.isFlipped else { return }
             turnCardID = new.cardID

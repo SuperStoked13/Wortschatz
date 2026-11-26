@@ -41,3 +41,26 @@ public func mulberry32(seed: Int) -> RNG {
 public func systemRNG() -> RNG {
     { Double.random(in: 0..<1) }
 }
+
+/// The engines' random choices from an `RNG` (`Math.random` in the JS code), one implementation
+/// for Lernen, Schreiben, Prüfung and Karteikarten.
+enum JSRandom {
+    /// Integer in [0, n) from the rng, clamped so a misbehaving rng never breaks an index.
+    static func index(_ rng: RNG, _ n: Int) -> Int {
+        let r = (rng() * Double(n)).rounded(.down)
+        if !(r >= 0) { return 0 }
+        if r > Double(n - 1) { return n - 1 }
+        return Int(r)
+    }
+
+    /// Fisher–Yates on a copy, consuming `rng` like the JS.
+    static func shuffled<T>(_ list: [T], _ rng: RNG) -> [T] {
+        var a = list
+        var i = a.count - 1
+        while i > 0 {
+            a.swapAt(i, index(rng, i + 1))
+            i -= 1
+        }
+        return a
+    }
+}

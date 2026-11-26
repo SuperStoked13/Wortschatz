@@ -16,8 +16,6 @@ nonisolated enum Spacing {
 /// Corner radii. Glass surfaces use continuous corners (`.rect(cornerRadius:)` is continuous
 /// by default); nested shapes use `radius - padding` so curves stay concentric.
 nonisolated enum Radii {
-    /// Keycaps, special-character keys.
-    static let keycap: CGFloat = 6
     /// Small controls, swatches.
     static let small: CGFloat = 10
     /// Multiple-choice tiles, stat tiles, banners.
