@@ -36,6 +36,8 @@ erscheint nicht auf der Seite.
 
 ## Nächste Version
 
+## 1.8.2 – 2026-11-26
+
 - Verbessert (Windows): Neues Lernset: Eine eingefügte Liste steht sofort in den Karten – «Trennung» und «Seiten tauschen» ändern sie direkt dort, «Karten übernehmen» braucht es nicht mehr. Die Sprachen stehen zuerst auf «Automatisch» und werden erkannt.
   EN: New study set: a pasted list shows up in the cards right away – «Trennung» (separator) and «Seiten tauschen» (swap sides) change them right there, and «Karten übernehmen» (add cards) is no longer needed. The languages start on «Automatisch» (automatic) and are detected.
 - Behoben (Windows): Nach einem Klick in der Seitenleiste blieb um «Übersicht» oder das Lernset ein blauer Rahmen stehen, als wäre der Knopf noch gedrückt.
