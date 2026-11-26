@@ -93,8 +93,8 @@ public sealed class OverviewScreen(AppModel model, MainView window) : Screen(mod
         var p = WsTheme.P;
         WsButton[] actions =
         [
+            // No «Liste einfügen» beside it (Mac: OverviewEmptyState): it opened the same editor (Joan, 26.11.2026).
             Ui.Primary(L("Erstes Lernset erstellen"), () => Model.OpenEditor(), icon: IconName.Plus),
-            Ui.Secondary(L("Liste einfügen"), () => Model.OpenEditor(startWithImport: true), IconName.Copy),
             Ui.Secondary(L("Backup laden"), () => _ = Settings.SettingsScreen.ImportBackup(Model, Window), IconName.Upload),
         ];
         // Phone: the actions one under the other, across the card.

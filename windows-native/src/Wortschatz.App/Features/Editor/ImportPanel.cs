@@ -22,11 +22,13 @@ namespace Wortschatz.App.Features.Editor;
 // "Vokabelliste importieren" (Mac: ImportPanelModel.swift, ImportPanelView.swift, ImportDetectionPanel.swift,
 // ImportTextView.swift, ImportCoordinator): the paste box next to the file drop zone, the progress of PDF reading and
 // text recognition, and the detection ("✨ 52 Paare erkannt · Abwechselnde Zeilen · Französisch → Deutsch") with the
-// separator controls, warnings, skipped lines, the scrolling preview and "N Karten übernehmen". The list is parsed
-// off the UI thread while typing (debounced), at once when an answer is needed (saving, a separator change).
+// separator controls, warnings and skipped lines. The pairs themselves are the cards below (SyncImport, Mac:
+// SetEditorModel.syncImport): no preview of their own and no "Karten übernehmen" (Anthony, Mac 1.8, 25.11.2026;
+// Windows 26.11.2026). The list is parsed off the UI thread while typing (debounced), at once when an answer is needed
+// (saving, a separator change).
 public sealed partial class SetEditorScreen
 {
-    /// <summary>Everything needed to put the panel back (undo of "Karten übernehmen").</summary>
+    /// <summary>Everything needed to put the panel back (undo).</summary>
     sealed record ImportSnapshot(string Text, ImportSeparator Separator, string CustomSeparator, bool SwapsSides, IReadOnlyList<string> FileNotes, bool Expanded);
 
     string _importValue = "";
@@ -36,7 +38,7 @@ public sealed partial class SetEditorScreen
     bool _swapsSides;
     /// <summary>The latest recognition; null while the box is empty.</summary>
     ParseResult? _parsed;
-    /// <summary>Problems of the last file imports that did not stop them; shown until the text is cleared or taken over.</summary>
+    /// <summary>Problems of the last file imports that did not stop them; shown until the text is cleared.</summary>
     List<string> _fileNotes = [];
     bool _importOpen;
     bool _showsSkipped;
@@ -44,9 +46,6 @@ public sealed partial class SetEditorScreen
     bool _parsePending;
     IDisposable? _parseTimer;
     int? _announcedCount;
-    /// <summary>Probable typos per recognised card (index in the result), filled in portions after each parse.</summary>
-    Dictionary<int, IReadOnlyList<SpellingIssue>> _importTypos = [];
-    int _typoGeneration;
 
     // Controls (made by ImportPanel).
     Control _importPanel = null!;
@@ -56,7 +55,7 @@ public sealed partial class SetEditorScreen
     TextBox _findBox = null!, _customBox = null!;
     TextBlock _findCount = null!;
     readonly StackPanel _detection = new() { Spacing = 12 };
-    readonly Border _summaryHost = new(), _controlsHost = new(), _warningsHost = new(), _skippedHost = new(), _previewHost = new(), _applyHost = new();
+    readonly Border _summaryHost = new(), _controlsHost = new(), _warningsHost = new(), _skippedHost = new(), _cardsHintHost = new();
     readonly TextBlock _zeroHelp = Ui.Text("", 14, color: WsTheme.P.TextSecondary, wrap: TextWrapping.Wrap);
     int _lastSummaryCount = -1;
 
@@ -145,7 +144,7 @@ public sealed partial class SetEditorScreen
 
         Detach(_progressHost);
         Detach(_detection);
-        foreach (var host in new[] { _summaryHost, _controlsHost, _warningsHost, _skippedHost, _previewHost, _applyHost }) Detach(host);
+        foreach (var host in new[] { _summaryHost, _controlsHost, _warningsHost, _skippedHost, _cardsHintHost }) Detach(host);
         Detach(_zeroHelp);
         var detectionPanel = new Border
         {
@@ -158,8 +157,7 @@ public sealed partial class SetEditorScreen
         };
         _detection.Children.Clear();
         _detection.Children.Add(detectionPanel);
-        _detection.Children.Add(_previewHost);
-        _detection.Children.Add(_applyHost);
+        _detection.Children.Add(_cardsHintHost);
 
         _importBody = Ui.V(14, top, tools, _progressHost, _detection);
         RenderProgress();
@@ -275,15 +273,6 @@ public sealed partial class SetEditorScreen
         ParseNow();
     }
 
-    /// <summary>"Text leeren".</summary>
-    void ClearImportText()
-    {
-        _importValue = "";
-        _importBox.Text = "";
-        ParseNow();
-        FocusImportBox();
-    }
-
     // MARK: Options
 
     /// <summary>"Trennung", the custom separator and "Seiten tauschen" (Mac: ImportDetectionPanel.controls).</summary>
@@ -323,13 +312,8 @@ public sealed partial class SetEditorScreen
         });
         var swapLabel = Ui.H(7, EditorGlyphs.Swap(15, _swapsSides ? p.OnAccent : p.Text), Ui.Text(L("Seiten tauschen"), 13.5, FontWeight.SemiBold, _swapsSides ? p.OnAccent : p.Text));
         var swap = new WsButton(swapLabel, _swapsSides ? ButtonKind.Primary : ButtonKind.Glass, 32, padding: new Thickness(12, 0));
-        swap.Click += (_, _) =>
-        {
-            _swapsSides = !_swapsSides;
-            ParseNow();
-            RenderControls();
-        };
-        ToolTip.SetTip(swap, L("Begriff und Definition in der Erkennung vertauschen"));
+        swap.Click += (_, _) => ToggleSwap();
+        ToolTip.SetTip(swap, L("Begriff und Definition der erkannten Karten vertauschen"));
         AutomationProperties.SetName(swap, L("Seiten tauschen"));
         AutomationProperties.SetItemStatus(swap, _swapsSides ? L("Ein") : L("Aus"));
         var label = Ui.Text(L("Trennung"), 13.5, color: p.TextSecondary);
@@ -352,6 +336,23 @@ public sealed partial class SetEditorScreen
         row.Children.Add(Ui.H(10, label, choice, _customBox));
         row.Children.Add(swap);
         _controlsHost.Child = row;
+    }
+
+    /// <summary>"Seiten tauschen": the cards from the box turn at once.</summary>
+    void ToggleSwap()
+    {
+        _swapsSides = !_swapsSides;
+        ParseNow();
+        if (_importBody is not null) RenderControls();
+    }
+
+    /// <summary>"Seiten tauschen" set back (undo in the editor).</summary>
+    void SetSwapsSides(bool value)
+    {
+        if (value == _swapsSides) return;
+        _swapsSides = value;
+        ParseNow();
+        if (_importBody is not null) RenderControls();
     }
 
     // MARK: Parsing
@@ -413,24 +414,11 @@ public sealed partial class SetEditorScreen
         if (HasImportText) ParseNow();
     }
 
-    /// <summary>The pairs still waiting in the box (0 when it is empty).</summary>
-    int PendingCount()
-    {
-        FlushParse();
-        return HasImportText ? _parsed?.Cards.Count ?? 0 : 0;
-    }
-
-    IReadOnlyList<ParsedCard> PendingCards()
-    {
-        FlushParse();
-        return _parsed?.Cards ?? [];
-    }
-
+    /// <summary>Every parse: the detection, the language pickers (Mac: onDetected) and the cards (Mac: onResult).</summary>
     void ApplyParse(ParseResult? result)
     {
         _parsed = result;
         RenderDetection();
-        CheckImportTypos();
         int? count = result?.Cards.Count;
         if (count != _announcedCount)
         {
@@ -438,6 +426,7 @@ public sealed partial class SetEditorScreen
             if (count is { } n) Announcer.Announce(SetEditorCopy.PairsDetected(n));
         }
         if (result is { Cards.Count: > 0 }) Detected(result);
+        SyncImport(result);
     }
 
     // MARK: Detection
@@ -448,7 +437,6 @@ public sealed partial class SetEditorScreen
         if (_importBody is null) return;
         UpdateImportVisibility();
         if (_parsed is not { } result) return;
-        var p = WsTheme.P;
         int count = result.Cards.Count;
         RenderSummary();
         _zeroHelp.IsVisible = count == 0;
@@ -460,26 +448,44 @@ public sealed partial class SetEditorScreen
         _warningsHost.Child = warnings.Count == 0 ? null : Warnings(warnings);
         _warningsHost.IsVisible = warnings.Count > 0;
         RenderSkipped(result.Skipped);
-        RenderPreview();
+        RenderCardsHint(count);
+    }
 
-        var apply = Ui.Primary(count > 0 ? L($"{Labels.Plural(count, "Karte", "Karten")} übernehmen") : L("Karten übernehmen"), ApplyImport, null, IconName.Check, 40);
-        apply.IsEnabled = count > 0;
-        ToolTip.SetTip(apply, L("Die erkannten Paare in die Kartenliste übernehmen"));
-        var more = count > SetEditorCopy.PreviewRows
-            ? Ui.Text(L($"Alle {count} Paare in der Vorschau – scrolle darin für mehr."), 13.5, color: p.TextSecondary, wrap: TextWrapping.Wrap)
-            : null;
-        if (AppDevice.IsPhone)
+    /// <summary>
+    /// Below the detection: where the pairs went, with "Zu den Karten" (Mac: ImportDetectionPanel – the pairs are the cards
+    /// below, no preview of their own).
+    /// </summary>
+    void RenderCardsHint(int count)
+    {
+        _cardsHintHost.IsVisible = count > 0;
+        if (count == 0)
         {
-            // Phone: the note over a full-width button (beside it, it was a narrow column).
-            apply.HorizontalAlignment = HorizontalAlignment.Stretch;
-            _applyHost.Child = Ui.V(8, more, apply);
+            _cardsHintHost.Child = null;
             return;
         }
-        var row = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto"), ColumnSpacing = 10 };
-        if (more is not null) row.Children.Add(more);
-        Grid.SetColumn(apply, 1);
-        row.Children.Add(apply);
-        _applyHost.Child = row;
+        var p = WsTheme.P;
+        var arrow = Icons.Icon(IconName.ArrowDown, 14, p.TextSecondary, 2);
+        arrow.VerticalAlignment = VerticalAlignment.Top;
+        arrow.Margin = new Thickness(0, 2, 0, 0);
+        var text = Ui.Text(L("Die erkannten Paare stehen unten in den Karten – Trennung und Seiten tauschen ändern sie sofort."), 13.5, color: p.TextSecondary, wrap: TextWrapping.Wrap);
+        var show = Ui.PlainButton(L("Zu den Karten"), () => ScrollTo(_cardsHeader, center: false), IconName.ArrowDownCircle, p.AccentText, 30);
+        show.VerticalAlignment = VerticalAlignment.Top;
+        var row = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*,Auto"), ColumnSpacing = 8 };
+        row.Children.Add(arrow);
+        Grid.SetColumn(text, 1);
+        row.Children.Add(text);
+        Grid.SetColumn(show, 2);
+        row.Children.Add(show);
+        if (AppDevice.IsPhone)
+        {
+            // Phone: the button under the note (beside it the note was a narrow column).
+            Grid.SetColumn(show, 1);
+            Grid.SetRow(show, 1);
+            row.RowDefinitions = new RowDefinitions("Auto,Auto");
+            row.RowSpacing = 4;
+            show.Margin = new Thickness(-10, 0, 0, 0);
+        }
+        _cardsHintHost.Child = row;
     }
 
     /// <summary>"✨ 52 Paare erkannt · Abwechselnde Zeilen · Französisch → Deutsch" with its chips (Mac: ImportDetectionSummary).</summary>
@@ -489,7 +495,6 @@ public sealed partial class SetEditorScreen
         var p = WsTheme.P;
         int count = result.Cards.Count;
         int flagged = result.Cards.Count(c => SetEditorCopy.HasMarker(c.Flags));
-        int typos = _importTypos.Values.Sum(v => v.Count);
         var parts = new List<string>();
         if (count > 0)
         {
@@ -504,12 +509,6 @@ public sealed partial class SetEditorScreen
         if (count > 0 && result.Swapped && !_swapsSides)
             chips.Children.Add(Ui.Chip(L("Seiten automatisch getauscht")));
         if (count > 0 && flagged > 0) chips.Children.Add(Ui.Chip(L($"{flagged} bitte prüfen"), p.Warning, IconName.Warning));
-        if (count > 0 && typos > 0)
-        {
-            var chip = Ui.Chip(SetEditorCopy.TypoCount(typos), p.Warning, IconName.Pencil);
-            ToolTip.SetTip(chip, L("Diese Wörter kennt die Rechtschreibprüfung nicht – nach dem Übernehmen kannst du sie mit einem Klick korrigieren."));
-            chips.Children.Add(chip);
-        }
         var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*,Auto"), ColumnSpacing = 10 };
         grid.Children.Add(icon);
         Grid.SetColumn(text, 1);
@@ -589,211 +588,148 @@ public sealed partial class SetEditorScreen
         _skippedHost.Child = body;
     }
 
-    const double PreviewRowHeight = 28;
+    // MARK: The pairs are the cards (Mac: SetEditorModel.syncImport)
+
+    /// <summary>A learner's change to a card that came from the import box.</summary>
+    abstract record ImportEdit
+    {
+        public sealed record Changed(string Term, string Definition, bool Starred) : ImportEdit;
+        public sealed record Removed : ImportEdit;
+
+        /// <summary>The same change for the pair turned round ("Seiten tauschen").</summary>
+        public ImportEdit Turned() => this is Changed c ? new Changed(c.Definition, c.Term, c.Starred) : this;
+    }
 
     /// <summary>
-    /// The recognised pairs as a table that scrolls after eight rows; flagged rows and rows with probable typos carry an
-    /// amber marker with the reason (Mac: ImportPreviewTable).
+    /// What the learner changed in cards that come from the import box, by their pair (<see cref="ImportKeyOf"/>), so a
+    /// new parse (another Trennung, "Seiten tauschen", more text) keeps it.
     /// </summary>
-    void RenderPreview()
+    Dictionary<string, ImportEdit> _importEdits = [];
+
+    /// <summary>
+    /// The identity of a recognised pair: term and definition as the parser made them, and which of several equal pairs
+    /// it is (the parser keeps doubled pairs), so a change to one copy never touches the other.
+    /// </summary>
+    static string ImportKeyOf(string term, string definition, int occurrence) => $"{term}\u001F{definition}\u001F{occurrence}";
+
+    sealed record ImportedCard(string Key, string Term, string Definition, bool Starred, IReadOnlyList<ParseFlag> Flags);
+
+    /// <summary>
+    /// The import box parsed: its pairs are cards right away, no "übernehmen" (Anthony, Mac 1.8). The cards that came from
+    /// the box (<see cref="Draft.ImportKey"/>) are replaced in place, so another Trennung, "Seiten tauschen" or more text
+    /// shows in the card list at once; what the learner changed in them stays (<see cref="_importEdits"/>, found again by
+    /// the pair, also turned round). The first pairs go after the last filled card.
+    /// </summary>
+    void SyncImport(ParseResult? result)
     {
-        if (_parsed is not { Cards.Count: > 0 } result)
-        {
-            _previewHost.Child = null;
-            _previewHost.IsVisible = false;
+        var wanted = ImportedCards(result);
+        var slots = Enumerable.Range(0, _drafts.Count).Where(i => _drafts[i].ImportKey is not null).ToList();
+        var current = slots.Select(i => _drafts[i]).ToList();
+        if (wanted.Count == current.Count && wanted.Zip(current).All(x => x.First.Key == x.Second.ImportKey && x.First.Term == x.Second.Term
+            && x.First.Definition == x.Second.Definition && x.First.Starred == x.Second.Starred && x.First.Flags.SequenceEqual(x.Second.Flags)))
             return;
+        foreach (var (card, row) in wanted.Zip(current))
+        {
+            row.ImportKey = card.Key;
+            // A changed text drops its old typo marks until the spell check has run again.
+            if (row.Term != card.Term) (row.Term, row.TermSpelling) = (card.Term, []);
+            if (row.Definition != card.Definition) (row.Definition, row.DefSpelling) = (card.Definition, []);
+            row.Starred = card.Starred;
+            row.Flags = card.Flags;
+            if (row.IsInvalid && row.IsComplete) row.IsInvalid = false;
         }
-        var p = WsTheme.P;
-        _previewHost.IsVisible = true;
-        // Phone: a narrower number column, headers without the languages (they stand in the summary above) and rows that
-        // wrap – «BEGRIFF · FRA…», «la limitation de v…», «der Donaudamp…» were cut (06.11.2026).
-        bool phone = AppDevice.IsPhone;
-        string columns = phone ? "26,*,*,20" : "40,*,*,26";
-        var header = new Grid { ColumnDefinitions = new ColumnDefinitions(columns), ColumnSpacing = 10, Margin = new Thickness(10, 7) };
-        header.Children.Add(Ui.Eyebrow("#"));
-        var th = Ui.Eyebrow(phone ? L("Begriff") : L($"Begriff · {Labels.LangName(result.TermLang)}"));
-        Grid.SetColumn(th, 1);
-        header.Children.Add(th);
-        var dh = Ui.Eyebrow(phone ? L("Definition") : L($"Definition · {Labels.LangName(result.DefLang)}"));
-        Grid.SetColumn(dh, 2);
-        header.Children.Add(dh);
-
-        var cards = result.Cards;
-        var typos = _importTypos;
-        var list = new ItemsControl
+        var next = _drafts.ToList();
+        if (current.Count > wanted.Count)
         {
-            ItemsPanel = new FuncTemplate<Panel?>(() => new VirtualizingStackPanel()),
-            ItemsSource = Enumerable.Range(0, cards.Count).ToList(),
-            ItemTemplate = new FuncDataTemplate<int>((index, _) =>
-            {
-                var card = cards[index];
-                var reasons = new[] { SetEditorCopy.FlagTooltip(card.Flags), SetEditorCopy.TypoTooltip(typos.GetValueOrDefault(index) ?? []) }.Where(r => r is not null).ToList();
-                string? tooltip = reasons.Count == 0 ? null : string.Join("\n", reasons);
-                var row = phone
-                    ? new Grid { ColumnDefinitions = new ColumnDefinitions(columns), ColumnSpacing = 8, MinHeight = PreviewRowHeight, Margin = new Thickness(8, 5) }
-                    : new Grid { ColumnDefinitions = new ColumnDefinitions(columns), ColumnSpacing = 10, Height = PreviewRowHeight, Margin = new Thickness(10, 0) };
-                row.Children.Add(Ui.Text($"{index + 1}", 13, color: tooltip is null ? p.TextSecondary : p.Warning.Text));
-                var term = Cell(card.Term, result.TermLang, L("Begriff fehlt"), FontWeight.SemiBold);
-                Grid.SetColumn(term, 1);
-                row.Children.Add(term);
-                var def = Cell(card.Definition, result.DefLang, L("Definition fehlt"), FontWeight.Normal);
-                Grid.SetColumn(def, 2);
-                row.Children.Add(def);
-                if (tooltip is not null)
-                {
-                    var marker = new Border { Background = Brushes.Transparent, Child = Icons.Icon(IconName.Warning, 14, p.Warning.Fill, 2.2), VerticalAlignment = VerticalAlignment.Center };
-                    ToolTip.SetTip(marker, tooltip);
-                    AutomationProperties.SetName(marker, tooltip);
-                    Grid.SetColumn(marker, 3);
-                    row.Children.Add(marker);
-                }
-                var holder = new Border { Child = row, Background = index % 2 == 1 ? WsTheme.B(p.Dark ? Palette.Hex(0xFFFFFF, 0.04) : Palette.Hex(0x101828, 0.03)) : Brushes.Transparent };
-                AutomationProperties.SetName(holder, $"{index + 1}: {card.Term} – {card.Definition}{(tooltip is null ? "" : $" ({tooltip})")}");
-                return holder;
-            }, supportsRecycling: false),
-        };
-        var scroller = new ScrollViewer
-        {
-            Content = list,
-            HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled,
-            VerticalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Auto,
-            Height = PreviewRowHeight * Math.Min(cards.Count, SetEditorCopy.PreviewRows) + 2,
-        };
-        if (phone)
-        {
-            // Phone: rows wrap and grow; the table takes what they need, up to about the same room.
-            scroller.Height = double.NaN;
-            scroller.MaxHeight = PreviewRowHeight * SetEditorCopy.PreviewRows * 1.6 + 2;
+            foreach (int index in slots.Skip(wanted.Count).Reverse()) next.RemoveAt(index);
         }
-        var table = new Border
+        else if (wanted.Count > current.Count)
         {
-            CornerRadius = new CornerRadius(12),
-            ClipToBounds = true,
-            Background = WsTheme.B(p.Card),
-            BorderBrush = WsTheme.B(p.Hairline),
-            BorderThickness = new Thickness(1),
-            Child = Ui.V(0, header, new Border { Height = 1, Background = WsTheme.B(p.Hairline) }, scroller),
-        };
-        AutomationProperties.SetName(table, L("Vorschau der erkannten Karten"));
-        _previewHost.Child = table;
-
-        static Control Cell(string text, Lang lang, string missing, FontWeight weight)
-        {
-            var p = WsTheme.P;
-            if (text.Length == 0)
-            {
-                var t = Ui.Text(missing, 13.5, color: p.Warning.Text);
-                t.FontStyle = FontStyle.Italic;
-                return t;
-            }
-            var cell = StudyText.InLang(text, lang, 13.5, weight);
-            if (AppDevice.IsPhone)
-            {
-                cell.TextWrapping = TextWrapping.Wrap;
-                StudyText.HyphenateToWidth(cell, text, lang);
-            }
+            var created = wanted.Skip(current.Count)
+                .Select(c => new Draft { Term = c.Term, Definition = c.Definition, Starred = c.Starred, Flags = c.Flags, ImportKey = c.Key }).ToList();
+            if (slots.Count > 0) next.InsertRange(slots[^1] + 1, created);
             else
             {
-                cell.TextWrapping = TextWrapping.NoWrap;
-                cell.TextTrimming = TextTrimming.CharacterEllipsis;
+                // After the last filled card (empty rows at the end make way).
+                while (next.Count > 0 && !next[^1].IsFilled) next.RemoveAt(next.Count - 1);
+                next.AddRange(created);
             }
-            cell.VerticalAlignment = VerticalAlignment.Center;
-            ToolTip.SetTip(cell, text);
-            return cell;
         }
-    }
-
-    /// <summary>Probable typos in the recognised pairs, 20 cards at a time (Mac: ImportPanelModel.checkTypos).</summary>
-    void CheckImportTypos()
-    {
-        int generation = ++_typoGeneration;
-        if (_parsed is not { Cards.Count: > 0 } result || (!Model.Speller.Supports(result.TermLang) && !Model.Speller.Supports(result.DefLang)))
-        {
-            if (_importTypos.Count == 0) return;
-            _importTypos = [];
-            RenderSummary();
-            RenderPreview();
-            return;
-        }
-        var found = new Dictionary<int, IReadOnlyList<SpellingIssue>>();
-        void Step(int from)
-        {
-            if (generation != _typoGeneration || _closed) return;
-            int end = Math.Min(result.Cards.Count, from + 20);
-            for (int i = from; i < end; i++)
-            {
-                var issues = Model.Speller.Issues(result.Cards[i].Term, result.TermLang).Concat(Model.Speller.Issues(result.Cards[i].Definition, result.DefLang)).ToList();
-                if (issues.Count > 0) found[i] = issues;
-            }
-            if (end < result.Cards.Count)
-            {
-                Dispatcher.UIThread.Post(() => Step(end), DispatcherPriority.Background);
-                return;
-            }
-            bool same = found.Count == _importTypos.Count && found.All(kv => _importTypos.TryGetValue(kv.Key, out var v) && v.Count == kv.Value.Count);
-            _importTypos = found;
-            if (same) return;
-            RenderSummary();
-            RenderPreview();
-        }
-        Dispatcher.UIThread.Post(() => Step(0), DispatcherPriority.Background);
-    }
-
-    // MARK: Taking the list over
-
-    /// <summary>"N Karten übernehmen": replaces an empty list, else asks Anhängen / Ersetzen (Mac: applyImport).</summary>
-    void ApplyImport()
-    {
-        if (Model.Prompt is not null) return;
-        var cards = PendingCards();
-        if (!HasImportText || cards.Count == 0) return;
-        int existing = _drafts.Count(d => d.IsFilled);
-        if (existing == 0)
-        {
-            TakeOver(cards, append: false);
-            return;
-        }
-        var question = L($"Dein Lernset enthält schon {Labels.Plural(existing, "Karte", "Karten")}. Möchtest du die {Labels.Plural(cards.Count, "neue Karte", "neuen Karten")} anhängen oder die bisherigen ersetzen?");
-        if (IsEditing) question += "\n\n" + L("Beim Ersetzen bleibt der Lernfortschritt für gleiche Begriffe erhalten.");
-        Model.Ask(new PromptRequest(L("Karten übernehmen"), question,
-        [
-            new PromptButton(L("Anhängen"), () => TakeOver(cards, append: true), IsDefault: true),
-            new PromptButton(L("Ersetzen"), () => TakeOver(cards, append: false)),
-            new PromptButton(L("Abbrechen"), IsCancel: true),
-        ]));
-    }
-
-    /// <summary>Takes the list over, undoable together with the import box (Mac: apply(_:mode:)).</summary>
-    void TakeOver(IReadOnlyList<ParsedCard> cards, bool append)
-    {
-        var created = cards.Select(Draft.FromParsed).ToList();
-        Undoable(L("Karten übernehmen"), L($"{Labels.Plural(cards.Count, "Karte", "Karten")} übernommen"), ToastTone.Success, includesImport: true, () =>
-        {
-            if (append) AppendRows(created);
-            else SetRows(IsEditing ? WithPreservedIds(created, _drafts) : created);
-            ResetImport();
-            _importOpen = false;
-            UpdateImportVisibility();
-        });
+        while (next.Count < SetEditorCopy.MinimumRows) next.Add(new Draft());
+        _drafts.Clear();
+        _drafts.AddRange(next);
         CheckDuplicates();
         FillCards();
-        CheckSpelling();
-        if (append && created.Count > 0) ScrollToRow(created[0]);
-        else ScrollTo(_cardsHeader, center: false);
+        ScheduleSpelling(400);
     }
 
-    /// <summary>Saving with a list still in the box: taken over without asking about undo (Mac: takeOverPending).</summary>
-    void TakeOverPending(bool append)
+    /// <summary>The recognised pairs as cards, with the learner's changes.</summary>
+    List<ImportedCard> ImportedCards(ParseResult? result)
     {
-        var created = PendingCards().Select(Draft.FromParsed).ToList();
-        if (append) AppendRows(created);
-        else SetRows(created);
-        ResetImport();
-        _importOpen = false;
-        UpdateImportVisibility();
-        CheckDuplicates();
-        FillCards();
-        CheckSpelling();
+        var cards = new List<ImportedCard>();
+        var seen = new Dictionary<string, int>();
+        foreach (var parsed in result?.Cards ?? [])
+        {
+            var pair = $"{parsed.Term}\u001F{parsed.Definition}";
+            int occurrence = seen.GetValueOrDefault(pair);
+            seen[pair] = occurrence + 1;
+            var key = ImportKeyOf(parsed.Term, parsed.Definition, occurrence);
+            var turned = ImportKeyOf(parsed.Definition, parsed.Term, occurrence);
+            var edit = _importEdits.GetValueOrDefault(key) ?? _importEdits.GetValueOrDefault(turned)?.Turned();
+            switch (edit)
+            {
+                case ImportEdit.Removed:
+                    continue;
+                case ImportEdit.Changed changed:
+                    cards.Add(new ImportedCard(key, changed.Term, changed.Definition, changed.Starred, []));
+                    break;
+                default:
+                    cards.Add(new ImportedCard(key, parsed.Term, parsed.Definition, false, parsed.Flags));
+                    break;
+            }
+        }
+        return cards;
+    }
+
+    /// <summary>
+    /// "Text leeren": the box and its cards go, undoably (the toast's "Rückgängig" and Ctrl+Z bring both back, with the
+    /// learner's changes to the cards; Mac: SetEditorModel.clearImportText).
+    /// </summary>
+    void ClearImportText()
+    {
+        int removed = _drafts.Count(d => d.ImportKey is not null && d.IsFilled);
+        if (removed == 0) ClearImportBox();
+        else
+        {
+            Undoable(L("Text leeren"), L($"Liste geleert – {Labels.Plural(removed, "Karte", "Karten")} entfernt"), ToastTone.Neutral, includesImport: true, () =>
+            {
+                ClearImportBox();
+                _importEdits = [];
+            });
+            CheckDuplicates();
+        }
+        FocusImportBox();
+    }
+
+    void ClearImportBox()
+    {
+        _importValue = "";
+        _importBox.Text = "";
+        ParseNow();
+    }
+
+    /// <summary>Remembers what the learner did to a card from the import box.</summary>
+    void NoteImportEdit(Draft d)
+    {
+        if (d.ImportKey is { } key) SetImportEdit(new ImportEdit.Changed(d.Term, d.Definition, d.Starred), key);
+    }
+
+    void SetImportEdit(ImportEdit edit, string key)
+    {
+        _importEdits[key] = edit;
+        // The pair turned round is the same pair: one entry for both.
+        var parts = key.Split('\u001F');
+        if (parts.Length == 3) _importEdits.Remove(ImportKeyOf(parts[1], parts[0], int.Parse(parts[2], System.Globalization.CultureInfo.InvariantCulture)));
     }
 
     ImportSnapshot ImportSnap() => new(_importValue, _separator, _customSeparator, _swapsSides, _fileNotes.ToList(), _importOpen);
@@ -817,9 +753,6 @@ public sealed partial class SetEditorScreen
         RenderDetection();
         UpdateImportVisibility();
     }
-
-    /// <summary>Empties the panel (after its cards were taken over).</summary>
-    void ResetImport() => RestoreImport(new ImportSnapshot("", ImportSeparator.Auto, "", false, [], _importOpen));
 
     // MARK: Find (Mac: the text view's find bar, Ctrl+F)
 
@@ -1052,7 +985,8 @@ public sealed partial class SetEditorScreen
             _showProgress = true;
             RenderProgress();
         }, TimeSpan.FromMilliseconds(160));
-        var termLang = _termLang;
+        // "Automatisch" (Other): the text recognition guesses the language itself (Mac: importSources).
+        Lang? termLang = _termLang == Lang.Other ? null : _termLang;
         var defLang = _defLang;
         var pipeline = _pipeline ??= ImportServices.CreatePipeline();
         _ = Task.Run(async () =>
@@ -1120,7 +1054,7 @@ public sealed partial class SetEditorScreen
                 ? L($"Text teilweise erkannt – {pairs} gefunden. Nicht alles konnte gelesen werden, siehe Hinweis.")
                 : L("Text teilweise erkannt – noch keine Paare gefunden. Nicht alles konnte gelesen werden, siehe Hinweis."),
                 ToastTone.Warning, DurationMs: 7000));
-        else if (count > 0) Model.ShowToast(new ToastMessage(L($"Text erkannt – {pairs} gefunden. Prüfe die Vorschau."), ToastTone.Success));
+        else if (count > 0) Model.ShowToast(new ToastMessage(L($"Text erkannt – {pairs} gefunden. Prüfe die Karten."), ToastTone.Success));
         else Model.ShowToast(new ToastMessage(L("Text eingefügt. Es wurden noch keine Paare erkannt.")));
         // The detection scrolls into view (Mac: revealToken).
         ScrollTo(_detection, center: false);

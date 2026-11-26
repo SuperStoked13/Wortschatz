@@ -31,6 +31,11 @@ public sealed class LibrarySidebar
     static LibrarySidebar? s_current;
     /// <summary>The keyboard focus is in the list: the next sidebar puts it on its selected row.</summary>
     static bool s_listFocused;
+    /// <summary>
+    /// The list got the focus by keyboard (↑↓, Tab): the next sidebar shows the focus ring on its row. After a click it
+    /// does not – until 26.11.2026 a clicked row («Übersicht», a set) kept a blue frame, as if it stayed pressed.
+    /// </summary>
+    static bool s_focusVisible;
     static bool s_startFocusGiven;
     static MainView? s_hookedWindow;
     /// <summary>The streak shown last (the flame bounces when it changes).</summary>
@@ -57,6 +62,7 @@ public sealed class LibrarySidebar
         window.AddHandler(InputElement.GotFocusEvent, (_, e) =>
         {
             s_listFocused = e.Source is Visual v && v is not TextBox && s_current?.View.IsVisualAncestorOf(v) == true;
+            s_focusVisible = e.NavigationMethod is NavigationMethod.Tab or NavigationMethod.Directional;
         }, RoutingStrategies.Bubble, handledEventsToo: true);
     }
 
@@ -73,7 +79,7 @@ public sealed class LibrarySidebar
         var focused = _window.FocusManager?.GetFocusedElement() as Visual;
         if (focused is not null && focused is not TopLevel && TopLevel.GetTopLevel(focused) is not null && !View.IsVisualAncestorOf(focused)) return;
         var row = _selected >= 0 && _selected < _items.Count ? _items[_selected].Row : _items.FirstOrDefault().Row;
-        row?.Focus(start ? NavigationMethod.Unspecified : NavigationMethod.Directional);
+        row?.Focus(!start && s_focusVisible ? NavigationMethod.Directional : NavigationMethod.Unspecified);
     }
 
     Control Build()

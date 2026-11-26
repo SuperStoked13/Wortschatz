@@ -315,7 +315,8 @@ Joan: «du darfst gleich alles beheben … auch Performance». Behoben in diesem
 
 - **Editor:** Liste im Importfeld ging beim Erstellen ohne Nachfrage verloren → wie Mac: leeres Set übernimmt sie,
   sonst «Liste noch nicht übernommen» (anhängen / ohne Liste); «Karten übernehmen» fragt Anhängen/Ersetzen (Ersetzen behält
-  Karten-ID und Stern gleicher Begriffe); Esc mit Änderungen fragt «Änderungen verwerfen?»; Titel/unvollständige Karten
+  Karten-ID und Stern gleicher Begriffe) – seit 26.11.2026 ersetzt: die erkannten Paare stehen sofort in den Karten
+  (wie Mac 1.8, `PORTING.md` › «Editor nur mit Kartenliste»); Esc mit Änderungen fragt «Änderungen verwerfen?»; Titel/unvollständige Karten
   werden markiert statt leer gespeichert; Ctrl+O öffnet direkt die Datei-Auswahl, Dateiname wird Titel.
 - **Rückfragen** allgemein: `AppModel.Ask(PromptRequest)` + Ebene im `MainWindow` (Enter = Standard, Esc = Abbrechen).
 - **Tastenkürzel** wie `AppCommands.swift` (Ctrl statt ⌘): Ctrl+N, Ctrl+O, Ctrl+, ; auf einem Set Ctrl+L / Ctrl+Shift+L /

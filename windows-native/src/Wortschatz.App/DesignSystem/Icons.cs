@@ -13,7 +13,7 @@ public enum IconName
     App, Minimize, Maximize, Restore, Close, Search, Home, Plus, Flame, Gear, Play, Target, Trophy, ChevronLeft, ChevronRight,
     Speaker, Sliders, Star, StarFilled, Check, CheckCircle, X, Pencil, Trash, Cards, Keyboard, Book, Upload, Download, Copy, Shuffle,
     Undo, Sparkles, Stack, Magnifier, Clock, Moon, Sun, Exam, Info, Repeat, RotateCcw, PartyPopper, Lightbulb, Warning, Octagon, More,
-    Hand, EqualCircle, Menu, Camera,
+    Hand, EqualCircle, Menu, Camera, ArrowDown, ArrowDownCircle,
 }
 
 public static class Icons
@@ -40,6 +40,9 @@ public static class Icons
         [IconName.Search] = ("M11 4a7 7 0 1 1 0 14a7 7 0 1 1 0-14zM20 20l-3.5-3.5", false),
         [IconName.Home] = ("M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6h-6v6H4a1 1 0 0 1-1-1z", false),
         [IconName.Plus] = ("M12 5v14M5 12h14", false),
+        // The editor's "Die erkannten Paare stehen unten in den Karten" and "Zu den Karten" (Mac: arrow.down, arrow.down.circle).
+        [IconName.ArrowDown] = ("M12 5v14M19 12l-7 7-7-7", false),
+        [IconName.ArrowDownCircle] = ("M12 2a10 10 0 1 1 0 20a10 10 0 1 1 0-20zM12 8v8M8 12l4 4 4-4", false),
         // Three lines: the library drawer on a phone.
         [IconName.Menu] = ("M4 6.5h16M4 12h16M4 17.5h16", false),
         // A camera: "Foto aufnehmen" on a phone.

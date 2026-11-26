@@ -38,17 +38,16 @@ public static class SetEditorCopy
     public static string TitleMissing => L("Gib deinem Lernset einen Titel.");
     public static string TitleFromFile => L("Aus dem Dateinamen übernommen – du kannst ihn jederzeit ändern.");
     public static string Detected => L("Automatisch erkannt");
-    public static string ListDiverted => L("Liste erkannt – prüfe die Vorschau und übernimm die Karten.");
+    public static string ListDiverted => L("Liste erkannt – die Paare stehen jetzt in den Karten. Trennung und Seiten passt du oben an.");
+    /// <summary>"Automatisch" in the language pickers (a new set's default; Mac: SetEditorCopy.automatic).</summary>
+    public static string Automatic => L("Automatisch");
     public static string EmptyLead => L("Tippe deine Vokabeln ein – oder importiere oben eine ganze Liste auf einmal.");
     public static string TermPlaceholder => L("Begriff eingeben");
     public static string DefinitionPlaceholder => L("Definition eingeben");
     public static string ImportPlaceholder => L("Füge deine Vokabelliste hier ein – z. B. aus Word, einer PDF oder Quizlet. Begriff und Übersetzung werden automatisch erkannt.");
     public static string ImportHint => L("Tipp: Funktioniert mit abwechselnden Zeilen, Tabellen (Tab, Komma, Strichpunkt, Bindestrich) und Quizlet-Exporten.");
-    /// <summary>Rows the import preview shows before it scrolls (<c>PREVIEW_ROWS</c>).</summary>
-    public const int PreviewRows = 8;
-
-    /// <summary>The save button: "Erstellen" for a new set, "Sichern" for an existing one.</summary>
-    public static string SaveLabel(bool isEditing) => isEditing ? L("Sichern") : L("Erstellen");
+    /// <summary>The save button: "Lernset erstellen" for a new set, "Sichern" for an existing one.</summary>
+    public static string SaveLabel(bool isEditing) => isEditing ? L("Sichern") : L("Lernset erstellen");
 
     /// <summary>Why saving cannot work yet (<c>readiness</c> in editor.js), null when it can.</summary>
     public static string? Readiness(bool titleIsEmpty, int completeCards)

@@ -27,7 +27,10 @@ public sealed partial class SetEditorScreen : Screen
 
     string _title = "", _details = "";
     Lang _termLang, _defLang;
-    /// <summary>The learner picked the language (an existing set's languages count as picked).</summary>
+    /// <summary>
+    /// The learner picked the language (an existing set's languages count as picked). A new set starts with neither:
+    /// "Automatisch" until the import recognises the languages, or until saving looks at the cards (ResolvedLanguages).
+    /// </summary>
     bool _termTouched, _defTouched;
     /// <summary>The picker was filled from the recognised list ("Automatisch erkannt").</summary>
     bool _termDetected, _defDetected;
@@ -59,7 +62,8 @@ public sealed partial class SetEditorScreen : Screen
         var set = setId is null ? null : model.Set(setId);
         _title = set?.Title ?? "";
         _details = set?.Description ?? "";
-        _termLang = set?.TermLang ?? Lang.Fr;
+        // New sets: "Automatisch" (Mac 1.8, Anthony 25.11.2026); Other until something is recognised.
+        _termLang = set?.TermLang ?? Lang.Other;
         _defLang = set?.DefLang ?? Lang.De;
         _termTouched = _defTouched = set is not null;
         _loadedAt = set?.UpdatedAt ?? 0;
@@ -74,8 +78,15 @@ public sealed partial class SetEditorScreen : Screen
 
     bool IsNew => _setId is null;
     bool IsEditing => !IsNew;
-    string SaveLabel => SetEditorCopy.SaveLabel(IsEditing);
+    /// <summary>
+    /// "Lernset erstellen" / "Sichern". Phone: "Erstellen" – the longer button squeezed the status beside it to «Titel fe…»
+    /// (26.11.2026).
+    /// </summary>
+    string SaveLabel => AppDevice.IsPhone && IsNew ? L("Erstellen") : SetEditorCopy.SaveLabel(IsEditing);
     bool IsTitleEmpty => JSCompat.Trim(_title).Length == 0;
+    /// <summary>"Automatisch": the side has no language yet (neither picked nor recognised).</summary>
+    bool TermIsAuto => !_termTouched && !_termDetected;
+    bool DefIsAuto => !_defTouched && !_defDetected;
 
     /// <summary>What the editor would save, to tell whether anything changed (Mac: fingerprint/baseline).</summary>
     string Fingerprint() => string.Join("\u0001", new[] { JSCompat.Trim(_title), JSCompat.Trim(_details), $"{_termLang}", $"{_defLang}" }
@@ -204,10 +215,10 @@ public sealed partial class SetEditorScreen : Screen
             return e.Key is Key.Enter or Key.Return && e.KeyModifiers == KeyModifiers.Alt && InsertLineBreak(_detailsBox);
         });
 
-        _termBox = LangBox(SetEditorCopy.TermLanguages, _termLang, L("Ich lerne"));
-        _defBox = LangBox(SetEditorCopy.DefinitionLanguages, _defLang, L("Übersetzung"));
-        _termBox.SelectionChanged += (_, _) => { if (!_settingLangs) SetTermLang(SetEditorCopy.TermLanguages[Math.Max(0, _termBox.SelectedIndex)]); };
-        _defBox.SelectionChanged += (_, _) => { if (!_settingLangs) SetDefLang(SetEditorCopy.DefinitionLanguages[Math.Max(0, _defBox.SelectedIndex)]); };
+        _termBox = LangBox(SetEditorCopy.TermLanguages, L("Ich lerne"));
+        _defBox = LangBox(SetEditorCopy.DefinitionLanguages, L("Übersetzung"));
+        _termBox.SelectionChanged += (_, _) => { if (!_settingLangs) PickLanguage(isTerm: true, _termBox.SelectedIndex); };
+        _defBox.SelectionChanged += (_, _) => { if (!_settingLangs) PickLanguage(isTerm: false, _defBox.SelectedIndex); };
         _termDetectedLabel = DetectedLabel();
         _defDetectedLabel = DetectedLabel();
         var flip = Ui.IconButton(IconName.Repeat, L("Begriffe und Definitionen tauschen"), FlipSides, 38);
@@ -255,13 +266,43 @@ public sealed partial class SetEditorScreen : Screen
         }
     }
 
-    static ComboBox LangBox(IReadOnlyList<Lang> langs, Lang selected, string name)
+    /// <summary>Index of the first language in a picker: "Automatisch" and a line come first.</summary>
+    const int FirstLanguageIndex = 2;
+
+    /// <summary>A language picker: "Automatisch" (the recognition decides), a line, then the languages (Mac: SetEditorLanguagePicker).</summary>
+    static ComboBox LangBox(IReadOnlyList<Lang> langs, string name)
     {
         var box = new ComboBox { MinWidth = 190 };
+        box.Items.Add(new ComboBoxItem { Content = SetEditorCopy.Automatic });
+        box.Items.Add(new ComboBoxItem
+        {
+            Content = new Border { Height = 1, Background = WsTheme.B(WsTheme.P.Hairline), HorizontalAlignment = HorizontalAlignment.Stretch },
+            HorizontalContentAlignment = HorizontalAlignment.Stretch,
+            IsEnabled = false,
+            Focusable = false,
+            MinHeight = 0,
+            Padding = new Thickness(8, 4),
+        });
         foreach (var lang in langs) box.Items.Add(new ComboBoxItem { Content = Labels.LangName(lang) });
-        box.SelectedIndex = Math.Max(0, langs.ToList().IndexOf(selected));
         AutomationProperties.SetName(box, name);
         return box;
+    }
+
+    /// <summary>A picker's choice: "Automatisch" or a language (the line between them takes nothing).</summary>
+    void PickLanguage(bool isTerm, int index)
+    {
+        var langs = isTerm ? SetEditorCopy.TermLanguages : SetEditorCopy.DefinitionLanguages;
+        if (index == 0)
+        {
+            if (isTerm) SetTermAuto();
+            else SetDefAuto();
+        }
+        else if (index >= FirstLanguageIndex && index - FirstLanguageIndex < langs.Count)
+        {
+            if (isTerm) SetTermLang(langs[index - FirstLanguageIndex]);
+            else SetDefLang(langs[index - FirstLanguageIndex]);
+        }
+        else UpdateLanguages(rows: false);
     }
 
     /// <summary>A text field of the editor: wraps, grows up to <paramref name="maxLines"/>, Enter is handled by the editor.</summary>
@@ -355,7 +396,9 @@ public sealed partial class SetEditorScreen : Screen
         if (stats.Typos > 0) extras.Add(L($"{stats.Typos} Tippfehler?"));
         // Both sides in the same language (Deutsch → Deutsch) went through without a word (Joan's test, 06.11.2026):
         // said first, before what still blocks saving.
-        string? sameLang = _termLang == _defLang && _termLang != Lang.Other ? L("Zweimal dieselbe Sprache?") : null;
+        bool isAuto = TermIsAuto || DefIsAuto;
+        string languages = isAuto ? L("Sprachen automatisch") : Labels.LangPair(_termLang, _defLang);
+        string? sameLang = !isAuto && _termLang == _defLang && _termLang != Lang.Other ? L("Zweimal dieselbe Sprache?") : null;
         _status.Children.Clear();
         if (AppDevice.IsPhone)
         {
@@ -364,7 +407,8 @@ public sealed partial class SetEditorScreen : Screen
             _status.Orientation = Orientation.Vertical;
             _status.Spacing = 0;
             var top = Ui.H(6, Ui.Text(Labels.Plural(stats.Filled, "Karte", "Karten"), 13.5, FontWeight.SemiBold),
-                Ui.Text(Labels.LangPair(_termLang, _defLang), 13.5, color: p.TextSecondary));
+                // «Sprachen automatisch» did not fit beside the count: the pickers above say it (26.11.2026).
+                isAuto ? null : Ui.Text(languages, 13.5, color: p.TextSecondary));
             _status.Children.Add(top);
             // Short words: the bar has room for about 22 letters («Noch keine vollständig…» was cut). Told by the state,
             // not by the blocker's text (which is in the app's language).
@@ -376,13 +420,13 @@ public sealed partial class SetEditorScreen : Screen
                 line.TextTrimming = TextTrimming.CharacterEllipsis;
                 _status.Children.Add(line);
             }
-            var phoneText = string.Join(" ", new[] { Labels.Plural(stats.Filled, "Karte", "Karten"), Labels.LangPair(_termLang, _defLang), note }.Where(s => s is not null));
+            var phoneText = string.Join(" ", new[] { Labels.Plural(stats.Filled, "Karte", "Karten"), languages, note }.Where(s => s is not null));
             if (_status.Parent is Control phoneCapsule) AutomationProperties.SetHelpText(phoneCapsule, phoneText);
             ToolTip.SetTip(_saveButton, blocker is not null ? SaveHelp(blocker) : SaveLabel);
             return;
         }
         _status.Children.Add(Ui.Text(Labels.Plural(stats.Filled, "Karte", "Karten"), 13.5, FontWeight.SemiBold));
-        _status.Children.Add(Ui.Text(Labels.LangPair(_termLang, _defLang), 13.5, color: p.TextSecondary));
+        _status.Children.Add(Ui.Text(languages, 13.5, color: p.TextSecondary));
         if (sameLang is not null)
         {
             _status.Children.Add(Ui.Text("·", 13.5, color: p.TextTertiary));
@@ -405,7 +449,7 @@ public sealed partial class SetEditorScreen : Screen
         ({ } b, true) => L($"{b} – Sichern zeigt, was fehlt"),
         ({ } b, false) => L($"{b} – Erstellen zeigt, was fehlt"),
         (null, true) => L("Sichern (Ctrl+Enter oder Ctrl+S)"),
-        (null, false) => L("Erstellen (Ctrl+Enter oder Ctrl+S)"),
+        (null, false) => L("Lernset erstellen (Ctrl+Enter oder Ctrl+S)"),
     };
 
     /// <summary>Shown while files are dragged over the editor (Mac: SetEditorDropOverlay).</summary>
@@ -499,6 +543,28 @@ public sealed partial class SetEditorScreen : Screen
 
     bool _settingLangs;
 
+    /// <summary>"Automatisch" in a language picker: the recognition decides again (Mac: setTermAuto).</summary>
+    void SetTermAuto()
+    {
+        _termTouched = false;
+        _termDetected = false;
+        AutoChanged();
+    }
+
+    void SetDefAuto()
+    {
+        _defTouched = false;
+        _defDetected = false;
+        AutoChanged();
+    }
+
+    void AutoChanged()
+    {
+        Reparse();
+        UpdateLanguages(rows: false);
+        UpdateStats();
+    }
+
     void SetTermLang(Lang lang)
     {
         _termTouched = true;
@@ -533,12 +599,18 @@ public sealed partial class SetEditorScreen : Screen
         UpdateStats();
     }
 
-    /// <summary>"Begriffe und Definitionen tauschen": languages and every row (undoable).</summary>
+    /// <summary>
+    /// "Begriffe und Definitionen tauschen": languages and every row (undoable). The cards of the import box turn with
+    /// them: its recognition is turned too (Mac: flipSides).
+    /// </summary>
     void FlipSides()
     {
         Undoable(L("Seiten tauschen"), L("Begriffe und Definitionen getauscht"), ToastTone.Neutral, includesImport: false, () =>
         {
-            _termTouched = _defTouched = true;
+            bool termWasAuto = TermIsAuto, defWasAuto = DefIsAuto;
+            bool? swappedBefore = _parsed?.Swapped;
+            _termTouched = !defWasAuto;
+            _defTouched = !termWasAuto;
             _termDetected = _defDetected = false;
             (_termLang, _defLang) = (_defLang, _termLang);
             foreach (var d in _drafts)
@@ -547,9 +619,11 @@ public sealed partial class SetEditorScreen : Screen
                 (d.TermSpelling, d.DefSpelling) = (d.DefSpelling, d.TermSpelling);
                 d.Flags = SetEditorCopy.Swapped(d.Flags);
             }
-        });
+            Reparse();
+            // The new languages may already turn the recognition; if not, "Seiten tauschen" does.
+            if (swappedBefore is { } before && _parsed?.Swapped == before) ToggleSwap();
+        }, includesSwap: true);
         CheckDuplicates();
-        Reparse();
         FillCards();
         UpdateLanguages(rows: false);
         CheckSpelling();
@@ -558,11 +632,22 @@ public sealed partial class SetEditorScreen : Screen
     /// <summary>Recognised languages fill the pickers the learner has not chosen (Mac: SetEditorModel.detected).</summary>
     void Detected(ParseResult result)
     {
-        var nextTerm = !_termTouched && SetEditorCopy.IsKnown(result.TermLang) ? result.TermLang : _termLang;
-        var nextDef = !_defTouched && SetEditorCopy.IsKnown(result.DefLang) ? result.DefLang : _defLang;
-        if (nextTerm == nextDef || (nextTerm == _termLang && nextDef == _defLang)) return;
-        if (nextTerm != _termLang) _termDetected = true;
-        if (nextDef != _defLang) _defDetected = true;
+        bool termKnown = !_termTouched && SetEditorCopy.IsKnown(result.TermLang);
+        bool defKnown = !_defTouched && SetEditorCopy.IsKnown(result.DefLang);
+        var nextTerm = termKnown ? result.TermLang : _termLang;
+        var nextDef = defKnown ? result.DefLang : _defLang;
+        if (nextTerm == nextDef) return;
+        // Recognised also when it is the language the picker already had (German).
+        bool marked = (termKnown && !_termDetected) || (defKnown && !_defDetected);
+        if (termKnown) _termDetected = true;
+        if (defKnown) _defDetected = true;
+        if (nextTerm == _termLang && nextDef == _defLang)
+        {
+            if (!marked) return;
+            UpdateLanguages(rows: false);
+            UpdateStats();
+            return;
+        }
         _termLang = nextTerm;
         _defLang = nextDef;
         UpdateLanguages(rows: true);
@@ -575,17 +660,21 @@ public sealed partial class SetEditorScreen : Screen
     {
         if (_termBox is null) return;
         _settingLangs = true;
-        _termBox.SelectedIndex = SetEditorCopy.TermLanguages.ToList().IndexOf(_termLang);
-        _defBox.SelectedIndex = SetEditorCopy.DefinitionLanguages.ToList().IndexOf(_defLang);
+        _termBox.SelectedIndex = TermIsAuto ? 0 : FirstLanguageIndex + Math.Max(0, SetEditorCopy.TermLanguages.ToList().IndexOf(_termLang));
+        _defBox.SelectedIndex = DefIsAuto ? 0 : FirstLanguageIndex + Math.Max(0, SetEditorCopy.DefinitionLanguages.ToList().IndexOf(_defLang));
         _settingLangs = false;
         _termDetectedLabel.Opacity = _termDetected ? 1 : 0;
         _defDetectedLabel.Opacity = _defDetected ? 1 : 0;
-        AutomationProperties.SetHelpText(_termBox, _termDetected ? L($"{Labels.LangName(_termLang)}, automatisch erkannt") : Labels.LangName(_termLang));
-        AutomationProperties.SetHelpText(_defBox, _defDetected ? L($"{Labels.LangName(_defLang)}, automatisch erkannt") : Labels.LangName(_defLang));
-        _capsuleHost.Child = Ui.Chip(Labels.LangPair(_termLang, _defLang));
+        AutomationProperties.SetHelpText(_termBox, LanguageValue(_termLang, TermIsAuto, _termDetected));
+        AutomationProperties.SetHelpText(_defBox, LanguageValue(_defLang, DefIsAuto, _defDetected));
+        // Once both languages are known (not "Automatisch"; Mac: SetEditorHeader).
+        _capsuleHost.Child = TermIsAuto || DefIsAuto ? null : Ui.Chip(Labels.LangPair(_termLang, _defLang));
         foreach (var header in new[] { _columnHeaderInFlow, _pinnedColumns }) if (header is not null) FillColumnHeader(header);
         if (rows) FillCards();
     }
+
+    static string LanguageValue(Lang lang, bool isAuto, bool detected) =>
+        isAuto ? SetEditorCopy.Automatic : detected ? L($"{Labels.LangName(lang)}, automatisch erkannt") : Labels.LangName(lang);
 
     /// <summary>The first imported file's name becomes the title while there is none (Mac: suggestTitle(fromFileName:)).</summary>
     void SuggestTitle(string fileName)
@@ -637,8 +726,8 @@ public sealed partial class SetEditorScreen : Screen
     // MARK: Save
 
     /// <summary>
-    /// Ctrl+Enter / Ctrl+S: takes a list still waiting in the import box over (asking first when the list has cards),
-    /// validates, then creates or updates the set (Mac: SetEditorModel.save).
+    /// Ctrl+Enter / Ctrl+S ("Lernset erstellen" / "Sichern"): the latest text of the import box counts (its pairs are
+    /// cards already), then validates and creates or updates the set (Mac: SetEditorModel.save).
     /// </summary>
     void Save()
     {
@@ -648,28 +737,7 @@ public sealed partial class SetEditorScreen : Screen
             Model.ShowToast(new ToastMessage(L("Bitte warte, bis der Import fertig ist.")));
             return;
         }
-        int pending = PendingCount();
-        if (pending > 0)
-        {
-            if (!_drafts.Any(d => d.IsFilled)) TakeOverPending(append: false);
-            else
-            {
-                var question = pending == 1
-                    ? L("Im Importfeld wartet noch 1 erkanntes Paar. Sollen sie vor dem Speichern angehängt werden?")
-                    : L($"Im Importfeld warten noch {pending} erkannte Paare. Sollen sie vor dem Speichern angehängt werden?");
-                Model.Ask(new PromptRequest(L("Liste noch nicht übernommen"), question,
-                [
-                    new PromptButton(L($"{Labels.Plural(pending, "Karte", "Karten")} anhängen"), () =>
-                    {
-                        TakeOverPending(append: true);
-                        Commit();
-                    }, IsDefault: true),
-                    new PromptButton(L("Ohne Liste"), Commit),
-                    new PromptButton(L("Abbrechen"), IsCancel: true),
-                ]));
-                return;
-            }
-        }
+        FlushParse();
         Commit();
     }
 
@@ -679,18 +747,19 @@ public sealed partial class SetEditorScreen : Screen
         var title = JSCompat.Trim(_title);
         var description = JSCompat.Trim(_details);
         var cards = _drafts.Where(d => d.IsFilled).Select(d => new CardDraft(d.Id, d.TrimmedTerm, d.TrimmedDefinition, d.Starred)).ToList();
+        var (termLang, defLang) = ResolvedLanguages(cards);
         try
         {
             if (IsNew)
             {
-                var set = Model.CreateSet(title, _termLang, _defLang, cards, description);
+                var set = Model.CreateSet(title, termLang, defLang, cards, description);
                 Close();
                 Model.ShowToast(new ToastMessage(L("Lernset erstellt"), ToastTone.Success));
                 Model.OpenSet(set.Id);
             }
             else
             {
-                Model.Store.UpdateSet(_setId!, new SetPatch(title, description, _termLang, _defLang, Cards: cards));
+                Model.Store.UpdateSet(_setId!, new SetPatch(title, description, termLang, defLang, Cards: cards));
                 Model.Store.Save();
                 Close();
                 Model.ShowToast(new ToastMessage(L("Änderungen gespeichert"), ToastTone.Success));
@@ -703,6 +772,14 @@ public sealed partial class SetEditorScreen : Screen
             Model.ShowToast(new ToastMessage(e.Message, ToastTone.Danger, DurationMs: 7000));
         }
     }
+
+    /// <summary>
+    /// The languages to save: a side still on "Automatisch" gets the language its cards are in (LangDetect), else "Andere"
+    /// (term) or German (definition) (Mac: resolvedLanguages).
+    /// </summary>
+    (Lang Term, Lang Def) ResolvedLanguages(IReadOnlyList<CardDraft> cards) => (
+        TermIsAuto ? LangDetect.DetectColumn(cards.Select(c => c.Term)).SetLang ?? Lang.Other : _termLang,
+        DefIsAuto ? LangDetect.DetectColumn(cards.Select(c => c.Definition)).SetLang ?? Lang.De : _defLang);
 
     /// <summary>Marks every problem and moves the focus to the first one (Mac: validateAll). The errors stay on screen.</summary>
     bool ValidateAll()
@@ -819,6 +896,7 @@ public sealed partial class SetEditorScreen : Screen
         _termLang = fresh.TermLang;
         _defLang = fresh.DefLang;
         SetRows(fresh.Cards.Select(Draft.FromCard));
+        _importEdits = [];
         _loadedAt = fresh.UpdatedAt;
         _baseline = Fingerprint();
         CheckDuplicates();
@@ -902,20 +980,29 @@ public sealed partial class SetEditorScreen : Screen
 
     // MARK: Undo
 
-    sealed record UndoState(IReadOnlyList<Draft.Snapshot> Rows, Lang TermLang, Lang DefLang, ImportSnapshot? Import);
+    /// <summary>
+    /// What an undo puts back: the rows, the languages (and whether they were picked or recognised), the learner's changes
+    /// to the import box's cards, and the whole import box (its text too, for changes of the box) or only its "Seiten
+    /// tauschen" (turning the sides keeps what was typed in the box since).
+    /// </summary>
+    sealed record UndoState(IReadOnlyList<Draft.Snapshot> Rows, Lang TermLang, Lang DefLang, LanguageState Languages,
+        IReadOnlyDictionary<string, ImportEdit> ImportEdits, ImportSnapshot? Import, bool? ImportSwapsSides);
+
+    sealed record LanguageState(bool TermTouched, bool DefTouched, bool TermDetected, bool DefDetected);
 
     readonly UndoHistory<UndoState> _history = new();
     readonly List<Guid> _undoToasts = [];
 
-    UndoState CurrentUndoState(bool includesImport) =>
-        new(_drafts.Select(d => d.Snap()).ToList(), _termLang, _defLang, includesImport ? ImportSnap() : null);
+    UndoState CurrentUndoState(bool includesImport, bool includesSwap) =>
+        new(_drafts.Select(d => d.Snap()).ToList(), _termLang, _defLang, new LanguageState(_termTouched, _defTouched, _termDetected, _defDetected),
+            new Dictionary<string, ImportEdit>(_importEdits), includesImport ? ImportSnap() : null, includesSwap ? _swapsSides : null);
 
     /// <summary>Runs <paramref name="change"/> and offers to undo it: a toast with "Rückgängig" and Ctrl+Z (Mac: undoable).</summary>
-    void Undoable(string actionName, string toast, ToastTone tone, bool includesImport, Action change)
+    void Undoable(string actionName, string toast, ToastTone tone, bool includesImport, Action change, bool includesSwap = false)
     {
-        var before = CurrentUndoState(includesImport);
+        var before = CurrentUndoState(includesImport, includesSwap);
         change();
-        var record = _history.Register(actionName, before, CurrentUndoState(includesImport));
+        var record = _history.Register(actionName, before, CurrentUndoState(includesImport, includesSwap));
         var message = new ToastMessage(toast, tone, L("Rückgängig"), () =>
         {
             if (_closed || !_activated) return;
@@ -946,15 +1033,17 @@ public sealed partial class SetEditorScreen : Screen
     {
         _drafts.Clear();
         _drafts.AddRange(state.Rows.Select(Draft.FromSnapshot));
+        // Before the import box parses again (SyncImport finds the learner's changes here).
+        _importEdits = new Dictionary<string, ImportEdit>(state.ImportEdits);
         bool languagesChanged = state.TermLang != _termLang || state.DefLang != _defLang;
         _termLang = state.TermLang;
         _defLang = state.DefLang;
-        if (state.Import is { } panel)
-        {
-            RestoreImport(panel);
-            if (panel.Expanded) ScrollTo(_importPanel, center: false);
-        }
-        else if (languagesChanged) Reparse();
+        (_termTouched, _defTouched, _termDetected, _defDetected) = (state.Languages.TermTouched, state.Languages.DefTouched, state.Languages.TermDetected, state.Languages.DefDetected);
+        // The cards from the import box follow the box as it is now (it may have changed since).
+        if (state.Import is { } panel) RestoreImport(panel);
+        else if (state.ImportSwapsSides is { } swaps && swaps != _swapsSides) SetSwapsSides(swaps);
+        else if (languagesChanged && HasImportText) Reparse();
+        else SyncImport(_parsed);
         CheckDuplicates();
         FillCards();
         UpdateLanguages(rows: false);
@@ -1053,5 +1142,26 @@ public sealed partial class SetEditorScreen : Screen
     /// <summary>For the snapshot tool: a save attempt (shows the errors) or the cards section.</summary>
     public void SnapshotValidate() => ValidateAll();
 
-    public void SnapshotApplyImport() => ApplyImport();
+    /// <summary>For the snapshot tool: "Zu den Karten".</summary>
+    public void SnapshotShowCards() => ScrollTo(_cardsHeader, center: false);
+
+    /// <summary>
+    /// For the snapshot tool (Mac: SetEditorSnapshots «importEdits»): a pasted list, its first card changed, its second
+    /// deleted, a card typed in, then "Seiten tauschen" – the changes stay, the own card stays where it is.
+    /// </summary>
+    public void SnapshotImportEdits(string text)
+    {
+        ImportSetText(text, append: false);
+        var imported = _drafts.Where(d => d.ImportKey is not null).ToList();
+        if (imported.Count < 2) return;
+        imported[0].Term = "le monsieur (Anrede)";
+        NoteImportEdit(imported[0]);
+        DeleteRow(imported[1]);
+        var own = new Draft { Term = "zzz eigene Karte", Definition = "selbst getippt" };
+        _drafts.Add(own);
+        ToggleSwap();
+        foreach (var t in Model.Toasts.ToList()) Model.DismissToast(t.Id);
+        FillCards();
+        ScrollTo(_cardsHeader, center: false);
+    }
 }

@@ -36,6 +36,10 @@ erscheint nicht auf der Seite.
 
 ## Nächste Version
 
+- Verbessert (Windows): Neues Lernset: Eine eingefügte Liste steht sofort in den Karten – «Trennung» und «Seiten tauschen» ändern sie direkt dort, «Karten übernehmen» braucht es nicht mehr. Die Sprachen stehen zuerst auf «Automatisch» und werden erkannt.
+  EN: New study set: a pasted list shows up in the cards right away – «Trennung» (separator) and «Seiten tauschen» (swap sides) change them right there, and «Karten übernehmen» (add cards) is no longer needed. The languages start on «Automatisch» (automatic) and are detected.
+- Behoben (Windows): Nach einem Klick in der Seitenleiste blieb um «Übersicht» oder das Lernset ein blauer Rahmen stehen, als wäre der Knopf noch gedrückt.
+  EN: After a click in the sidebar, a blue frame stayed around «Übersicht» (overview) or the study set, as if the button were still pressed.
 - Neu (Windows): Wortschatz aktualisiert sich selbst: Neue Versionen lädt die App im Hintergrund und installiert sie, wenn du sie beendest, und danach steht in der Seitenleiste, was neu ist. Ausschalten kannst du das unter Einstellungen › Daten › Updates.
   EN: Wortschatz now updates itself: the app downloads new versions in the background and installs them when you quit it, and afterwards the sidebar shows what’s new. You can turn this off under Settings › Data › Updates.
 

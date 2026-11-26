@@ -226,8 +226,8 @@ Die Oberfläche ist **C#-Code, kein XAML**: eine SwiftUI-Datei ↔ eine C#-Datei
 | Snapshot-Harness (`DebugSnapshot.swift`) | `tools/Wortschatz.Snapshots` (headless PNGs) |
 
 Noch nicht portiert (bewusste Lücken, Stand 3.11.2026): Menüleisten-Befehle (Windows hat keine Menüleiste; die
-Kürzel gibt es), App-Updates (bewusst nicht, auch auf dem Mac verworfen), Tippfehler in der Import-Vorschau (Mac:
-ImportDetectionPanel; hier nur in der Kartenliste). Windows-Dienste: `Services/ImportServices.cs` (PDF, Bilder, OCR),
+Kürzel gibt es), App-Updates (bewusst nicht, auch auf dem Mac verworfen). Tippfehler zeigen beide nur in der
+Kartenliste (die Import-Vorschau gibt es seit Mac 1.8 bzw. 26.11.2026 nicht mehr). Windows-Dienste: `Services/ImportServices.cs` (PDF, Bilder, OCR),
 `Services/WindowsSpellEngine.cs` (Rechtschreibung), `DesignSystem/Announcer.cs` (Bildschirmleser).
 
 Seit 24.11.2026 auf beiden: «Wiederholungsfragen» und «Nachkontrolle» gelten sofort, auch für angefangenes Lernen
@@ -268,11 +268,14 @@ Joan: «alle Features der Mac-App auf Windows und umgekehrt». Von Mac nach Wind
 Fenster (Punkt 4 oben, jetzt scharf: `studyScale` aus `StudyScale.factor` – min(Breite/980, Höhe/600), 1 bis 1,2, in
 0,05-Schritten – multipliziert Fragen-, Antwort- und Kartenschrift und die Höhe der Antwortkacheln; Spalte und
 Karteikarte wachsen nur halb so stark, `StudyScale.widthFactor`, die Karteikarte behält ihre Form).
-**Für Windows offen – Editor nur mit Kartenliste:** keine Import-Vorschau und kein «N Karten übernehmen» mehr; jede
+**Windows erledigt (26.11.2026) – Editor nur mit Kartenliste:** keine Import-Vorschau und kein «N Karten übernehmen» mehr; jede
 Erkennung steht sofort in den Karten (`SetEditorModel.syncImport`: Karten aus dem Importfeld tragen `importKey`, werden
 bei jeder Erkennung an Ort und Stelle ersetzt; Änderungen des Benutzers an ihnen bleiben, nach Paar gemerkt, auch
 umgedreht – `importEdits`); «Trennung» und «Seiten tauschen» ändern die Karten direkt; Knopf «Lernset erstellen»;
 Sprachen eines neuen Lernsets zuerst «Automatisch» (ohne Erkennung beim Sichern aus den Karten, `LangDetect`).
+Windows: `ImportPanel.cs` › `SyncImport`, `ImportedCards`, `_importEdits`, `ClearImportText` (rückgängig machbar);
+`Draft.ImportKey`; Sprachwahl mit «Automatisch» und Trennlinie (`SetEditorScreen.LangBox`, `TermIsAuto`,
+`ResolvedLanguages`); Bild-Szene `08f-editor-import-edits` (Mac: editor-importEdits).
 
 Nicht nötig auf dem Mac (nur Windows): ältere Downloads löschen, Fenster nach Bildschirmwechsel zurückholen, Übernahme
 der früheren Windows-App.

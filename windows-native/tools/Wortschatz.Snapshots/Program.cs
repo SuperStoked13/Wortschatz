@@ -224,17 +224,28 @@ static class Samples
             yield return "08-editor";
             model.Navigate(new Route.Editor(null));
             yield return "08b-editor-new";
-            // A pasted list with a heading, a doubled term and an unsure line: the detection with its preview, then the
-            // cards it makes (doubled term marked) and a save attempt without a title (the errors stay on screen).
+            // A pasted list with a heading, a doubled term and an unsure line: the detection, the cards it made at once
+            // (doubled term marked; no preview, no "übernehmen" since 26.11.2026, Mac 1.8) and a save attempt without a
+            // title (the errors stay on screen).
             if (window.CurrentScreen is Wortschatz.App.Features.Editor.SetEditorScreen editor)
             {
                 editor.SnapshotImportText("Vocabulaire – Unité 3\nla maison - das Haus\nle chat - die Katze\nle chien - der Hund\nla maison - das Gebäude\n"
                     + "la fenêtre - das Fenster\nla porte - die Tür\nle jardin - der Garten\nla cuisine - die Küche\nle salon - das Wohnzimmer\nla chambre");
                 yield return "08c-editor-detection";
-                editor.SnapshotApplyImport();
+                editor.SnapshotShowCards();
                 yield return "08d-editor-cards";
                 editor.SnapshotValidate();
                 yield return "08e-editor-errors";
+            }
+            // Changes to cards from the box survive another recognition (Mac: editor-importEdits): the first card changed,
+            // the second deleted, an own card typed in, then "Seiten tauschen". (The editor before has unsaved changes: its
+            // leave guard would ask first.)
+            model.LeaveGuard = null;
+            model.Navigate(new Route.Editor(null));
+            if (window.CurrentScreen is Wortschatz.App.Features.Editor.SetEditorScreen edits)
+            {
+                edits.SnapshotImportEdits("le monsieur\nder Herr\n\nla dame\ndie Dame\n\nl'enfant\ndas Kind\n\nle garçon\nder Junge\n\nla fille\ndas Mädchen\n");
+                yield return "08f-editor-import-edits";
             }
             yield break;
         }

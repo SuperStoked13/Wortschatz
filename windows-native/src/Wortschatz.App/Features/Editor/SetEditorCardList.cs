@@ -22,7 +22,7 @@ public sealed partial class SetEditorScreen
     sealed class Draft
     {
         /// <summary>The values needed to rebuild a row (undo).</summary>
-        public sealed record Snapshot(Guid Key, string? Id, string Term, string Definition, bool Starred, IReadOnlyList<ParseFlag> Flags);
+        public sealed record Snapshot(Guid Key, string? Id, string Term, string Definition, bool Starred, IReadOnlyList<ParseFlag> Flags, string? ImportKey);
 
         /// <summary>The row's identity in the list (not the card id: new rows have none yet).</summary>
         public Guid Key = Guid.NewGuid();
@@ -33,6 +33,11 @@ public sealed partial class SetEditorScreen
         public bool Starred;
         /// <summary>Parser flags of an imported card ("bitte prüfen"); cleared by the first edit.</summary>
         public IReadOnlyList<ParseFlag> Flags = [];
+        /// <summary>
+        /// The pair of the import box this card shows (<see cref="ImportKeyOf"/>), null for a card typed in or loaded from
+        /// the set. Such cards follow the import box: another Trennung, "Seiten tauschen" or more text changes them in place.
+        /// </summary>
+        public string? ImportKey;
         /// <summary>Marked by the last save attempt: filled but incomplete, until fixed.</summary>
         public bool IsInvalid;
         /// <summary>Its term appears in another row too.</summary>
@@ -50,9 +55,8 @@ public sealed partial class SetEditorScreen
         public bool HasSpellingIssues => TermSpelling.Count > 0 || DefSpelling.Count > 0;
 
         public static Draft FromCard(Card c) => new() { Id = c.Id, Term = c.Term, Definition = c.Definition, Starred = c.Starred };
-        public static Draft FromParsed(ParsedCard c) => new() { Term = c.Term, Definition = c.Definition, Flags = c.Flags };
-        public static Draft FromSnapshot(Snapshot s) => new() { Key = s.Key, Id = s.Id, Term = s.Term, Definition = s.Definition, Starred = s.Starred, Flags = s.Flags };
-        public Snapshot Snap() => new(Key, Id, Term, Definition, Starred, Flags);
+        public static Draft FromSnapshot(Snapshot s) => new() { Key = s.Key, Id = s.Id, Term = s.Term, Definition = s.Definition, Starred = s.Starred, Flags = s.Flags, ImportKey = s.ImportKey };
+        public Snapshot Snap() => new(Key, Id, Term, Definition, Starred, Flags, ImportKey);
     }
 
     /// <summary>The controls of a row on screen.</summary>
@@ -141,7 +145,7 @@ public sealed partial class SetEditorScreen
 
     const double NumberWidth = 28, ActionsWidth = 74, ColumnSpacing = 10;
 
-    /// <summary>"# · BEGRIFF · FRANZÖSISCH · DEFINITION · DEUTSCH" (Mac: SetEditorColumnHeader).</summary>
+    /// <summary>"# · BEGRIFF · FRANZÖSISCH · DEFINITION · DEUTSCH" (Mac: SetEditorColumnHeader; "BEGRIFF" alone while "Automatisch").</summary>
     Grid ColumnHeader(bool pinned)
     {
         var grid = new Grid
@@ -164,10 +168,11 @@ public sealed partial class SetEditorScreen
         number.TextAlignment = TextAlignment.Right;
         number.HorizontalAlignment = HorizontalAlignment.Right;
         grid.Children.Add(number);
-        var term = Ui.Eyebrow(L($"Begriff · {Labels.LangName(_termLang)}"));
+        // Just "BEGRIFF" while its language is still "Automatisch" (Mac: SetEditorColumnHeader with nil).
+        var term = Ui.Eyebrow(TermIsAuto ? L("Begriff") : L($"Begriff · {Labels.LangName(_termLang)}"));
         Grid.SetColumn(term, 1);
         grid.Children.Add(term);
-        var def = Ui.Eyebrow(L($"Definition · {Labels.LangName(_defLang)}"));
+        var def = Ui.Eyebrow(DefIsAuto ? L("Definition") : L($"Definition · {Labels.LangName(_defLang)}"));
         Grid.SetColumn(def, 2);
         grid.Children.Add(def);
     }
@@ -293,6 +298,7 @@ public sealed partial class SetEditorScreen
         star = Ui.IconButton(d.Starred ? IconName.StarFilled : IconName.Star, d.Starred ? L("Markierung entfernen") : L("Markieren"), () =>
         {
             d.Starred = !d.Starred;
+            NoteImportEdit(d);
             Announcer.Announce(d.Starred ? L("Markiert") : L("Markierung entfernt"));
             if (star?.Chrome.Child is Border holder)
             {
@@ -438,6 +444,7 @@ public sealed partial class SetEditorScreen
         }
         if (isTerm) d.Term = value;
         else d.Definition = value;
+        NoteImportEdit(d);
         bool changed = false;
         if (d.Flags.Count > 0)
         {
@@ -462,6 +469,7 @@ public sealed partial class SetEditorScreen
         d.Definition = definition;
         d.Flags = [];
         d.IsInvalid = false;
+        NoteImportEdit(d);
         if (d.View is { } view)
         {
             view.Term.Text = term;
@@ -474,7 +482,7 @@ public sealed partial class SetEditorScreen
         UpdateStats();
     }
 
-    /// <summary>A whole list pasted into a field goes to the import box (Mac: divertList).</summary>
+    /// <summary>A whole list pasted into a field goes to the import box (Mac: divertList); its pairs come into the cards from there.</summary>
     void DivertList(string text)
     {
         ImportSetText(text, append: true);
@@ -511,6 +519,7 @@ public sealed partial class SetEditorScreen
         if (_drafts.Count <= 1 || d.IsFilled || index < 0) return false;
         var previous = index > 0 ? _drafts[index - 1] : null;
         _drafts.RemoveAt(index);
+        if (d.ImportKey is { } key) SetImportEdit(new ImportEdit.Removed(), key);
         FillCards();
         ScheduleDuplicates();
         if (previous is not null) FocusRow(previous, definition: true);
@@ -541,6 +550,7 @@ public sealed partial class SetEditorScreen
         void Change()
         {
             _drafts.RemoveAt(index);
+            if (d.ImportKey is { } key) SetImportEdit(new ImportEdit.Removed(), key);
             if (_drafts.Count == 0) _drafts.Add(new Draft());
         }
         if (d.IsFilled) Undoable(L("Karte löschen"), L("Karte gelöscht"), ToastTone.Neutral, includesImport: false, Change);
@@ -571,29 +581,6 @@ public sealed partial class SetEditorScreen
         var list = Padded(rows);
         _drafts.Clear();
         _drafts.AddRange(list);
-    }
-
-    /// <summary>Appends after the last non-empty row (trailing empty rows are reused).</summary>
-    void AppendRows(IEnumerable<Draft> rows)
-    {
-        var kept = _drafts.ToList();
-        while (kept.Count > 0 && !kept[^1].IsFilled) kept.RemoveAt(kept.Count - 1);
-        SetRows(kept.Concat(rows));
-    }
-
-    /// <summary>Imported rows replacing existing ones keep the card id and star of a row with the same term (Mac: withPreservedIDs).</summary>
-    static List<Draft> WithPreservedIds(List<Draft> created, IEnumerable<Draft> previous)
-    {
-        var pool = previous.Where(d => d.Id is not null && SetEditorCopy.TermKey(d.Term).Length > 0).GroupBy(d => SetEditorCopy.TermKey(d.Term))
-            .ToDictionary(g => g.Key, g => new Queue<Draft>(g));
-        foreach (var row in created)
-        {
-            if (!pool.TryGetValue(SetEditorCopy.TermKey(row.Term), out var matches) || matches.Count == 0) continue;
-            var match = matches.Dequeue();
-            row.Id = match.Id;
-            row.Starred = match.Starred;
-        }
-        return created;
     }
 
     // MARK: Duplicates
@@ -701,7 +688,6 @@ public sealed partial class SetEditorScreen
                 Model.Speller.Ignore(issue.Word, isTerm ? _termLang : _defLang);
                 Announcer.Announce(L($"«{issue.Word}» wird nicht mehr als Tippfehler markiert"));
                 CheckSpelling();
-                CheckImportTypos();
             };
             menu.Items.Add(ignore);
             menu.Placement = PlacementMode.BottomEdgeAlignedLeft;
@@ -724,6 +710,7 @@ public sealed partial class SetEditorScreen
             if (isTerm) d.Term = corrected;
             else d.Definition = corrected;
             d.Flags = [];
+            NoteImportEdit(d);
         });
         if (d.View is { } view) (isTerm ? view.Term : view.Definition).Text = corrected;
         UpdateRow(d);
