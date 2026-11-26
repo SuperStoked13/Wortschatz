@@ -118,8 +118,6 @@ public sealed class LearnReview : IJsonEncodable
     /// <summary>cardId → whether its repetition question was answered right (the first answer counts).</summary>
     public Dictionary<string, bool> Results { get; set; } = new(StringComparer.Ordinal);
 
-    public LearnReview Clone() => new() { Due = [.. Due], Results = new(Results, StringComparer.Ordinal) };
-
     public JSONValue ToJson() => JSONValue.Obj(("due", Due.ToJsonArray()), ("results", LearnJson.Map(Results, b => b)));
 }
 
@@ -131,8 +129,6 @@ public sealed class LearnRecheck : IJsonEncodable
 {
     /// <summary>Mastered cards waiting for their recheck (not queued yet), in the order they were mastered.</summary>
     public List<string> Due { get; set; } = [];
-
-    public LearnRecheck Clone() => new() { Due = [.. Due] };
 
     public JSONValue ToJson() => JSONValue.Obj(("due", Due.ToJsonArray()));
 }
@@ -324,9 +320,12 @@ public static class LearnEngine
     /// uniformly random position plus distinct wrong answers of other (non-synonym) cards, the most alike ones
     /// (RankedDistractors) in random order. [] when the card has no id or no answer text; a non-positive n means MAX_CHOICES.
     /// </summary>
-    public static List<Choice> BuildChoices(IReadOnlyList<Card> cards, Card card, AskSide ask, RNG? rng = null, int n = MAX_CHOICES)
+    public static List<Choice> BuildChoices(IReadOnlyList<Card> cards, Card card, AskSide ask, RNG? rng = null, int n = MAX_CHOICES) =>
+        BuildChoices(new ChoicePool(CardList(cards)), card, ask, rng ?? Rand.SystemRNG(), n);
+
+    /// <summary>BuildChoices from a pool shared by the questions of one round (ChoicePool).</summary>
+    static List<Choice> BuildChoices(ChoicePool pool, Card card, AskSide ask, RNG rng, int n = MAX_CHOICES)
     {
-        rng ??= Rand.SystemRNG();
         if (card.Id.Length == 0) return [];
         var correctText = JSCompat.Trim(Synonyms.AnswerSide(card, ask));
         if (TextNormalizer.NormalizeBasic(correctText).Length == 0) return [];
@@ -334,7 +333,7 @@ public static class LearnEngine
         var correct = new Choice(card.Id, correctText);
         if (size == 1) return [correct];
 
-        var ranked = RankedDistractors(CardList(cards), card, ask, rng);
+        var ranked = RankedDistractors(pool, card, ask, rng);
         // The most alike, in random order; the correct option's position is uniform over all slots.
         var choices = Shuffled(ranked.Take(size - 1).ToList(), rng);
         choices.Insert(RandomIndex(rng, choices.Count + 1), correct);
@@ -806,7 +805,7 @@ public static class LearnEngine
         if (cards is not null)
         {
             var all = CardList(cards);
-            refill = new Refill(all.Where(c => c.Id != cardId && Askable(c)).ToList(), ById(all));
+            refill = new Refill(new ChoicePool(all.Where(c => c.Id != cardId && Askable(c)).ToList()), ById(all));
         }
         DropCard(s, cardId, refill, rng);
         FinishEarly(s, nowMs);
@@ -1077,29 +1076,134 @@ public static class LearnEngine
     });
 
     /// <summary>
-    /// Possible wrong options for <paramref name="card"/> asked on <paramref name="side"/>, in list order (list: CardList
-    /// output): other cards' answer texts that are non-empty, distinct, differ from the correct answer and share
+    /// The cards wrong options come from, with what Distractors and RankedDistractors need of each card worked out once
+    /// per list (lazily, per side) instead of once per question: a round plans roundSize questions with two option lists
+    /// each, and every list compares the asked card with every card of the set (Mac: ChoicePool, 26.11.2026). Lives for
+    /// one engine call; the values are those of the memoised text functions, so the options stay exactly the same.
+    /// </summary>
+    sealed class ChoicePool(List<Card> list)
+    {
+        /// <summary>What every card says on one side (index = position in List).</summary>
+        public sealed class SideData
+        {
+            /// <summary>The trimmed answer text, its shape and the shape's head as code points (ShapePoints).</summary>
+            public required string[] Texts { get; init; }
+            public required WordClass.OptionShape[] Shapes { get; init; }
+            public required int[][] HeadScalars { get; init; }
+            /// <summary>
+            /// The number of each distinct answer key (TextKey; -1 for an empty one): a question keeps its options
+            /// distinct by number instead of hashing every text again.
+            /// </summary>
+            public required Dictionary<string, int> KeyNumbers { get; init; }
+            public required int[] KeyNumber { get; init; }
+            /// <summary>The cards having each key among their answer's alternatives (AnswerKeys), and among their prompt's (Synonyms.PromptKeys).</summary>
+            public required Dictionary<string, List<int>> AnswerKeyCards { get; init; }
+            public required Dictionary<string, List<int>> PromptKeyCards { get; init; }
+            /// <summary>Whether the answer is blank (no synonym card then).</summary>
+            public required bool[] BlankAnswers { get; init; }
+        }
+
+        public List<Card> List { get; } = list;
+        SideData? _term, _definition;
+        Dictionary<string, int>? _at;
+        WordClass.ListProfiles? _sides;
+        string[]? _classes;
+
+        /// <summary>Each card id's position (the last one wins).</summary>
+        public Dictionary<string, int> At => _at ??= Positions();
+        public WordClass.ListProfiles Sides => _sides ??= WordClass.ListProfilesOf(List);
+        /// <summary>WordClass.CardClass of each card.</summary>
+        public string[] Classes => _classes ??= List.Select(c => WordClass.CardClass(c, Sides)).ToArray();
+
+        Dictionary<string, int> Positions()
+        {
+            var at = new Dictionary<string, int>(List.Count, StringComparer.Ordinal);
+            for (int i = 0; i < List.Count; i++) at[List[i].Id] = i;
+            return at;
+        }
+
+        public SideData Side(AskSide ask)
+        {
+            if ((ask == AskSide.Term ? _term : _definition) is { } known) return known;
+            var answers = Sides.Side(ask);
+            int count = List.Count;
+            var texts = new string[count];
+            var keyNumber = new int[count];
+            var keyNumbers = new Dictionary<string, int>(StringComparer.Ordinal);
+            var answerKeyCards = new Dictionary<string, List<int>>(StringComparer.Ordinal);
+            var promptKeyCards = new Dictionary<string, List<int>>(StringComparer.Ordinal);
+            var blank = new bool[count];
+            for (int i = 0; i < count; i++)
+            {
+                var answer = Synonyms.AnswerSide(List[i], ask);
+                var text = texts[i] = JSCompat.Trim(answer);
+                var key = TextKey(text);
+                if (key.Length == 0) keyNumber[i] = -1;
+                else
+                {
+                    if (!keyNumbers.TryGetValue(key, out var number)) keyNumbers[key] = number = keyNumbers.Count;
+                    keyNumber[i] = number;
+                }
+                foreach (var alt in AnswerKeys(text)) Add(answerKeyCards, alt, i);
+                foreach (var alt in Synonyms.PromptKeys(Synonyms.PromptSide(List[i], ask))) Add(promptKeyCards, alt, i);
+                blank[i] = Synonyms.IsBlank(answer);
+            }
+            var shapes = texts.Select(t => WordClass.ShapeOf(t, answers)).ToArray();
+            var side = new SideData
+            {
+                Texts = texts, Shapes = shapes, HeadScalars = shapes.Select(x => JSCompat.Scalars(x.Head).ToArray()).ToArray(),
+                KeyNumbers = keyNumbers, KeyNumber = keyNumber, AnswerKeyCards = answerKeyCards, PromptKeyCards = promptKeyCards,
+                BlankAnswers = blank,
+            };
+            if (ask == AskSide.Term) _term = side; else _definition = side;
+            return side;
+        }
+
+        static void Add(Dictionary<string, List<int>> map, string key, int i)
+        {
+            if (!map.TryGetValue(key, out var cards)) map[key] = cards = [];
+            cards.Add(i);
+        }
+    }
+
+    /// <summary>
+    /// Possible wrong options for <paramref name="card"/> asked on <paramref name="side"/>, in pool.List order (with their
+    /// positions): other cards' answer texts that are non-empty, distinct, differ from the correct answer and share
     /// none of its alternatives, from cards that are no synonyms of card. Texts whose key is in takenKeys are
     /// skipped too.
     /// </summary>
-    static List<Choice> Distractors(IReadOnlyList<Card> list, Card card, AskSide side, IEnumerable<string>? takenKeys = null)
+    static List<(Choice Choice, int Index)> Distractors(ChoicePool pool, Card card, AskSide side, IEnumerable<string>? takenKeys = null)
     {
+        var list = pool.List;
+        var data = pool.Side(side);
         var correctText = JSCompat.Trim(Synonyms.AnswerSide(card, side));
-        // Synonym cards (same prompt) would make their answer correct too.
-        var synonyms = new HashSet<string>(Synonyms.FindSynonymCards(list, card, side).Select(c => c.Id), StringComparer.Ordinal);
-        var correctKeys = AnswerKeys(correctText);
-        var usedKeys = new HashSet<string>(takenKeys ?? [], StringComparer.Ordinal) { TextKey(correctText) };
-        var output = new List<Choice>();
-        foreach (var other in list)
+        // Synonym cards (same prompt) would make their answer correct too (Synonyms.FindSynonymCards).
+        var synonyms = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var key in Synonyms.PromptKeys(Synonyms.PromptSide(card, side)))
         {
-            if (other.Id == card.Id || synonyms.Contains(other.Id)) continue;
-            var text = JSCompat.Trim(Synonyms.AnswerSide(other, side));
-            var key = TextKey(text);
-            if (key.Length == 0 || usedKeys.Contains(key)) continue;
-            // An option sharing an alternative with the correct answer would be correct as well.
-            if (AnswerKeys(text).Overlaps(correctKeys)) continue;
-            usedKeys.Add(key);
-            output.Add(new Choice(other.Id, text));
+            if (!data.PromptKeyCards.TryGetValue(key, out var cards)) continue;
+            foreach (int i in cards)
+                if (!Synonyms.IsSameCard(list[i], card) && !data.BlankAnswers[i]) synonyms.Add(list[i].Id);
+        }
+        // An option sharing an alternative with the correct answer would be correct as well.
+        var sharesAlternative = new bool[list.Count];
+        foreach (var key in AnswerKeys(correctText))
+            if (data.AnswerKeyCards.TryGetValue(key, out var cards))
+                foreach (int i in cards) sharesAlternative[i] = true;
+        // Keys not among the list's cannot match an option.
+        var usedKeys = new bool[data.KeyNumbers.Count];
+        foreach (var key in (takenKeys ?? []).Append(TextKey(correctText)))
+            if (data.KeyNumbers.TryGetValue(key, out var number)) usedKeys[number] = true;
+        var output = new List<(Choice, int)>();
+        for (int i = 0; i < list.Count; i++)
+        {
+            var other = list[i];
+            if (other.Id == card.Id || (synonyms.Count > 0 && synonyms.Contains(other.Id))) continue;
+            int number = data.KeyNumber[i];
+            if (number < 0 || usedKeys[number]) continue;
+            if (sharesAlternative[i]) continue;
+            usedKeys[number] = true;
+            output.Add((new Choice(other.Id, data.Texts[i]), i));
         }
         return output;
     }
@@ -1110,28 +1214,28 @@ public static class LearnEngine
     /// points (close in the set, same article, as many words, similar length, same beginning and ending) plus a
     /// random 0–2, so options almost as similar take turns; equal ones in random order.
     /// </summary>
-    static List<Choice> RankedDistractors(IReadOnlyList<Card> list, Card card, AskSide side, RNG rng, IEnumerable<string>? takenKeys = null)
+    static List<Choice> RankedDistractors(ChoicePool pool, Card card, AskSide side, RNG rng, IEnumerable<string>? takenKeys = null)
     {
-        var candidates = Distractors(list, card, side, takenKeys);
-        var at = new Dictionary<string, int>(StringComparer.Ordinal);
-        for (int i = 0; i < list.Count; i++) at[list[i].Id] = i;
-        var sides = WordClass.ListProfilesOf(list);
+        var candidates = Distractors(pool, card, side, takenKeys);
+        var at = pool.At;
+        var sides = pool.Sides;
+        var data = pool.Side(side);
         var cls = WordClass.CardClass(card, sides);
-        var answers = sides.Side(side);
-        var shape = WordClass.ShapeOf(JSCompat.Trim(Synonyms.AnswerSide(card, side)), answers);
+        var shape = WordClass.ShapeOf(JSCompat.Trim(Synonyms.AnswerSide(card, side)), sides.Side(side));
+        var shapeScalars = JSCompat.Scalars(shape.Head).ToArray();
         int here = at.TryGetValue(card.Id, out var h) ? h : -1;
-        var ranked = new List<(Choice Choice, int Order, int Key)>();
+        var ranked = new List<(Choice Choice, int Order, int Key)>(candidates.Count);
         var order = 0;
         foreach (var c in Shuffled(candidates, rng))
         {
-            int i = at.TryGetValue(c.CardId, out var k) ? k : 0;
-            var otherCls = WordClass.CardClass(list[i], sides);
+            int i = at.TryGetValue(c.Choice.CardId, out var k) ? k : 0;
+            var otherCls = pool.Classes[i];
             int tier = cls.Length == 0 || otherCls.Length == 0 ? 1 : otherCls == cls ? 2 : 0;
-            int points = WordClass.ShapePoints(shape, WordClass.ShapeOf(c.Text, answers));
+            int points = WordClass.ShapePoints(shape, shapeScalars, data.Shapes[c.Index], data.HeadScalars[c.Index]);
             if (here >= 0) points += WordClass.NearPoints(Math.Abs(i - here));
-            ranked.Add((c, order++, tier * 100 + points + RandomIndex(rng, 3)));
+            ranked.Add((c.Choice, order++, tier * 100 + points + RandomIndex(rng, 3)));
         }
-        ranked.Sort((a, b) => a.Key != b.Key ? b.Key.CompareTo(a.Key) : a.Order.CompareTo(b.Order));
+        ranked.Sort(static (a, b) => a.Key != b.Key ? b.Key.CompareTo(a.Key) : a.Order.CompareTo(b.Order));
         return ranked.Select(x => x.Choice).ToList();
     }
 
@@ -1209,7 +1313,7 @@ public static class LearnEngine
     /// multiple choice needs at least two options. RetryChoices holds the options for when the question has to be
     /// asked as multiple choice after all (a wrong multiple-choice answer earlier in the round).
     /// </summary>
-    static LearnQueueQuestion MakeQuestion(LearnState s, Card card, int stage, IReadOnlyList<Card> pool, string qid, RNG rng)
+    static LearnQueueQuestion MakeQuestion(LearnState s, Card card, int stage, ChoicePool pool, string qid, RNG rng)
     {
         var ask = PickAsk(s.AnswerWith, rng);
         var choices = s.Learn.Mc ? BuildChoices(pool, card, ask, rng) : [];
@@ -1320,7 +1424,7 @@ public static class LearnEngine
     {
         var all = CardList(cards);
         var byId = ById(all);
-        var pool = all.Where(Askable).ToList();
+        var pool = new ChoicePool(CardList(all.Where(Askable).ToList()));
         var index = new Dictionary<string, int>(StringComparer.Ordinal);
         for (int i = 0; i < s.Order.Count; i++) index[s.Order[i]] = i;
         bool Mastered(string id) => index.ContainsKey(id) && s.Stage.GetValueOrDefault(id) >= MasteredStage;
@@ -1476,7 +1580,7 @@ public static class LearnEngine
             s.RoundLog.Select(e => e.CardId).Distinct(StringComparer.Ordinal).ToList()));
 
     /// <summary>The set's askable cards without the removed one, and every card by id: the source of replacement options.</summary>
-    sealed record Refill(IReadOnlyList<Card> Pool, IReadOnlyDictionary<string, Card> ById);
+    sealed record Refill(ChoicePool Pool, IReadOnlyDictionary<string, Card> ById);
 
     /// <summary>
     /// The options of question q without card id. With refill its slot gets the most alike other valid wrong option

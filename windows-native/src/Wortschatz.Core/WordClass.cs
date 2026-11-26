@@ -297,7 +297,7 @@ public static class WordClass
     /// <summary>Cues of one language (weak ones and the language's own strong ones), then a name ("Noël") or a long text without other cues.</summary>
     static TextClass LanguageCues(Parsed p, SideProfile side)
     {
-        var (list, caps, objects) = Content(p);
+        var (list, caps, _) = Content(p);
         if (list.Count == 0) return TextClass.None;
         var last = list[^1];
         bool single = list.Count == 1;
@@ -403,14 +403,16 @@ public static class WordClass
     }
 
     /// <summary>Similarity points of two option shapes: the same article, as many words, a similar length, the same first two and last three letters (0–5).</summary>
-    public static int ShapePoints(OptionShape a, OptionShape b)
+    public static int ShapePoints(OptionShape a, OptionShape b) =>
+        ShapePoints(a, JSCompat.Scalars(a.Head).ToArray(), b, JSCompat.Scalars(b.Head).ToArray());
+
+    /// <summary>ShapePoints with the heads' code points worked out ahead (LearnEngine's ChoicePool, once per card).</summary>
+    internal static int ShapePoints(OptionShape a, ReadOnlySpan<int> x, OptionShape b, ReadOnlySpan<int> y)
     {
         int points = 0;
         if (a.Article.Length > 0 && a.Article == b.Article) points++;
         if (a.Words == b.Words) points++;
         if (Math.Abs(a.Length - b.Length) <= Math.Max(2, a.Length / 5)) points++;
-        var x = JSCompat.Scalars(a.Head).ToArray();
-        var y = JSCompat.Scalars(b.Head).ToArray();
         if (x.Length >= 2 && y.Length >= 2 && x[0] == y[0] && x[1] == y[1]) points++;
         if (x.Length >= 3 && y.Length >= 3 && x[^3..].SequenceEqual(y[^3..])) points++;
         return points;

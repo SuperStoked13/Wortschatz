@@ -89,7 +89,7 @@ public static class Synonyms
 
     static int Quality(GradeResult r) => r.Exact ? 0 : 1 + r.Notes.Count;
 
-    static bool IsSameCard(Card a, Card b) => a.Id == b.Id;
+    internal static bool IsSameCard(Card a, Card b) => a.Id == b.Id;
 
     /// <summary>Comparison key: case, ß/ss, ligatures, hyphens, punctuation and brackets do not matter.</summary>
     static string KeyOf(string text)
@@ -108,7 +108,7 @@ public static class Synonyms
         LooseKeySets.Value($"{(lang is { } l ? l.Raw() : "")}\u0001{text}", _ => ExtendedSynonyms.AlternativeKeys(text, lang));
 
     /// <summary>The whole prompt and each of its alternatives ("lieb, nett" → lieb nett | lieb | nett).</summary>
-    static HashSet<string> PromptKeys(string text) => PromptKeySets.Value(text, t =>
+    internal static HashSet<string> PromptKeys(string text) => PromptKeySets.Value(text, t =>
     {
         var keys = new HashSet<string>(StringComparer.Ordinal) { KeyOf(t) };
         foreach (var alt in Grading.SplitAlternatives(t)) keys.Add(KeyOf(alt));
@@ -116,5 +116,5 @@ public static class Synonyms
         return keys;
     });
 
-    static bool IsBlank(string text) => BlankTexts.Value(text, t => TextNormalizer.NormalizeBasic(t).Length == 0);
+    internal static bool IsBlank(string text) => BlankTexts.Value(text, t => TextNormalizer.NormalizeBasic(t).Length == 0);
 }
