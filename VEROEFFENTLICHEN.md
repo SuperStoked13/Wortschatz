@@ -34,8 +34,8 @@ online.
      Downloadseite/releases/appcast.xml
    ```
 5. Nach höchstens etwa **6 Minuten** ist die neue Version online. Prüfen: Die Seite zeigt die neue
-   Versionsnummer, und `/checksums.txt` nennt die neuen Dateien. Die Seite ist passwortgeschützt – sie fragt einmal
-   nach dem Passwort.
+   Versionsnummer, und `/checksums.txt` nennt die neuen Dateien. Die Seite ist öffentlich (seit 26.11.2026 ohne
+   Passwort).
 
 ## Updates (Mac)
 

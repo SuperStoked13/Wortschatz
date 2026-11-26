@@ -166,13 +166,14 @@ ist vorbereitet, siehe `VEROEFFENTLICHEN.md`). Deshalb erklärt die Seite die Wa
 ist; sie schützen nicht davor, dass jemand den Server selbst übernimmt. Halte deshalb das
 Betriebssystem, Node und Caddy aktuell.
 
-### Geplant: öffentlich ohne Passwort (Joan, 25.11.2026)
+### Öffentlich ohne Passwort (seit 26.11.2026)
 
-Ersetzt den Einladungslink (Issue #2) und «Das Passwort bleibt» vom 05.11.2026, dessen Grund war: Eine offene
-DuckDNS-Seite, die selbst eine unsignierte exe verteilt, würde schnell als gefährlich markiert. Darum in dieser
-Reihenfolge: zuerst kommen die Apps aus Releases des öffentlichen Repos («Downloads auf GitHub» oben), dann läuft der
-Container ohne Netz (`LISTEN_SOCKET`, Docker `network_mode: none`), Name und Kontakt stehen in der
-Datenschutzerklärung (`OPERATOR_NAME`, `CONTACT_EMAIL`) – erst dann fällt `SITE_PASSWORD` weg. Bis dahin bleibt es.
+Die Seite ist öffentlich, ohne `SITE_PASSWORD`. Vorher, in dieser Reihenfolge: Die Apps kommen aus den Releases dieses
+Repos («Downloads auf GitHub» oben, die Seite verteilt selbst keine Programme), der Container läuft ohne Netz
+(`LISTEN_SOCKET`, Docker `network_mode: none`), und Name und Kontakt stehen in der Datenschutzerklärung
+(`OPERATOR_NAME`, `CONTACT_EMAIL`). Das ersetzt «Das Passwort bleibt» vom 05.11.2026 (Grund damals: Eine offene
+Seite, die selbst eine unsignierte exe verteilt, würde schnell als gefährlich markiert) und den Einladungslink.
+Der Passwortschutz bleibt im Code, falls er wieder gebraucht wird.
 
 ## Tests
 
