@@ -4,9 +4,9 @@
 Der Server schaut alle 5 Minuten nach, testet, baut und schaltet um. Klappt etwas nicht, bleibt die bisherige Version
 online.
 
-> **Noch nicht umgestellt (Stand 25.11.2026):** Die Downloadseite holt ihre Downloads vorerst nicht aus diesem Repo.
-> Ein Release hier startet nur die Updates der Apps und erscheint erst nach der Umstellung auf der Seite – das erste
-> Release hier mit Joan absprechen.
+> **Seit 26.11.2026 kommt die Downloadseite aus diesem Repo.** Der Code der Seite stammt aus dem «Latest»-Release, die
+> Downloads je App aus dem neuesten veröffentlichten Release mit einer Datei dafür: Mac und Windows dürfen also
+> getrennte Releases haben, ein Mac-Release lässt Windows, wie es ist. Die Seite verlinkt die Dateien auf GitHub.
 
 ## So geht's
 
