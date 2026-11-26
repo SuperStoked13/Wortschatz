@@ -52,6 +52,12 @@ enum StudyEntrance {
         try? await Task.sleep(for: .milliseconds(110))
     }
 
+    /// Waits until the change just made has been drawn, so the next step starts in a frame of
+    /// its own (a long frame ends before the sleep does).
+    static func waitForFrame() async {
+        try? await Task.sleep(for: .milliseconds(24))
+    }
+
     /// Opacity of content that is built but not shown yet. Not exactly zero: AppKit and SwiftUI
     /// skip drawing fully transparent content, which would move all the drawing into the
     /// first frame of the fade.

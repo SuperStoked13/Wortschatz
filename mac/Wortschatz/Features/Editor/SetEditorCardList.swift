@@ -2,7 +2,7 @@ import SwiftUI
 import WortschatzCore
 import WortschatzImport
 
-/// Column metrics shared by the card rows and their pinned header.
+/// Column metrics shared by the card rows and their column header.
 nonisolated enum SetEditorLayout {
     /// Readable width of the editor's content column.
     static let contentWidth: CGFloat = 920
@@ -69,7 +69,8 @@ struct SetEditorCardsHeader: View {
     }
 }
 
-/// "# · BEGRIFF · FRANZÖSISCH · DEFINITION · DEUTSCH", pinned above the rows while scrolling
+/// "# · BEGRIFF · FRANZÖSISCH · DEFINITION · DEUTSCH" above the rows, its copy over them while they
+/// scroll (`SetEditorPinnedHeader`)
 /// (just "BEGRIFF" while its language is still "Automatisch", nil).
 struct SetEditorColumnHeader: View {
     let termLang: Lang?
@@ -384,5 +385,60 @@ private struct SetEditorFieldLine: View {
             .fill(isMissing ? Theme.failure.fill : isFocused ? Theme.accent : Theme.hairline)
             .frame(height: isFocused || isMissing ? 2 : 1)
             .accessibilityHidden(true)
+    }
+}
+
+/// Where the column header's copy stands over the rows (`SetEditorView`): at the top of the
+/// editor once the header's own place has scrolled past it, until the last card has, pushed up
+/// by the end of the list like a pinned section header. An overlay instead of a pinned section:
+/// with the pinned section the lazy stack placed its rows on every frame of scrolling, about a
+/// fifth of the main thread while scrolling 500 cards (measured 26.11.2026).
+@MainActor @Observable
+final class SetEditorPinnedHeader {
+    /// The copy on screen: pushed up by `offset` (≤ 0), as wide as the scrolled content.
+    struct Placement: Equatable {
+        var offset: CGFloat
+        var width: CGFloat
+    }
+
+    /// The content's coordinate space (the header's frame is measured in it).
+    nonisolated static let space = "editorContent"
+
+    /// nil: the header's own place is on screen (or the cards are scrolled past).
+    var placement: Placement?
+    /// The column header's place in the content, and the height of what follows the cards. Read
+    /// only while scrolling, so not observed.
+    @ObservationIgnored var headerFrame: CGRect?
+    @ObservationIgnored var footerHeight: CGFloat = 0
+
+    /// The placement at `geometry`. The end of the cards comes from the content's height: a lazy
+    /// stack may not have built the footer yet.
+    func placement(for geometry: ScrollGeometry, bottomPadding: CGFloat) -> Placement? {
+        guard let header = headerFrame else { return nil }
+        let top = geometry.contentOffset.y + geometry.contentInsets.top
+        guard top > header.minY else { return nil }
+        let cardsBottom = geometry.contentSize.height - bottomPadding - footerHeight
+        let offset = min(0, cardsBottom - top - header.height)
+        guard offset > -header.height else { return nil }
+        return Placement(offset: offset, width: geometry.contentSize.width)
+    }
+}
+
+/// The column header's copy over the rows while they scroll under it (`SetEditorPinnedHeader`).
+/// Its own view: a change of its place redraws only it, not the editor's rows.
+struct SetEditorPinnedColumnHeader: View {
+    let pinned: SetEditorPinnedHeader
+    let termLang: Lang?
+    let defLang: Lang?
+
+    var body: some View {
+        if let placement = pinned.placement {
+            SetEditorColumnHeader(termLang: termLang, defLang: defLang)
+                .frame(maxWidth: SetEditorLayout.contentWidth)
+                .padding(.horizontal, Spacing.xxl)
+                .frame(width: placement.width)
+                .offset(y: placement.offset)
+                .clipped()
+        }
     }
 }

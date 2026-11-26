@@ -38,6 +38,9 @@ erscheint nicht auf der Seite.
 
 ## Nächste Version
 
+- Verbessert (Mac): Karteikarten drehen sich flüssiger, die Seitenleiste gleitet beim Starten und Beenden von «Lernen» ruhiger, und der Lernset-Editor scrollt mit vielen Karten flüssiger.
+  EN: Flashcards turn over more smoothly, the sidebar slides more calmly when you start or leave «Learn», and the study set editor scrolls more smoothly with many cards.
+
 ## 1.8.2 – 2026-11-26
 
 - Verbessert (Windows): Neues Lernset: Eine eingefügte Liste steht sofort in den Karten – «Trennung» und «Seiten tauschen» ändern sie direkt dort, «Karten übernehmen» braucht es nicht mehr. Die Sprachen stehen zuerst auf «Automatisch» und werden erkannt.

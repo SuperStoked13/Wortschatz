@@ -516,6 +516,11 @@ final class AppModel {
             underCover()
             self.departingRoute = nil
             self.detailCover = 0
+            // The screens change places under the cover in a frame of their own (the old one
+            // goes, the new one and its toolbar button come): in the same frame as the start of
+            // the sidebar's slide, that first frame took 50–140 ms (measured 26.11.2026).
+            await StudyEntrance.waitForFrame()
+            guard !Task.isCancelled else { return }
             await then()
         }
     }

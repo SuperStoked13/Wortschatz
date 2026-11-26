@@ -219,6 +219,10 @@ struct FlashcardView: View {
     @State private var turnID = 0
     /// The side the card was last sorted to: called back mid-flight, it returns along its path.
     @State private var lastDirection: CGFloat = 1
+    /// From the start of a turn until the card lies flat: the tools are drawn, not live. Buttons
+    /// that turn and lift with the card made AppKit work out every frame again what lies under the
+    /// pointer (and redraw a customized pointer), about a tenth of every frame (measured 26.11.2026).
+    @State private var isTurning = false
 
     init(
         card: Card,
@@ -289,6 +293,16 @@ struct FlashcardView: View {
 
     var body: some View {
         surface
+            .background {
+                // ⌘E edits the card also while it turns (its ✎ button is only drawn then).
+                if isTurning && isCurrent {
+                    Button("Karte bearbeiten", action: onEdit)
+                        .keyboardShortcut("e", modifiers: .command)
+                        .opacity(0)
+                        .allowsHitTesting(false)
+                        .accessibilityHidden(true)
+                }
+            }
             .contentShape(RoundedRectangle(cornerRadius: Radii.card, style: .continuous))
             .onTapGesture { if isCurrent { onFlip() } }
             // Before the tap: a click still turns the card over, a drag moves it.
@@ -375,10 +389,10 @@ struct FlashcardView: View {
     private func face(_ side: FlashcardSide, isUp: Bool) -> some View {
         FlashcardFace(side: side, height: height, verdict: shownVerdict) {
             FlashcardTools(
-                starred: card.starred, speech: speech, isInteractive: isCurrent && isUp, onSpeak: onSpeak,
+                starred: card.starred, speech: speech, isInteractive: isCurrent && isUp && !isTurning, onSpeak: onSpeak,
                 onStar: onStar, onEdit: onEdit)
         }
-        .allowsHitTesting(isUp)
+        .allowsHitTesting(isUp && !isTurning)
         .accessibilityHidden(!isUp)
     }
 
@@ -404,11 +418,16 @@ struct FlashcardView: View {
         let id = turnID
         var instant = Transaction()
         instant.disablesAnimations = true
-        withTransaction(instant) { crystalHold = 1 }
+        withTransaction(instant) {
+            crystalHold = 1
+            // Under Reduce Motion the sides only cross-fade: the tools stay live.
+            isTurning = !reduceMotion
+        }
         withAnimation(FlashcardMotion.flip) {
             turns = next
         } completion: {
             guard id == turnID else { return }
+            withTransaction(instant) { isTurning = false }
             withAnimation(FlashcardMotion.glassReturn) { crystalHold = 0 }
         }
     }
@@ -669,18 +688,27 @@ private struct FlashcardSheen: View {
 
     var body: some View {
         let core = colorScheme == .dark ? 0.44 : 0.26
-        LinearGradient(
-            stops: [
-                .init(color: .white.opacity(0), location: 0.24),
-                .init(color: .white.opacity(core * 0.27), location: 0.4),
-                .init(color: .white.opacity(core), location: 0.5),
-                .init(color: .white.opacity(core * 0.27), location: 0.6),
-                .init(color: .white.opacity(0), location: 0.76),
-            ],
-            startPoint: UnitPoint(x: 0.3, y: position - 0.5),
-            endPoint: UnitPoint(x: 0.7, y: position + 0.5)
-        )
-        .blendMode(.plusLighter)
+        // One gradient three cards tall that only moves with `position`: the same band as one
+        // running from (0.3, position − 0.5) to (0.7, position + 0.5) of the card, but its
+        // colours no longer change on every frame of the turn (that gradient was drawn anew on
+        // the CPU each frame, measured 26.11.2026).
+        GeometryReader { proxy in
+            let height = proxy.size.height
+            LinearGradient(
+                stops: [
+                    .init(color: .white.opacity(0), location: 0.24),
+                    .init(color: .white.opacity(core * 0.27), location: 0.4),
+                    .init(color: .white.opacity(core), location: 0.5),
+                    .init(color: .white.opacity(core * 0.27), location: 0.6),
+                    .init(color: .white.opacity(0), location: 0.76),
+                ],
+                startPoint: UnitPoint(x: 0.3, y: 1.0 / 3),
+                endPoint: UnitPoint(x: 0.7, y: 2.0 / 3)
+            )
+            .frame(width: proxy.size.width, height: height * 3)
+            .offset(y: (position - 1.5) * height)
+            .blendMode(.plusLighter)
+        }
         .allowsHitTesting(false)
         .accessibilityHidden(true)
     }

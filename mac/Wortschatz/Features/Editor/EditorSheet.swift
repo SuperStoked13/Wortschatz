@@ -53,12 +53,16 @@ struct SetEditorView: View {
     @FocusState private var focus: SetEditorField?
     @State private var isSheetDropTargeted = false
     @State private var isTextDropTargeted = false
+    @State private var pinnedHeader = SetEditorPinnedHeader()
 
     var body: some View {
         @Bindable var importPanel = editor.importPanel
         ScrollViewReader { proxy in
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 0, pinnedViews: [.sectionHeaders]) {
+                // No pinned section: the column header's copy over the rows is an overlay
+                // (`SetEditorPinnedHeader`); pinned, the stack placed its rows again on every
+                // frame of scrolling (measured 26.11.2026).
+                LazyVStack(alignment: .leading, spacing: 0) {
                     SetEditorHeader(editor: editor)
                         .padding(.bottom, Spacing.xl)
                     SetEditorMetaSection(editor: editor, focus: $focus)
@@ -84,15 +88,30 @@ struct SetEditorView: View {
                     } header: {
                         SetEditorColumnHeader(
                             termLang: editor.termIsAuto ? nil : editor.termLang, defLang: editor.defIsAuto ? nil : editor.defLang)
+                        .onGeometryChange(for: CGRect.self) { $0.frame(in: .named(SetEditorPinnedHeader.space)) } action: {
+                            pinnedHeader.headerFrame = $0
+                        }
                     }
                     SetEditorCardsFooter(editor: editor)
                         .padding(.top, Spacing.xxs)
+                        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { pinnedHeader.footerHeight = $0 }
                 }
                 .frame(maxWidth: SetEditorLayout.contentWidth)
                 .padding(.horizontal, Spacing.xxl)
                 .padding(.top, Spacing.xl)
                 .padding(.bottom, Spacing.l)
                 .frame(maxWidth: .infinity)
+                .coordinateSpace(.named(SetEditorPinnedHeader.space))
+            }
+            .onScrollGeometryChange(for: SetEditorPinnedHeader.Placement?.self) { geometry in
+                pinnedHeader.placement(for: geometry, bottomPadding: Spacing.l)
+            } action: { _, placement in
+                pinnedHeader.placement = placement
+            }
+            .overlay(alignment: .topLeading) {
+                SetEditorPinnedColumnHeader(
+                    pinned: pinnedHeader, termLang: editor.termIsAuto ? nil : editor.termLang,
+                    defLang: editor.defIsAuto ? nil : editor.defLang)
             }
             .safeAreaBar(edge: .bottom) {
                 SetEditorActionBar(editor: editor)
