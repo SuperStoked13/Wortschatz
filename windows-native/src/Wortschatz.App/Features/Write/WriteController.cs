@@ -142,6 +142,9 @@ public sealed class WriteController
         // moved on – redrawn after the field's own TextChanged. (A typed-out copy no longer moves on here: it starts a
         // short beat, CopyStep, whose timer moves on.)
         bool quiet = e is WriteFlow.Event.InputChanged or WriteFlow.Event.ClockResumed or WriteFlow.Event.ClockTick;
+        // A held key changed nothing (WriteFlowMachine.HandleKey drops every repeat): no redraw, which cut the running
+        // animations on every repeat.
+        if (e is WriteFlow.Event.Key { IsRepeat: true } && effects.Count == 0) return;
         if (!quiet) Changed?.Invoke();
         else if (State.Phase.Kind != previous) Dispatcher.UIThread.Post(() => Changed?.Invoke());
     }

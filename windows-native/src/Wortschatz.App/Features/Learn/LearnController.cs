@@ -159,6 +159,7 @@ public sealed class LearnController
     {
         var env = new LearnFlow.Env(_rng, _clock(), _model.Store.GetProgress(SetId), _model.ExtraAnswers(SetId));
         var previous = State.Phase.Kind;
+        bool blocked = State.Prompt is not null || State.Overlay is not null;
         var (next, effects) = LearnFlow.Reduce(State, e, env);
         State = next;
         Perform(effects);
@@ -171,6 +172,9 @@ public sealed class LearnController
         // moved on – redrawn after the field's own TextChanged. (A typed-out copy no longer moves on here: it starts a
         // short beat, CopyStep, whose timer moves on.)
         bool quiet = e is LearnFlow.Event.DraftChanged or LearnFlow.Event.Tick or LearnFlow.Event.Resume;
+        // A held key the reducer drops (LearnFlowReducer: repeats never transition, only a held Backspace deletes and
+        // not under a prompt or overlay) changed nothing: no redraw, which cut the running animations on every repeat.
+        if (e is LearnFlow.Event.Key { IsRepeat: true } key && (!key.Input.IsDeletion || blocked) && effects.Count == 0) return;
         if (!quiet) Changed?.Invoke();
         else if (State.Phase.Kind != previous) Dispatcher.UIThread.Post(() => Changed?.Invoke());
     }
