@@ -27,8 +27,15 @@ public static class StudyChrome
             var back = Ui.IconButton(IconName.ChevronLeft, L("Zurück zum Lernset"), onBack, 40, ButtonKind.Glass, P.Text);
             return back;
         }
-        var b = new WsButton(Ui.H(4, Icons.Icon(IconName.ChevronLeft, 18, P.Text, 2), Ui.Text(title, 14, FontWeight.SemiBold)), ButtonKind.Glass, 38,
-            padding: new Thickness(10, 0, 16, 0));
+        // A long set title ends in "…" when the pill is at its widest or the window leaves less room (in a horizontal
+        // StackPanel the title had unlimited width and was cut off in the middle of a letter, Joan 26.11.2026).
+        var label = Ui.Text(title, 14, FontWeight.SemiBold);
+        label.TextTrimming = TextTrimming.CharacterEllipsis;
+        Grid.SetColumn(label, 1);
+        var content = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*"), ColumnSpacing = 4 };
+        content.Children.Add(Icons.Icon(IconName.ChevronLeft, 18, P.Text, 2));
+        content.Children.Add(label);
+        var b = new WsButton(content, ButtonKind.Glass, 38, padding: new Thickness(10, 0, 16, 0));
         b.Click += (_, _) => onBack();
         b.MaxWidth = 340;
         ToolTip.SetTip(b, L("Zurück zum Lernset (Esc)"));
