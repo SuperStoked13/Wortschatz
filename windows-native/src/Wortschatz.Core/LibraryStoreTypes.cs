@@ -101,10 +101,7 @@ public sealed record SetSnapshot(VocabSet Set, Dictionary<string, CardProgress> 
 public enum StoreChangeKind { Local, External }
 
 /// <summary>A change notification: the storage keys that changed (null = everything).</summary>
-public sealed record StoreChange(StoreChangeKind Kind, IReadOnlyList<string>? Keys)
-{
-    public bool Touches(string key) => Keys?.Contains(key) ?? true;
-}
+public sealed record StoreChange(StoreChangeKind Kind, IReadOnlyList<string>? Keys);
 
 public enum LoadRecoveryKind { None, FromBackup, Reset }
 

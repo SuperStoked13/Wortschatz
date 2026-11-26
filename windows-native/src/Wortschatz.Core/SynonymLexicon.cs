@@ -118,7 +118,10 @@ public sealed class SynonymLexicon
     public static byte[] Unpack(Stream packed)
     {
         using var brotli = new BrotliStream(packed, CompressionMode.Decompress);
-        using var buffer = new MemoryStream();
+        // Room for the data up front (the lists unpack to about 4 times their size): growing from nothing allocated
+        // about four times the data, German 21 MB for 4.7 MB (26.11.2026).
+        int expected = packed.CanSeek ? (int)Math.Min(packed.Length * 9 / 2, int.MaxValue / 2) : 0;
+        using var buffer = new MemoryStream(expected);
         brotli.CopyTo(buffer);
         return buffer.ToArray();
     }
@@ -126,7 +129,7 @@ public sealed class SynonymLexicon
     /// <summary>Reads uncompressed data (tests and the packing tool).</summary>
     public static SynonymLexicon Parse(Lang lang, byte[] data)
     {
-        int pos = 0;
+        int pos;
         var header = Encoding.UTF8.GetString(data, 0, LineEnd(data, 0)).Split(' ');
         if (header.Length != 3 || header[0] != "WSSYN2" || !int.TryParse(header[2], out int count))
             throw new InvalidDataException("Keine Synonymdaten");
