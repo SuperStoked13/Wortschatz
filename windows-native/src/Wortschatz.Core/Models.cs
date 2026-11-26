@@ -71,9 +71,12 @@ public sealed record VocabSet : IJsonEncodable
         };
     }
 
-    public JSONValue ToJson() => JSONValue.Obj(
+    public JSONValue ToJson() => ToJson(Cards.ToJsonArray());
+
+    /// <summary>ToJson with <paramref name="cards"/> as the cards (the library file writes its remembered card JSON there).</summary>
+    internal JSONValue ToJson(JSONValue cards) => JSONValue.Obj(
         ("id", Id), ("title", Title), ("description", Description), ("termLang", TermLang.ToJson()), ("defLang", DefLang.ToJson()),
-        ("cards", Cards.ToJsonArray()), ("studyOptions", StudyOptions.ToJsonOrNull()), ("createdAt", CreatedAt),
+        ("cards", cards), ("studyOptions", StudyOptions.ToJsonOrNull()), ("createdAt", CreatedAt),
         ("updatedAt", UpdatedAt), ("lastStudiedAt", JSONValue.Nullable(LastStudiedAt)));
 
     /// <summary>A copy with its own card list.</summary>

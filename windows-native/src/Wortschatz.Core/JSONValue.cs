@@ -168,7 +168,7 @@ public sealed class JSONValue
         }
     }
 
-    static readonly JsonWriterOptions WriterOptions = new()
+    internal static readonly JsonWriterOptions WriterOptions = new()
     {
         Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
         Indented = false,
@@ -192,7 +192,7 @@ public sealed class JSONValue
         return buffer.ToArray();
     }
 
-    void Write(Utf8JsonWriter w, bool sortedKeys)
+    internal void Write(Utf8JsonWriter w, bool sortedKeys)
     {
         switch (Kind)
         {
@@ -218,13 +218,16 @@ public sealed class JSONValue
                 var keys = map.KeyList;
                 if (sortedKeys && !IsSortedOrdinal(keys))
                 {
-                    var sorted = keys.ToArray();
-                    System.Array.Sort(sorted, StringComparer.Ordinal);
-                    foreach (var k in sorted)
+                    var sorted = SortedKeys.Rent(keys);
+                    try
                     {
-                        w.WritePropertyName(k);
-                        map[k].Write(w, sortedKeys);
+                        foreach (var k in sorted.Span)
+                        {
+                            w.WritePropertyName(k);
+                            map[k].Write(w, sortedKeys);
+                        }
                     }
+                    finally { SortedKeys.Return(sorted); }
                 }
                 else
                 {
@@ -249,8 +252,33 @@ public sealed class JSONValue
     public override string ToString() => ToJsonString(sortedKeys: true);
 }
 
+/// <summary>
+/// Keys in ordinal order in an array from the shared pool (no garbage per object; JSONValue.Write, the library file).
+/// The keys of a JSON object are unique, so this is the order OrderBy(k, StringComparer.Ordinal) gives.
+/// </summary>
+internal static class SortedKeys
+{
+    static readonly Comparison<string> Ordinal = string.CompareOrdinal;
+
+    public static Memory<string> Rent(IReadOnlyCollection<string> keys)
+    {
+        var array = System.Buffers.ArrayPool<string>.Shared.Rent(Math.Max(keys.Count, 1));
+        int n = 0;
+        foreach (var k in keys) array[n++] = k;
+        array.AsSpan(0, n).Sort(Ordinal);
+        return array.AsMemory(0, n);
+    }
+
+    public static void Return(Memory<string> keys)
+    {
+        if (!System.Runtime.InteropServices.MemoryMarshal.TryGetArray<string>(keys, out var segment) || segment.Array is null) return;
+        segment.Array.AsSpan(0, segment.Count).Clear();
+        System.Buffers.ArrayPool<string>.Shared.Return(segment.Array);
+    }
+}
+
 /// <summary>A growing byte buffer from the shared array pool (ToJsonBytes): its arrays go back to the pool, only the result is new.</summary>
-sealed class PooledByteBuffer : System.Buffers.IBufferWriter<byte>, IDisposable
+internal sealed class PooledByteBuffer : System.Buffers.IBufferWriter<byte>, IDisposable
 {
     byte[] _buffer = System.Buffers.ArrayPool<byte>.Shared.Rent(16 * 1024);
     int _count;

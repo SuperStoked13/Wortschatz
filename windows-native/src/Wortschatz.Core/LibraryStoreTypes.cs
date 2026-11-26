@@ -134,6 +134,89 @@ public sealed class LibraryDocument : IJsonEncodable
         Activity = new Dictionary<string, int>(Activity, StringComparer.Ordinal),
     };
 
+    /// <summary>
+    /// The library file's bytes: ToJson() with sorted keys, written straight to the writer. Cards and progress records
+    /// are immutable, so each one's JSON is encoded once and copied into every later save (only what an answer changed
+    /// is encoded again): the whole library is saved after every answer, and building its JSON tree each time made most
+    /// of the ~12 MB of garbage per answer (Joan's 1705 cards, 26.11.2026). The same bytes as ToJson().ToJsonBytes(sortedKeys: true).
+    /// </summary>
+    internal byte[] ToFileBytes()
+    {
+        using var buffer = new PooledByteBuffer();
+        using (var w = new System.Text.Json.Utf8JsonWriter(buffer, JSONValue.WriterOptions))
+        {
+            w.WriteStartObject();
+            w.WritePropertyName("activity");
+            ActivityJson.ToJson(Activity).Write(w, sortedKeys: true);
+            w.WritePropertyName("learns");
+            WriteSorted(w, Learns, (w, v) => v.Write(w, sortedKeys: true));
+            w.WritePropertyName("progress");
+            WriteSorted(w, Progress, (w, map) => WriteSorted(w, map, (w, p) => w.WriteRawValue(Encoded.Of(p), skipInputValidation: true)));
+            w.WritePropertyName("schemaVersion");
+            JSONValue.Number(SchemaVersion).Write(w, sortedKeys: true);
+            w.WritePropertyName("sessions");
+            WriteSorted(w, Sessions, (w, v) => v.Write(w, sortedKeys: true));
+            w.WritePropertyName("sets");
+            w.WriteStartArray();
+            foreach (var set in Sets) WriteSet(w, set);
+            w.WriteEndArray();
+            w.WritePropertyName("settings");
+            Settings.ToJson().Write(w, sortedKeys: true);
+            w.WriteEndObject();
+        }
+        return buffer.ToArray();
+    }
+
+    /// <summary>A set like set.ToJson() with sorted keys, its cards from their remembered JSON.</summary>
+    static void WriteSet(System.Text.Json.Utf8JsonWriter w, VocabSet set)
+    {
+        var fields = set.ToJson(cards: JSONValue.Null).ObjectValue!;
+        var keys = SortedKeys.Rent(fields.Keys);
+        try
+        {
+            w.WriteStartObject();
+            foreach (var k in keys.Span)
+            {
+                w.WritePropertyName(k);
+                if (k != "cards") fields[k].Write(w, sortedKeys: true);
+                else
+                {
+                    w.WriteStartArray();
+                    foreach (var card in set.Cards) w.WriteRawValue(Encoded.Of(card), skipInputValidation: true);
+                    w.WriteEndArray();
+                }
+            }
+            w.WriteEndObject();
+        }
+        finally { SortedKeys.Return(keys); }
+    }
+
+    static void WriteSorted<T>(System.Text.Json.Utf8JsonWriter w, Dictionary<string, T> map, Action<System.Text.Json.Utf8JsonWriter, T> value)
+    {
+        var keys = SortedKeys.Rent(map.Keys);
+        try
+        {
+            w.WriteStartObject();
+            foreach (var k in keys.Span)
+            {
+                w.WritePropertyName(k);
+                value(w, map[k]);
+            }
+            w.WriteEndObject();
+        }
+        finally { SortedKeys.Return(keys); }
+    }
+
+    /// <summary>The JSON of immutable records (sorted keys), encoded once per instance and forgotten with it.</summary>
+    static class Encoded
+    {
+        static readonly System.Runtime.CompilerServices.ConditionalWeakTable<Card, byte[]> Cards = new();
+        static readonly System.Runtime.CompilerServices.ConditionalWeakTable<CardProgress, byte[]> Progress = new();
+
+        public static byte[] Of(Card card) => Cards.GetValue(card, static c => c.ToJson().ToJsonBytes(sortedKeys: true));
+        public static byte[] Of(CardProgress progress) => Progress.GetValue(progress, static p => p.ToJson().ToJsonBytes(sortedKeys: true));
+    }
+
     public JSONValue ToJson() => JSONValue.Obj(
         ("activity", ActivityJson.ToJson(Activity)),
         ("learns", JSONValue.Object(Learns.OrderBy(p => p.Key, StringComparer.Ordinal))),

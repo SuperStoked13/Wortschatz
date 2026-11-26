@@ -623,7 +623,7 @@ public sealed class LibraryStore
         catch (Exception) { return null; }
     }
 
-    static byte[] EncodeDocument(LibraryDocument doc) => doc.ToJson().ToJsonBytes(sortedKeys: true);
+    static byte[] EncodeDocument(LibraryDocument doc) => doc.ToFileBytes();
 
     static JSONValue? ObjectState(JSONValue? value) => value is { IsObject: true } ? value : null;
 
