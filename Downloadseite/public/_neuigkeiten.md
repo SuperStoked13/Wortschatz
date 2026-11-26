@@ -38,9 +38,6 @@ erscheint nicht auf der Seite.
 
 ## Nächste Version
 
-- Verbessert (Mac): Grosse Lernsets laufen flüssiger: Beim Lernen ist eine neue Runde bis zu fünfmal schneller bereit, und im Lernset-Editor stocken Tippen und Rechtschreibprüfung weniger.
-  EN: Large study sets run more smoothly: when learning, a new round is ready up to five times faster, and typing and the spell check in the study set editor stutter less.
-
 ## 1.8.2 – 2026-11-26
 
 - Verbessert (Windows): Neues Lernset: Eine eingefügte Liste steht sofort in den Karten – «Trennung» und «Seiten tauschen» ändern sie direkt dort, «Karten übernehmen» braucht es nicht mehr. Die Sprachen stehen zuerst auf «Automatisch» und werden erkannt.
@@ -49,6 +46,8 @@ erscheint nicht auf der Seite.
   EN: After a click in the sidebar, a blue frame stayed around «Übersicht» (overview) or the study set, as if the button were still pressed.
 - Neu (Windows): Wortschatz aktualisiert sich selbst: Neue Versionen lädt die App im Hintergrund und installiert sie, wenn du sie beendest, und danach steht in der Seitenleiste, was neu ist. Ausschalten kannst du das unter Einstellungen › Daten › Updates.
   EN: Wortschatz now updates itself: the app downloads new versions in the background and installs them when you quit it, and afterwards the sidebar shows what’s new. You can turn this off under Settings › Data › Updates.
+- Verbessert (Mac): Grosse Lernsets laufen flüssiger: Beim Lernen ist eine neue Runde bis zu fünfmal schneller bereit, und im Lernset-Editor stocken Tippen und Rechtschreibprüfung weniger.
+  EN: Large study sets run more smoothly: when learning, a new round is ready up to five times faster, and typing and the spell check in the study set editor stutter less.
 
 ## 1.8.1 – 2026-11-25
 
