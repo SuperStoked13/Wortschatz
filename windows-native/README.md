@@ -43,6 +43,10 @@ suchen» (fragt bei einem Fund «Jetzt neu starten» oder «Später»). Release-
   bereit», nach dem Schliessen ist die exe 9.1 (alte als versteckte `.old`), beim nächsten Start «Aktualisiert auf
   9.1» mit «+1 weitere» und die `.old` ist weg; «Jetzt neu starten» startet 9.1 sofort. Die echte App fragt GitHub
   (neuestes veröffentlichtes Release mit `windows-update.json`; ohne neuere Version → «Wortschatz ist aktuell»).
+- **Echt geprüft (26.11.2026, Release 1.8.3):** 1.8.2 über den Link der Downloadseite geladen (Prüfsumme wie
+  `checksums.txt`), erst nach dem Release `v1.8.3-windows` gestartet: nach 26 s war 1.8.3 geladen (nichts zu sehen,
+  wie gewollt), beim Schliessen ersetzt – gleicher Name, byte-gleich mit der Release-Datei, alte kurz als versteckte
+  `.old` –, beim nächsten Start «Aktualisiert auf 1.8.3» mit der ersten Neuigkeit und «+1 weitere», `.old` weg.
 
 ## Optimierung 26.11.2026: weniger Abfall beim Lernen, Mausfehler, langer Lernset-Name
 
