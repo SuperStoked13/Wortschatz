@@ -35,7 +35,7 @@ public sealed class ExamScreen : Screen
     ExamSettings _settings;
     List<ExamQuestion> _questions = [];
     readonly Dictionary<int, TextBox> _fields = [];
-    /// <summary>The accent buttons under each answer, shown while its field has the focus (Mac: the floating accents).</summary>
+    /// <summary>The accent buttons under each answer, shown while its field has the focus, made on its first focus (Mac: the floating accents).</summary>
     readonly Dictionary<int, Control> _accents = [];
     /// <summary>The rows of the sheet as last built (number badge, focus band, layout).</summary>
     readonly Dictionary<int, SheetRow> _rows = [];
@@ -544,7 +544,7 @@ public sealed class ExamScreen : Screen
             field.TextChanged += (_, _) => UpdateAnswered(number);
             field.GotFocus += (_, _) =>
             {
-                if (_accents.TryGetValue(number, out var a)) a.IsVisible = true;
+                ShowAccents(number, q.AnswerLang, field);
                 UpdateRow(number);
             };
             field.LostFocus += (_, _) =>
@@ -556,11 +556,13 @@ public sealed class ExamScreen : Screen
         }
         else if (field.Parent is Panel old) old.Children.Remove(field);
         Control answer = field;
-        if (SpecialCharacterBar.Create(q.AnswerLang, field) is { } accents)
+        // The accent buttons come with the row's first focus (ShowAccents): a French exam of 541 questions built 15
+        // buttons for every row up front, though only the focused row shows them.
+        _accents.Remove(number);
+        if (SpecialCharacters.For(q.AnswerLang).Length > 0)
         {
-            accents.IsVisible = field.IsFocused;
-            _accents[number] = accents;
-            answer = Ui.V(8, field, accents);
+            answer = Ui.V(8, field);
+            if (field.IsFocused) ShowAccents(number, q.AnswerLang, field, (Panel)answer);
         }
 
         var eyebrow = Ui.Eyebrow(label);
@@ -589,6 +591,23 @@ public sealed class ExamScreen : Screen
         ApplyLayout(row);
         UpdateRow(number);
         return band;
+    }
+
+    /// <summary>
+    /// Shows the accent buttons under a focused answer, made the first time (Mac: the floating accents). They go into
+    /// <paramref name="host"/> or the answer's stack of the row as built.
+    /// </summary>
+    void ShowAccents(int number, Lang lang, TextBox field, Panel? host = null)
+    {
+        if (_accents.TryGetValue(number, out var shown))
+        {
+            shown.IsVisible = true;
+            return;
+        }
+        host ??= _rows.TryGetValue(number, out var row) ? row.Answer as Panel : null;
+        if (host is null || SpecialCharacterBar.Create(lang, field) is not { } accents) return;
+        _accents[number] = accents;
+        host.Children.Add(accents);
     }
 
     /// <summary>Side by side in wide windows (the field 290 wide), one under the other in narrow ones.</summary>
