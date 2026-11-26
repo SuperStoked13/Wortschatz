@@ -132,14 +132,15 @@ extension GradingAssertions {
 
 @Suite("Grading: user-example fixture")
 struct GradingFixtureTests: GradingAssertions {
-    @Test("inline pairs match tests/fixtures/user-example.txt")
+    @Test("inline pairs match Website/tests/fixtures/user-example.txt")
     func pairsMatchFixture() throws {
         #expect(gradingPairs.count == 52)
         // mac/Packages/WortschatzCore/Tests/WortschatzCoreTests → project root
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
             .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-        let url = root.appendingPathComponent("tests/fixtures/user-example.txt")
-        guard let text = try? String(contentsOf: url, encoding: .utf8) else { return } // web tests not present
+        // A missing file fails the test: it used to look in the wrong folder and silently checked nothing.
+        let url = root.appendingPathComponent("Website/tests/fixtures/user-example.txt")
+        let text = try String(contentsOf: url, encoding: .utf8)
         let blocks = text.components(separatedBy: "\n").map { JSCompat.trim($0) }
             .split(separator: "", omittingEmptySubsequences: true).map(Array.init)
         #expect(blocks.map { [$0[0], $0[1]] } == gradingPairs.map { [$0.term, $0.definition] })
