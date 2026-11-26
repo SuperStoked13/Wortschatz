@@ -184,10 +184,12 @@ public sealed class JSONValue
     /// </summary>
     public byte[] ToJsonBytes(bool indented = false, bool sortedKeys = false)
     {
-        using var stream = new MemoryStream();
-        using (var w = new Utf8JsonWriter(stream, WriterOptions with { Indented = indented }))
+        // A pooled buffer instead of a MemoryStream: the whole library is saved after every answer, and the stream's
+        // doubling left about 2 MB of large garbage behind each time (26.11.2026). One exact copy is the result.
+        using var buffer = new PooledByteBuffer();
+        using (var w = new Utf8JsonWriter(buffer, WriterOptions with { Indented = indented }))
             Write(w, sortedKeys);
-        return stream.ToArray();
+        return buffer.ToArray();
     }
 
     void Write(Utf8JsonWriter w, bool sortedKeys)
@@ -209,19 +211,82 @@ public sealed class JSONValue
                 break;
             default:
                 w.WriteStartObject();
-                IEnumerable<KeyValuePair<string, JSONValue>> pairs = _object!;
-                if (sortedKeys) pairs = pairs.OrderBy(p => p.Key, StringComparer.Ordinal);
-                foreach (var (k, v) in pairs)
+                // Keys in order without LINQ: most objects are built with sorted keys already, and sorting every object
+                // of the library with OrderBy cost two thirds of a save (18 ms and 5 MB garbage for 1700 cards, 26.11.2026).
+                // The keys are unique, so Array.Sort gives the same order as OrderBy.
+                var map = _object!;
+                var keys = map.KeyList;
+                if (sortedKeys && !IsSortedOrdinal(keys))
                 {
-                    w.WritePropertyName(k);
-                    v.Write(w, sortedKeys);
+                    var sorted = keys.ToArray();
+                    System.Array.Sort(sorted, StringComparer.Ordinal);
+                    foreach (var k in sorted)
+                    {
+                        w.WritePropertyName(k);
+                        map[k].Write(w, sortedKeys);
+                    }
+                }
+                else
+                {
+                    foreach (var k in keys)
+                    {
+                        w.WritePropertyName(k);
+                        map[k].Write(w, sortedKeys);
+                    }
                 }
                 w.WriteEndObject();
                 break;
         }
     }
 
+    static bool IsSortedOrdinal(List<string> keys)
+    {
+        for (int i = 1; i < keys.Count; i++)
+            if (string.CompareOrdinal(keys[i - 1], keys[i]) > 0) return false;
+        return true;
+    }
+
     public override string ToString() => ToJsonString(sortedKeys: true);
+}
+
+/// <summary>A growing byte buffer from the shared array pool (ToJsonBytes): its arrays go back to the pool, only the result is new.</summary>
+sealed class PooledByteBuffer : System.Buffers.IBufferWriter<byte>, IDisposable
+{
+    byte[] _buffer = System.Buffers.ArrayPool<byte>.Shared.Rent(16 * 1024);
+    int _count;
+
+    public void Advance(int count) => _count += count;
+
+    public Memory<byte> GetMemory(int sizeHint = 0)
+    {
+        Ensure(sizeHint);
+        return _buffer.AsMemory(_count);
+    }
+
+    public Span<byte> GetSpan(int sizeHint = 0)
+    {
+        Ensure(sizeHint);
+        return _buffer.AsSpan(_count);
+    }
+
+    void Ensure(int sizeHint)
+    {
+        int needed = Math.Max(sizeHint, 1);
+        if (_buffer.Length - _count >= needed) return;
+        var bigger = System.Buffers.ArrayPool<byte>.Shared.Rent(Math.Max(_buffer.Length * 2, _count + needed));
+        _buffer.AsSpan(0, _count).CopyTo(bigger);
+        System.Buffers.ArrayPool<byte>.Shared.Return(_buffer);
+        _buffer = bigger;
+    }
+
+    public byte[] ToArray() => _buffer.AsSpan(0, _count).ToArray();
+
+    public void Dispose()
+    {
+        if (_buffer.Length == 0) return;
+        System.Buffers.ArrayPool<byte>.Shared.Return(_buffer);
+        _buffer = [];
+    }
 }
 
 /// <summary>An insertion-ordered string-keyed map (JS object).</summary>
@@ -232,6 +297,8 @@ public sealed class JsonObjectMap : IEnumerable<KeyValuePair<string, JSONValue>>
 
     public int Count => _keys.Count;
     public IReadOnlyList<string> Keys => _keys;
+    /// <summary>The keys in insertion order, for the writer (no enumerator per object).</summary>
+    internal List<string> KeyList => _keys;
 
     public JSONValue this[string key]
     {
