@@ -38,6 +38,8 @@ erscheint nicht auf der Seite.
 
 ## Nächste Version
 
+## 1.8.3 – 2026-11-26
+
 - Verbessert (Mac): Karteikarten drehen sich flüssiger, die Seitenleiste gleitet beim Starten und Beenden von «Lernen» ruhiger, und der Lernset-Editor scrollt mit vielen Karten flüssiger.
   EN: Flashcards turn over more smoothly, the sidebar slides more calmly when you start or leave «Learn», and the study set editor scrolls more smoothly with many cards.
 
