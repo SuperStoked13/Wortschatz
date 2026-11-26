@@ -89,7 +89,10 @@ public static class ChoiceTile
         tile.Chrome.BorderThickness = new Thickness(ring is null ? 1 : 2);
         tile.Chrome.BoxShadow = BoxShadows.Parse($"0 8 20 -12 {WsButton.Hex(P.Shadow, P.Shadow.A / 255.0 * 0.9)}");
         if (!IsAnswered(state)) tile.Click += (_, _) => onChoose();
-        if (onHover is not null) tile.PointerEntered += (_, _) => onHover();
+        // A moving pointer marks the tile, not one resting where the next question's tiles appear: Avalonia reports the
+        // new tile under a still pointer as entered, and the mark rebuilt the screen ~40 ms into the new question's
+        // entrance, cutting it short (half the questions answered with the mouse, laptop 26.11.2026).
+        if (onHover is not null) tile.PointerMoved += (_, _) => onHover();
         AutomationProperties.SetName(tile, text);
         AutomationProperties.SetHelpText(tile, state switch
         {
