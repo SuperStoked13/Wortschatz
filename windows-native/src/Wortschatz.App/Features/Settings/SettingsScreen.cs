@@ -430,9 +430,7 @@ public sealed partial class SettingsScreen(AppModel model, MainView window) : Sc
     {
         var p = WsTheme.P;
         var sets = Model.Sets;
-        int? bytes = null;
-        try { bytes = Backup.JsonData(Model.Store.ExportAll()).Length; }
-        catch (Exception) { }
+        int? bytes = BackupSize();
         yield return Section(L("Backup"),
         [
             Row(L("Backup exportieren"), Ui.Secondary(L("Exportieren …"), () => _ = ExportBackup(Model, Window), IconName.Upload),
@@ -479,6 +477,28 @@ public sealed partial class SettingsScreen(AppModel model, MainView window) : Sc
             return L($"Gespeichert: {setsText} · {cardsText} · {size}");
         }
         return L($"Gespeichert: {setsText} · {cardsText}");
+    }
+
+    /// <summary>The library's last measured backup size and the state it belongs to (BackupSize).</summary>
+    static (LibraryStore Store, int Revision, int Bytes)? s_backupSize;
+
+    /// <summary>
+    /// The size of a backup file of the library, null when it cannot be made. Measured once per state of the library
+    /// (LibraryStore.Revision), as UTF-8 bytes of the backup's text: the tab is built again on every switch, update
+    /// check and store change, and encoding the whole library took a while on the UI thread each time.
+    /// </summary>
+    int? BackupSize()
+    {
+        var store = Model.Store;
+        int revision = store.Revision;
+        if (s_backupSize is { } known && known.Store == store && known.Revision == revision) return known.Bytes;
+        try
+        {
+            int bytes = System.Text.Encoding.UTF8.GetByteCount(Backup.JsonText(store.ExportAll().ToJson()));
+            s_backupSize = (store, revision, bytes);
+            return bytes;
+        }
+        catch (Exception) { return null; }
     }
 
     /// <summary>"unter 1 KB", "ca. 24 KB", "ca. 1,2 MB" (Mac: SettingsCopy.formatBytes).</summary>
