@@ -222,13 +222,6 @@ public sealed class LearnScreen : Screen
         }
     }
 
-    static void Detach(Control c)
-    {
-        if (c.Parent is Panel panel) panel.Children.Remove(c);
-        else if (c.Parent is Decorator d) d.Child = null;
-        else if (c.Parent is ContentControl cc) cc.Content = null;
-    }
-
     void FocusAfterRender(bool newStep)
     {
         var phase = S.Phase;

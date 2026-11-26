@@ -478,13 +478,6 @@ public sealed partial class SetEditorScreen : Screen
         return grid;
     }
 
-    static void Detach(Control c)
-    {
-        if (c.Parent is Panel panel) panel.Children.Remove(c);
-        else if (c.Parent is Decorator d) d.Child = null;
-        else if (c.Parent is ContentControl cc) cc.Content = null;
-    }
-
     // MARK: Title, description, languages
 
     void SetTitle(string value)

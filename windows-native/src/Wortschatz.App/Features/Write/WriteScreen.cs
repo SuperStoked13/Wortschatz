@@ -105,13 +105,6 @@ public sealed class WriteScreen : Screen
     public override void LibraryChanged() => _c.StoreDidChange();
     protected override Control Build() => new Border();
 
-    static void Detach(Control c)
-    {
-        if (c.Parent is Panel panel) panel.Children.Remove(c);
-        else if (c.Parent is Decorator d) d.Child = null;
-        else if (c.Parent is ContentControl cc) cc.Content = null;
-    }
-
     /// <summary>What changed since the last render (its changes play the motions).</summary>
     sealed class Moves(WriteScreen s)
     {

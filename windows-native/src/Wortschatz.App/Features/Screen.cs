@@ -70,6 +70,17 @@ public abstract class Screen
 
     public virtual bool HandleText(string text) => false;
 
+    /// <summary>
+    /// Takes a control the screen keeps across renders (an answer field, the card list) out of its previous parent, so
+    /// it can go into the new layout.
+    /// </summary>
+    protected static void Detach(Control c)
+    {
+        if (c.Parent is Panel panel) panel.Children.Remove(c);
+        else if (c.Parent is Decorator d) d.Child = null;
+        else if (c.Parent is ContentControl cc) cc.Content = null;
+    }
+
     /// <summary>Text typed outside a text field as the flows' key: a digit (also Arabic-Indic) or a character.</summary>
     public static KeyInput TextKey(string text) => LearnFlow.DigitValue(text) is { } d ? KeyInput.DigitKey(d) : KeyInput.Character(text);
 
