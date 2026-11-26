@@ -66,8 +66,6 @@ Get the latest version at **[wortschatz.duckdns.org](https://wortschatz.duckdns.
 - 🍏 **Mac**: macOS 26 or later, Apple Silicon
 - 🪟 **Windows**: Windows 10 or 11, a single file with nothing to install
 
-> [!NOTE]
-> The download site is password-protected for now.
 
 ## Support
 
