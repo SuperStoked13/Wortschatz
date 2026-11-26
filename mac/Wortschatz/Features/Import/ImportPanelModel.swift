@@ -86,7 +86,7 @@ final class ImportPanelModel {
     // MARK: Derived
 
     /// Whether the box holds more than whitespace.
-    var hasText: Bool { !JSCompat.trim(text).isEmpty }
+    var hasText: Bool { !JSCompat.isBlank(text) }
 
     /// A file import is running.
     var isBusy: Bool { importer.isRunning }

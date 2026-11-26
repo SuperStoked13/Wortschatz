@@ -64,13 +64,32 @@ final class AppModel {
     /// Derived view data, rebuilt after every store change. It holds still while a study screen
     /// is open (see `latestLibrary`).
     private(set) var library: LibrarySnapshot = .empty
-    /// The newest derived data, for the model's own decisions (which session runs, the daily
-    /// streak). `library` follows only once the study screen is left: views kept alive under it
-    /// were rebuilt after every answer and every save of the study clock. On the iPhone the
-    /// Übersicht and the set page under the study screen (2–3 frames each, measured 2026-11-10);
-    /// on the Mac the hidden sidebar (re-filtering every term when a search is left in it), the
-    /// Lernset menu and an open Settings window (2026-11-24).
-    @ObservationIgnored private(set) var latestLibrary: LibrarySnapshot = .empty
+    /// The newest derived data, for the model's own decisions (which session runs). `library`
+    /// follows only once the study screen is left: views kept alive under it were rebuilt after
+    /// every answer and every save of the study clock. On the iPhone the Übersicht and the set
+    /// page under the study screen (2–3 frames each, measured 2026-11-10); on the Mac the hidden
+    /// sidebar (re-filtering every term when a search is left in it), the Lernset menu and an
+    /// open Settings window (2026-11-24).
+    ///
+    /// While a study screen is open it is built when it is read (`pendingChange`), not after
+    /// every change: each answer rebuilt the studied set's summary for nothing (~1 ms per answer
+    /// for 540 cards, 26.11.2026).
+    var latestLibrary: LibrarySnapshot {
+        if let change = pendingChange {
+            pendingChange = nil
+            #if DEBUG
+            builtLibrary = DebugTiming.measure("LibrarySnapshot.build") {
+                LibrarySnapshot.build(from: store, previous: builtLibrary, change: change)
+            }
+            #else
+            builtLibrary = LibrarySnapshot.build(from: store, previous: builtLibrary, change: change)
+            #endif
+        }
+        return builtLibrary
+    }
+    @ObservationIgnored private var builtLibrary: LibrarySnapshot = .empty
+    /// The store changes `builtLibrary` does not show yet, merged (nil: none).
+    @ObservationIgnored private var pendingChange: StoreChange?
     /// Global settings (theme, default study options).
     private(set) var settings: WortschatzCore.Settings = .default
     /// Incremented after every store change.
@@ -242,15 +261,10 @@ final class AppModel {
     }
 
     /// Rebuilds the derived data and keeps the navigation valid (a deleted set leaves its screens).
-    /// `change` (nil = everything) lets sets it did not touch keep their summaries.
+    /// `change` (nil = everything) lets sets it did not touch keep their summaries. Under a study
+    /// screen the rebuild waits until the data is read (`latestLibrary`).
     private func refresh(after change: StoreChange? = nil) {
-        #if DEBUG
-        latestLibrary = DebugTiming.measure("LibrarySnapshot.build") {
-            LibrarySnapshot.build(from: store, previous: latestLibrary, change: change)
-        }
-        #else
-        latestLibrary = LibrarySnapshot.build(from: store, previous: latestLibrary, change: change)
-        #endif
+        pendingChange = Self.merged(pendingChange, change ?? StoreChange(kind: .external, keys: nil))
         if !route.isStudy { library = latestLibrary }
         celebrateDailyStreak()
         let newSettings = store.getSettings()
@@ -264,6 +278,15 @@ final class AppModel {
         }
     }
 
+    /// Both changes in one (`keys` nil when either may have changed everything).
+    private static func merged(_ earlier: StoreChange?, _ later: StoreChange) -> StoreChange {
+        guard let earlier else { return later }
+        guard let earlierKeys = earlier.keys, let laterKeys = later.keys else {
+            return StoreChange(kind: later.kind, keys: nil)
+        }
+        return StoreChange(kind: later.kind, keys: earlierKeys + laterKeys.filter { !earlierKeys.contains($0) })
+    }
+
     /// `UserDefaults` key: the day ("YYYY-MM-DD") whose Lernserie was last celebrated.
     private static let celebratedStreakDayKey = "dailyStreakCelebrated"
     /// The day last celebrated (`celebratedStreakDayKey`), read once: `refresh()` runs after
@@ -274,10 +297,12 @@ final class AppModel {
     /// short fanfare, once per day, while studying. A moment late, so it does not sound over
     /// the answer's own chime.
     private func celebrateDailyStreak() {
-        let streak = latestLibrary.stats.streak
-        guard persistence == .enabled, route.isStudy, streak.today > 0, streak.current > 0 else { return }
+        guard persistence == .enabled, route.isStudy else { return }
         let today = TimeUtil.dateKey(timeZone: store.timeZone)
         guard celebratedStreakDay != today else { return }
+        // From the activity itself, like `LibrarySnapshot` (which is not built while studying).
+        let streak = Mastery.studyStreak(store.getActivity(), now: TimeUtil.nowMs(), timeZone: store.timeZone)
+        guard streak.today > 0, streak.current > 0 else { return }
         celebratedStreakDay = today
         UserDefaults.standard.set(today, forKey: Self.celebratedStreakDayKey)
         let message =

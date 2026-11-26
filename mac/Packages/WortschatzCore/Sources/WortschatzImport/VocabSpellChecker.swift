@@ -71,9 +71,11 @@ public final class VocabSpellChecker {
 
     /// The probable typos in `text`, in order of appearance.
     public func issues(in text: String, lang: Lang) -> [SpellingIssue] {
-        guard let language = language(for: lang), !JSCompat.trim(text).isEmpty else { return [] }
+        // The cache first: the editor asks again for every field after each change, and the
+        // language list alone costs ~14 µs per call (14 ms per pass over 500 cards).
         let key = "\(lang.rawValue)\u{1}\(text)"
         if let cached = cache[key] { return cached }
+        guard let language = language(for: lang), !JSCompat.trim(text).isEmpty else { return [] }
 
         let ns = text as NSString
         var found: [SpellingIssue] = []
@@ -90,7 +92,9 @@ public final class VocabSpellChecker {
                 SpellingIssue(word: word, range: range, suggestions: suggestions(for: word, range: range, in: text, language: language, lang: lang)))
         }
 
-        if cache.count > 4000 { cache.removeAll() }
+        // Room for both sides of a few thousand cards, so a big set is not checked from scratch
+        // on every pass.
+        if cache.count > 20_000 { cache.removeAll() }
         cache[key] = found
         return found
     }

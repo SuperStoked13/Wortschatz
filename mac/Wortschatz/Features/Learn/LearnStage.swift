@@ -105,7 +105,7 @@ struct LearnQuestionView: View {
         let typeAhead = LearnFlow.typeAhead(state)
         VStack(spacing: Spacing.l) {
             LearnPromptCard(
-                question: question, isSpeaking: controller.speech.isSpeaking, send: controller.send, onEdit: onEditCard
+                question: question, speech: controller.speech, send: controller.send, onEdit: onEditCard
             ) {
                 if question.type == .written {
                     LearnWrittenSection(

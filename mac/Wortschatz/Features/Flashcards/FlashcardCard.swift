@@ -199,7 +199,8 @@ struct FlashcardView: View {
     /// A leaving card was let go after a swipe: it flies off from where it was (`releaseOffset`).
     var flung = false
     var releaseOffset: CGFloat = 0
-    var isSpeaking = false
+    /// Read-aloud, for the 🔊 button's waves (nil for a card that is leaving).
+    var speech: SpeechService?
     var onFlip: () -> Void = {}
     var onSpeak: () -> Void = {}
     var onStar: () -> Void = {}
@@ -229,7 +230,7 @@ struct FlashcardView: View {
         swipe: FlashcardSwipe? = nil,
         flung: Bool = false,
         releaseOffset: CGFloat = 0,
-        isSpeaking: Bool = false,
+        speech: SpeechService? = nil,
         onFlip: @escaping () -> Void = {},
         onSpeak: @escaping () -> Void = {},
         onStar: @escaping () -> Void = {},
@@ -245,7 +246,7 @@ struct FlashcardView: View {
         self.swipe = swipe
         self.flung = flung
         self.releaseOffset = releaseOffset
-        self.isSpeaking = isSpeaking
+        self.speech = speech
         self.onFlip = onFlip
         self.onSpeak = onSpeak
         self.onStar = onStar
@@ -374,7 +375,7 @@ struct FlashcardView: View {
     private func face(_ side: FlashcardSide, isUp: Bool) -> some View {
         FlashcardFace(side: side, height: height, verdict: shownVerdict) {
             FlashcardTools(
-                starred: card.starred, isSpeaking: isSpeaking, isInteractive: isCurrent && isUp, onSpeak: onSpeak,
+                starred: card.starred, speech: speech, isInteractive: isCurrent && isUp, onSpeak: onSpeak,
                 onStar: onStar, onEdit: onEdit)
         }
         .allowsHitTesting(isUp)
@@ -839,13 +840,11 @@ private struct SealPlacement: ViewModifier {
 /// down (same look, no buttons, so ⌘E belongs to the side on screen).
 struct FlashcardTools: View {
     let starred: Bool
-    var isSpeaking = false
+    var speech: SpeechService?
     var isInteractive = true
     var onSpeak: () -> Void = {}
     var onStar: () -> Void = {}
     var onEdit: () -> Void = {}
-
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         HStack(spacing: Spacing.xxs) {
@@ -853,7 +852,7 @@ struct FlashcardTools: View {
                 LearnIconButton(
                     label: String(localized: "Vorlesen"), help: String(localized: "Vorlesen (⌘R)"),
                     systemImage: "speaker.wave.2.fill", action: onSpeak)
-                    .symbolEffect(.variableColor.iterative, isActive: isSpeaking && !reduceMotion)
+                    .modifier(SpeakingWaves(speech: speech))
                 LearnIconButton(
                     label: starred ? String(localized: "Markierung entfernen") : String(localized: "Markieren"),
                     help: starred ? String(localized: "Markierung entfernen (⌘D)") : String(localized: "Markieren (⌘D)"),
@@ -959,7 +958,7 @@ struct FlashcardDeckView: View {
                     swipe: entry.leaving == nil ? controller.swipe : nil,
                     flung: entry.flung,
                     releaseOffset: entry.releaseOffset,
-                    isSpeaking: entry.leaving == nil && controller.speech.isSpeaking,
+                    speech: entry.leaving == nil ? controller.speech : nil,
                     onFlip: controller.flip,
                     onSpeak: controller.speakVisibleSide,
                     onStar: controller.toggleStar,

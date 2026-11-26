@@ -92,11 +92,22 @@ struct ImportPanelView: View {
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: Spacing.s)
-            if model.hasText {
-                Button("Text leeren", systemImage: "xmark.circle", action: onClearText)
-                    .buttonStyle(.borderless)
-                    .foregroundStyle(.secondary)
-            }
+            ImportClearTextButton(model: model, action: onClearText)
+        }
+    }
+}
+
+/// "Text leeren", while the box holds text. Its own view: it reads the text, so each key typed
+/// into the box re-evaluates only this button, not the panel with the detection.
+private struct ImportClearTextButton: View {
+    let model: ImportPanelModel
+    let action: () -> Void
+
+    var body: some View {
+        if model.hasText {
+            Button("Text leeren", systemImage: "xmark.circle", action: action)
+                .buttonStyle(.borderless)
+                .foregroundStyle(.secondary)
         }
     }
 }

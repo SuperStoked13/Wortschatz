@@ -19,6 +19,11 @@ public enum JSCompat {
         }
     }
 
+    /// JS `s.trim() === ''`, without building the trimmed copy.
+    public static func isBlank(_ s: String) -> Bool {
+        !s.unicodeScalars.contains { !isWhitespace($0) }
+    }
+
     /// JS `s.trim()`.
     public static func trim(_ s: String) -> String {
         let scalars = s.unicodeScalars

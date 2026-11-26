@@ -80,3 +80,17 @@ extension AnyTransition {
                 removal: .opacity.combined(with: .offset(x: -10)).animation(.easeOut(duration: 0.12)))
     }
 }
+
+/// The 🔊 button's waves while `speech` reads aloud (nil: never). A modifier of its own: only it
+/// reads `isSpeaking`, so speech starting and stopping redraws the button, not the prompt card
+/// with its answer tiles or every card of the flashcard deck (with Audio on, 2–4 times per
+/// question).
+struct SpeakingWaves: ViewModifier {
+    let speech: SpeechService?
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    func body(content: Content) -> some View {
+        content.symbolEffect(.variableColor.iterative, isActive: speech?.isSpeaking == true && !reduceMotion)
+    }
+}

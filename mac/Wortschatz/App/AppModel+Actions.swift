@@ -120,7 +120,7 @@ extension AppModel {
     /// lists "Am häufigsten falsch" at the end of a session). Follows every store change.
     func isStarred(setID: String, cardID: String) -> Bool {
         _ = revision
-        return latestLibrary.summary(for: setID)?.set.cards.first { $0.id == cardID }?.starred ?? false
+        return store.getSet(setID)?.cards.first { $0.id == cardID }?.starred ?? false
     }
 
     /// The ★ toggle of a card.

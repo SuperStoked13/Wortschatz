@@ -63,7 +63,7 @@ struct WritePromptCard: View {
                 ) {
                     controller.send(.speak(.prompt))
                 }
-                .symbolEffect(.variableColor.iterative, isActive: controller.speech.isSpeaking && !reduceMotion)
+                .modifier(SpeakingWaves(speech: controller.speech))
             }
 
             LearnIconButton(

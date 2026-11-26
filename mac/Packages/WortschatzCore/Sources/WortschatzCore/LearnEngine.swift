@@ -486,6 +486,13 @@ public enum LearnEngine {
     public static func buildChoices(
         _ cards: [Card], card: Card, ask: AskSide, rng: RNG = systemRNG(), n: Int = MAX_CHOICES
     ) -> [Choice] {
+        buildChoices(ChoicePool(cardList(cards)), card: card, ask: ask, rng: rng, n: n)
+    }
+
+    /// `buildChoices` from a pool shared by the questions of one round (`ChoicePool`).
+    private static func buildChoices(
+        _ pool: ChoicePool, card: Card, ask: AskSide, rng: RNG, n: Int = MAX_CHOICES
+    ) -> [Choice] {
         guard !card.id.isEmpty else { return [] }
         let correctText = JSCompat.trim(Synonyms.answerSide(card, ask: ask))
         if TextNormalizer.normalizeBasic(correctText).isEmpty { return [] }
@@ -493,7 +500,7 @@ public enum LearnEngine {
         let correct = Choice(cardId: card.id, text: correctText)
         if size == 1 { return [correct] }
 
-        let ranked = rankedDistractors(cardList(cards), card, ask, rng)
+        let ranked = rankedDistractors(pool, card, ask, rng)
         // The most alike, in random order; the correct option's position is uniform over all slots.
         var choices = shuffled(Array(ranked.prefix(size - 1)), rng)
         choices.insert(correct, at: randomIndex(rng, choices.count + 1))
@@ -958,7 +965,7 @@ public enum LearnEngine {
             let all = cardList(cards)
             var byId: [String: Card] = [:]
             for card in all { byId[card.id] = card }
-            refill = Refill(pool: all.filter { $0.id != cardId && askable($0) }, byId: byId)
+            refill = Refill(pool: ChoicePool(all.filter { $0.id != cardId && askable($0) }), byId: byId)
         }
         dropCard(&s, cardId, refill: refill, rng: rng)
         finishEarly(&s, now)
@@ -1224,28 +1231,114 @@ public enum LearnEngine {
         }
     }
 
-    /// Possible wrong options for `card` asked on `side`, in `list` order (list: `cardList`
-    /// output): other cards' answer texts that are non-empty, distinct, differ from the correct
+    /// The cards wrong options come from, with what `distractors` and `rankedDistractors` need of
+    /// each card worked out once per list (lazily, per side) instead of once per question: a
+    /// round plans `roundSize` questions with two option lists each, and every list compares the
+    /// asked card with every card of the set (64 ms per round of a 540-card set, 26.11.2026).
+    /// Lives for one engine call; the values are those of the memoised text functions.
+    private final class ChoicePool {
+        /// What every card says on one side (index = position in `list`).
+        struct Side {
+            /// The trimmed answer text and its shape.
+            let texts: [String]
+            let shapes: [WordClass.OptionShape]
+            /// The number of each distinct answer key (`textKey`; -1 for an empty one): a question
+            /// keeps its options distinct by number instead of hashing every text again.
+            let keyNumbers: [JSText: Int]
+            let keyNumber: [Int]
+            /// The cards having each key among their answer's alternatives (`answerKeys`), and among
+            /// their prompt's (`Synonyms.promptKeys`, for `findSynonymCards`).
+            let answerKeyCards: [JSText: [Int]]
+            let promptKeyCards: [JSText: [Int]]
+            /// Whether the answer is blank (no synonym card then).
+            let blankAnswers: [Bool]
+        }
+
+        let list: [Card]
+        private var term: Side?
+        private var definition: Side?
+
+        init(_ list: [Card]) {
+            self.list = list
+        }
+
+        /// Each card id's position (the last one wins).
+        lazy var at: [String: Int] = {
+            var at: [String: Int] = [:]
+            for (i, c) in list.enumerated() { at[c.id] = i }
+            return at
+        }()
+        lazy var sides = WordClass.listProfiles(list)
+        /// `WordClass.cardClass` of each card.
+        lazy var classes: [String] = list.map { WordClass.cardClass($0, sides: sides) }
+
+        func side(_ ask: AskSide) -> Side {
+            if let known = ask == .term ? term : definition { return known }
+            let answers = sides.side(ask)
+            let texts = list.map { JSCompat.trim(Synonyms.answerSide($0, ask: ask)) }
+            var keyNumbers: [JSText: Int] = [:]
+            var keyNumber: [Int] = []
+            var answerKeyCards: [JSText: [Int]] = [:]
+            var promptKeyCards: [JSText: [Int]] = [:]
+            keyNumber.reserveCapacity(list.count)
+            for (i, text) in texts.enumerated() {
+                let key = LearnEngine.textKey(text)
+                if key.isEmpty {
+                    keyNumber.append(-1)
+                } else {
+                    let number = keyNumbers[key] ?? keyNumbers.count
+                    keyNumbers[key] = number
+                    keyNumber.append(number)
+                }
+                for alt in LearnEngine.answerKeys(text) { answerKeyCards[alt, default: []].append(i) }
+                for alt in Synonyms.promptKeys(Synonyms.promptSide(list[i], ask: ask)) {
+                    promptKeyCards[alt, default: []].append(i)
+                }
+            }
+            let side = Side(
+                texts: texts, shapes: texts.map { WordClass.shapeOf($0, side: answers) }, keyNumbers: keyNumbers,
+                keyNumber: keyNumber, answerKeyCards: answerKeyCards, promptKeyCards: promptKeyCards,
+                blankAnswers: list.map { Synonyms.isBlank(Synonyms.answerSide($0, ask: ask)) })
+            if ask == .term { term = side } else { definition = side }
+            return side
+        }
+    }
+
+    /// Possible wrong options for `card` asked on `side`, in `pool.list` order (with their
+    /// positions): other cards' answer texts that are non-empty, distinct, differ from the correct
     /// answer and share none of its alternatives, from cards that are no synonyms of `card`.
     /// Texts whose key is in `takenKeys` are skipped too.
-    private static func distractors(_ list: [Card], _ card: Card, _ side: AskSide, takenKeys: [JSText] = [])
-        -> [Choice]
+    private static func distractors(_ pool: ChoicePool, _ card: Card, _ side: AskSide, takenKeys: [JSText] = [])
+        -> [(choice: Choice, index: Int)]
     {
+        let list = pool.list
+        let data = pool.side(side)
         let correctText = JSCompat.trim(Synonyms.answerSide(card, ask: side))
-        // Synonym cards (same prompt) would make their answer correct too.
-        let synonyms = Set(Synonyms.findSynonymCards(list, card: card, ask: side).map(\.id))
-        let correctKeys = answerKeys(correctText)
-        var usedKeys = Set(takenKeys)
-        usedKeys.insert(textKey(correctText))
-        var out: [Choice] = []
-        for other in list where other.id != card.id && !synonyms.contains(other.id) {
-            let text = JSCompat.trim(Synonyms.answerSide(other, ask: side))
-            let key = textKey(text)
-            if key.isEmpty || usedKeys.contains(key) { continue }
-            // An option sharing an alternative with the correct answer would be correct as well.
-            if !answerKeys(text).isDisjoint(with: correctKeys) { continue }
-            usedKeys.insert(key)
-            out.append(Choice(cardId: other.id, text: text))
+        // Synonym cards (same prompt) would make their answer correct too (`findSynonymCards`).
+        var synonyms = Set<String>()
+        for key in Synonyms.promptKeys(Synonyms.promptSide(card, ask: side)) {
+            for i in data.promptKeyCards[key] ?? [] where !Synonyms.isSameCard(list[i], card) && !data.blankAnswers[i] {
+                synonyms.insert(list[i].id)
+            }
+        }
+        // An option sharing an alternative with the correct answer would be correct as well.
+        var sharesAlternative = [Bool](repeating: false, count: list.count)
+        for key in answerKeys(correctText) {
+            for i in data.answerKeyCards[key] ?? [] { sharesAlternative[i] = true }
+        }
+        // Keys not among the list's cannot match an option.
+        var usedKeys = [Bool](repeating: false, count: data.keyNumbers.count)
+        for key in takenKeys + [textKey(correctText)] {
+            if let number = data.keyNumbers[key] { usedKeys[number] = true }
+        }
+        var out: [(choice: Choice, index: Int)] = []
+        for (i, other) in list.enumerated()
+        where other.id != card.id && (synonyms.isEmpty || !synonyms.contains(other.id)) {
+            let number = data.keyNumber[i]
+            if number < 0 || usedKeys[number] { continue }
+            if sharesAlternative[i] { continue }
+            usedKeys[number] = true
+            out.append((Choice(cardId: other.id, text: data.texts[i]), i))
         }
         return out
     }
@@ -1256,24 +1349,23 @@ public enum LearnEngine {
     /// beginning and ending) plus a random 0–2, so options almost as similar take turns; equal
     /// ones in random order.
     private static func rankedDistractors(
-        _ list: [Card], _ card: Card, _ side: AskSide, _ rng: RNG, takenKeys: [JSText] = []
+        _ pool: ChoicePool, _ card: Card, _ side: AskSide, _ rng: RNG, takenKeys: [JSText] = []
     ) -> [Choice] {
-        let candidates = distractors(list, card, side, takenKeys: takenKeys)
-        var at: [String: Int] = [:]
-        for (i, c) in list.enumerated() { at[c.id] = i }
-        let sides = WordClass.listProfiles(list)
+        let candidates = distractors(pool, card, side, takenKeys: takenKeys)
+        let at = pool.at
+        let sides = pool.sides
+        let shapes = pool.side(side).shapes
         let cls = WordClass.cardClass(card, sides: sides)
-        let answers = sides.side(side)
-        let shape = WordClass.shapeOf(JSCompat.trim(Synonyms.answerSide(card, ask: side)), side: answers)
+        let shape = WordClass.shapeOf(JSCompat.trim(Synonyms.answerSide(card, ask: side)), side: sides.side(side))
         let here = at[card.id] ?? -1
         var ranked: [(choice: Choice, order: Int, key: Int)] = []
         for (order, c) in shuffled(candidates, rng).enumerated() {
-            let i = at[c.cardId] ?? 0
-            let otherCls = WordClass.cardClass(list[i], sides: sides)
+            let i = at[c.choice.cardId] ?? 0
+            let otherCls = pool.classes[i]
             let tier = cls.isEmpty || otherCls.isEmpty ? 1 : otherCls == cls ? 2 : 0
-            var points = WordClass.shapePoints(shape, WordClass.shapeOf(c.text, side: answers))
+            var points = WordClass.shapePoints(shape, shapes[c.index])
             if here >= 0 { points += WordClass.nearPoints(abs(i - here)) }
-            ranked.append((c, order, tier * 100 + points + randomIndex(rng, 3)))
+            ranked.append((c.choice, order, tier * 100 + points + randomIndex(rng, 3)))
         }
         ranked.sort { $0.key != $1.key ? $0.key > $1.key : $0.order < $1.order }
         return ranked.map(\.choice)
@@ -1373,7 +1465,7 @@ public enum LearnEngine {
     /// for when the question has to be asked as multiple choice after all (a wrong multiple-choice
     /// answer earlier in the round).
     private static func makeQuestion(
-        _ s: LearnState, _ card: Card, _ stage: Int, _ pool: [Card], _ qid: String, _ rng: RNG
+        _ s: LearnState, _ card: Card, _ stage: Int, _ pool: ChoicePool, _ qid: String, _ rng: RNG
     ) -> LearnQueueQuestion {
         let ask = pickAsk(s.answerWith, rng)
         let choices = s.learn.mc ? buildChoices(pool, card: card, ask: ask, rng: rng) : []
@@ -1506,7 +1598,7 @@ public enum LearnEngine {
         let all = cardList(cards)
         var byId: [String: Card] = [:]
         for card in all where byId[card.id] == nil { byId[card.id] = card }
-        let pool = all.filter(askable)
+        let pool = ChoicePool(cardList(all.filter(askable)))
         var index: [String: Int] = [:]
         for (i, id) in s.order.enumerated() { index[id] = i }
         let stage = s.stage
@@ -1605,7 +1697,7 @@ public enum LearnEngine {
         let all = cardList(cards)
         var byId: [String: Card] = [:]
         for card in all where byId[card.id] == nil { byId[card.id] = card }
-        let pool = all.filter(askable)
+        let pool = ChoicePool(cardList(all.filter(askable)))
         var planned = s.stage
         let state = s
         s.queue = s.queue.map { q in
@@ -1760,7 +1852,7 @@ public enum LearnEngine {
     /// The set's askable cards without the removed one, and every card by id: the source of
     /// replacement options when a card is removed.
     private struct Refill {
-        let pool: [Card]
+        let pool: ChoicePool
         let byId: [String: Card]
     }
 

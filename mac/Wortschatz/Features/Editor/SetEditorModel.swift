@@ -174,7 +174,7 @@ final class SetEditorModel {
         return stats
     }
 
-    var isTitleEmpty: Bool { JSCompat.trim(title).isEmpty }
+    var isTitleEmpty: Bool { JSCompat.isBlank(title) }
 
     var titleError: String? {
         attempted && isTitleEmpty ? SetEditorCopy.titleMissing : nil
@@ -513,13 +513,19 @@ final class SetEditorModel {
             let rows = self.rows
             let termLang = self.termLang
             let defLang = self.defLang
-            for (index, row) in rows.enumerated() {
+            // A portion ends after a few milliseconds, not after a number of rows: unchecked
+            // texts with unknown words (suggestions) cost far more than cached ones.
+            var portionStart = ContinuousClock.now
+            for row in rows {
                 guard !Task.isCancelled else { return }
                 let term = self.speller.issues(in: row.term, lang: termLang)
                 let definition = self.speller.issues(in: row.definition, lang: defLang)
                 if row.termSpelling != term { row.termSpelling = term }
                 if row.definitionSpelling != definition { row.definitionSpelling = definition }
-                if index % 20 == 19 { await Task.yield() }
+                if ContinuousClock.now - portionStart > .milliseconds(4) {
+                    await Task.yield()
+                    portionStart = .now
+                }
             }
         }
     }

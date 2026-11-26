@@ -142,7 +142,7 @@ public enum Synonyms {
     private static func quality(_ r: GradeResult) -> Int { r.exact ? 0 : 1 + r.notes.count }
 
     /// The JS code compares cards by identity or by id; Swift cards are values, so the id decides.
-    private static func isSameCard(_ a: Card, _ b: Card) -> Bool { JSCompat.identical(a.id, b.id) }
+    static func isSameCard(_ a: Card, _ b: Card) -> Bool { JSCompat.identical(a.id, b.id) }
 
     /// Comparison key: case, ß/ss, ligatures, hyphens and punctuation do not matter, nor Arabic
     /// vowel marks or full-width punctuation (`foldScripts`).
@@ -175,7 +175,7 @@ public enum Synonyms {
     }
 
     /// The whole prompt and each of its alternatives ("lieb, nett" → lieb nett | lieb | nett).
-    private static func promptKeys(_ text: String) -> Set<JSText> {
+    static func promptKeys(_ text: String) -> Set<Grading.JSText> {
         promptKeySets.value(for: text) { text in
             var keys: Set<JSText> = [keyOf(text)]
             for alt in Grading.splitAlternatives(text) { keys.insert(keyOf(alt)) }
@@ -185,7 +185,7 @@ public enum Synonyms {
     }
 
     /// Whether `text` is empty after basic normalisation.
-    private static func isBlank(_ text: String) -> Bool {
+    static func isBlank(_ text: String) -> Bool {
         blankTexts.value(for: text) { TextNormalizer.normalizeBasic($0).isEmpty }
     }
 }

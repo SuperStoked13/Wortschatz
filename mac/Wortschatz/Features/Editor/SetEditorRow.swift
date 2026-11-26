@@ -70,10 +70,11 @@ final class SetEditorRow: Identifiable {
     var trimmedTerm: String { JSCompat.trim(term) }
     var trimmedDefinition: String { JSCompat.trim(definition) }
 
-    /// Term or definition has text (empty rows are not saved).
-    var isFilled: Bool { !trimmedTerm.isEmpty || !trimmedDefinition.isEmpty }
+    /// Term or definition has text (empty rows are not saved). Without trimmed copies: the
+    /// editor counts every row on each key typed.
+    var isFilled: Bool { !JSCompat.isBlank(term) || !JSCompat.isBlank(definition) }
     /// Term and definition have text.
-    var isComplete: Bool { !trimmedTerm.isEmpty && !trimmedDefinition.isEmpty }
+    var isComplete: Bool { !JSCompat.isBlank(term) && !JSCompat.isBlank(definition) }
     /// The parser marked it for review.
     var isFlagged: Bool { SetEditorCopy.hasMarker(flags) }
     /// The spell checker found a probable typo in the term or the definition.

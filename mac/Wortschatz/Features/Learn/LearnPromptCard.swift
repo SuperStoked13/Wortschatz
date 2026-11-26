@@ -6,7 +6,7 @@ import WortschatzCore
 struct LearnPromptCard<Answer: View>: View {
     @Environment(\.studyScale) private var studyScale
     let question: LearnFlow.QuestionInfo
-    let isSpeaking: Bool
+    let speech: SpeechService
     let send: (LearnFlow.Event) -> Void
     let onEdit: () -> Void
     @ViewBuilder var answer: Answer
@@ -58,7 +58,7 @@ struct LearnPromptCard<Answer: View>: View {
             ) {
                 send(.speakPrompt)
             }
-            .symbolEffect(.variableColor.iterative, isActive: isSpeaking && !reduceMotion)
+            .modifier(SpeakingWaves(speech: speech))
 
             LearnIconButton(
                 label: question.starred ? String(localized: "Markierung entfernen") : String(localized: "Markieren"),

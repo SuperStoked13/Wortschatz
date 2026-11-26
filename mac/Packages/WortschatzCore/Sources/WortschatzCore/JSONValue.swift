@@ -18,19 +18,21 @@ public enum JSONValue: Sendable, Hashable, Codable {
     // MARK: Codable
 
     public init(from decoder: any Decoder) throws {
+        // Each kind matches exactly one of the attempts; the most frequent come first, since
+        // every failed attempt throws (loading a library threw ~4 errors per object, 2 per string).
         let c = try decoder.singleValueContainer()
         if c.decodeNil() {
             self = .null
-        } else if let b = try? c.decode(Bool.self) {
-            self = .bool(b)
-        } else if let n = try? c.decode(Double.self) {
-            self = .number(n)
         } else if let s = try? c.decode(String.self) {
             self = .string(s)
-        } else if let a = try? c.decode([JSONValue].self) {
-            self = .array(a)
+        } else if let n = try? c.decode(Double.self) {
+            self = .number(n)
         } else if let o = try? c.decode([String: JSONValue].self) {
             self = .object(o)
+        } else if let a = try? c.decode([JSONValue].self) {
+            self = .array(a)
+        } else if let b = try? c.decode(Bool.self) {
+            self = .bool(b)
         } else {
             throw DecodingError.dataCorruptedError(in: c, debugDescription: "Not a JSON value")
         }

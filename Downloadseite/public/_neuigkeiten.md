@@ -38,6 +38,9 @@ erscheint nicht auf der Seite.
 
 ## Nächste Version
 
+- Verbessert (Mac): Grosse Lernsets laufen flüssiger: Beim Lernen ist eine neue Runde bis zu fünfmal schneller bereit, und im Lernset-Editor stocken Tippen und Rechtschreibprüfung weniger.
+  EN: Large study sets run more smoothly: when learning, a new round is ready up to five times faster, and typing and the spell check in the study set editor stutter less.
+
 ## 1.8.2 – 2026-11-26
 
 - Verbessert (Windows): Neues Lernset: Eine eingefügte Liste steht sofort in den Karten – «Trennung» und «Seiten tauschen» ändern sie direkt dort, «Karten übernehmen» braucht es nicht mehr. Die Sprachen stehen zuerst auf «Automatisch» und werden erkannt.
