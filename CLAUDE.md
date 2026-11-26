@@ -33,8 +33,9 @@ Die Seite `/neuigkeiten` zeigt `Downloadseite/public/_neuigkeiten.md`. **Ohne Na
   `- Neu: …`, `- Verbessert (Mac): …`, `- Behoben (Windows): …`. Plattform in Klammern nur, wenn nur eine App betroffen
   ist. Ein bis zwei Sätze für Benutzer, Deutsch mit ss. Ändert sich derselbe Punkt vor dem Release nochmals: den
   Eintrag anpassen, keinen zweiten schreiben.
-- **Englisch:** direkt darunter, eingerückt, `  EN: …` mit demselben Punkt auf Englisch (für `/en/whats-new`;
-  Bezeichnungen aus der deutschen App bleiben in «…»). Wird der deutsche Eintrag geändert, die EN-Zeile mit anpassen.
+- **Englisch:** direkt darunter, eingerückt, `  EN: …` mit demselben Punkt auf Englisch (für `/en/whats-new` und die
+  englische App; Bezeichnungen in «…» so, wie die englische App sie zeigt, z. B. «Separator» statt «Trennung»). Wird der
+  deutsche Eintrag geändert, die EN-Zeile mit anpassen.
   Fehlt sie, zeigt die englische Seite den deutschen Text.
 - **Keine Versionsnummern von Hand:** `Downloadseite/tools/release-*.sh` verschiebt beim Bauen die Einträge der gebauten
   Plattform (ohne Klammer oder mit ihr) aus «Nächste Version» nach `## <Version> – <Datum>` (`tools/neuigkeiten.py`).

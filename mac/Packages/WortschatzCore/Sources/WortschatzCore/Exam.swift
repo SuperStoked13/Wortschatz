@@ -1,7 +1,7 @@
 import Foundation
 
 // Prüfungsmodus (exam): a vocabulary test over a set on one page, graded like a test at school
-// with a Swiss grade from 1 to 6. Only the Mac app has it (the web app has no exam).
+// with a Swiss grade from 1 to 6. Came first on the Mac; ported to Website/src/core/exam.js and Windows Exam.cs.
 //
 // Grading reuses the Write and Learn grader (`Grading`, `Synonyms`) in two passes: first with
 // only the forms that are no mistake at all (one of several answers, optional brackets,

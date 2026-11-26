@@ -12,7 +12,7 @@ Downloadseite/
   public/        Seiten (index.html, datenschutz.html, _error.html, _partials/), en/ (dieselben auf Englisch)
                  und assets/ (CSS, JS, Bilder)
   server/        Node-Server: server.mjs, lib/, test/
-  releases/      die Downloads und ihre Manifeste (mac.json, windows.json)
+  releases/      die Manifeste (mac.json, windows.json): online mit Link auf GitHub, lokal auch die Dateien selbst
   tools/         release-mac.sh, release-windows.sh, neuigkeiten.py, appcast.py, windows_update.py, handschrift.py
   .env.example   Einstellungen (nach .env kopieren)
 ```
@@ -44,15 +44,16 @@ Mit `--skip-build` nehmen die Skripte die zuletzt gebaute App (`mac/build/Wortsc
 `windows-native/dist/Wortschatz.exe`). Die Versionsnummer kommt aus dem Xcode-Projekt bzw. aus
 `windows-native/src/Wortschatz.App/Wortschatz.App.csproj`. Ältere Versionen im Ordner werden dabei entfernt.
 
-Der Server merkt neue Dateien innert 15 Sekunden, berechnet die SHA-256-Prüfsumme und zeigt
-Version, Grösse und Prüfsumme auf der Seite an. Läuft der Server auf einem anderen Gerät, den
-Ordner `releases/` dorthin kopieren (z. B. `rsync -av Downloadseite/releases/ pi@raspberrypi:/opt/wortschatz-web/releases/`).
+Ein lokal laufender Server merkt neue Dateien innert 15 Sekunden, berechnet die SHA-256-Prüfsumme und zeigt
+Version, Grösse und Prüfsumme auf der Seite an. Online gehen die Dateien nur über ein GitHub-Release
+(`../VEROEFFENTLICHEN.md`).
 
-**Downloads auf GitHub.** Statt einer Datei im Ordner kann ein Manifest auf die Datei in einem GitHub-Release zeigen:
+**Downloads auf GitHub** (so läuft die Seite online seit 26.11.2026). Statt einer Datei im Ordner zeigt ein Manifest auf
+die Datei in einem GitHub-Release; online schreibt das Deploy diese Manifeste selbst:
 
 ```json
-{ "file": "Wortschatz-1.5-Windows.exe", "version": "1.5", "size": 92000000, "sha256": "…",
-  "url": "https://github.com/SuperStoked13/Wortschatz/releases/download/v1.5/Wortschatz-1.5-Windows.exe" }
+{ "file": "Wortschatz-1.8.2-Windows.exe", "version": "1.8.2", "size": 77850867, "sha256": "…",
+  "url": "https://github.com/SuperStoked13/Wortschatz/releases/download/v1.8.2-windows/Wortschatz-1.8.2-Windows.exe" }
 ```
 
 Dann ist «Laden» ein gewöhnlicher Link dorthin (kein Formular, kein signierter Link), Version, Grösse und
@@ -63,10 +64,11 @@ und alte Download-Links bekommen «Seite neu laden» (410). Mac und Windows dür
 
 ## Online
 
-Im Betrieb läuft die Seite als Container hinter Caddy, der HTTPS macht und `X-Forwarded-For` selbst setzt
-(`TRUST_PROXY`). Neue Versionen gehen über **GitHub-Releases** online (`../VEROEFFENTLICHEN.md`). Der Betrieb
-selbst (Container, Caddy, Deploy-Skript, `.env`) liegt bewusst nicht in diesem Repo. Der Server braucht Node 20
-oder neuer, `server/`, `public/`, `releases/` und die Einstellungen aus `.env.example`. Mit `DUCKDNS_TOKEN` meldet
+Im Betrieb läuft die Seite als Container ohne Netz hinter Caddy, der über eine Socket-Datei kommt
+(`LISTEN_SOCKET`), HTTPS macht und `X-Forwarded-For` selbst setzt. Neue Versionen gehen über **GitHub-Releases**
+online (`../VEROEFFENTLICHEN.md`), die Downloads verlinkt die Seite dorthin. Der Betrieb selbst (Container, Caddy,
+Deploy-Skript, `.env`) liegt bewusst nicht in diesem Repo. Der Server braucht Node 20 oder neuer, `server/`,
+`public/`, `releases/` und die Einstellungen aus `.env.example`. Mit `DUCKDNS_TOKEN` meldet
 er alle fünf Minuten die aktuelle IP-Adresse an DuckDNS (leer lassen, wenn das schon jemand anderes tut).
 
 ## Sicherheit
@@ -86,10 +88,11 @@ Was der Server tut (alle Werte lassen sich in `.env` ändern, siehe `.env.exampl
   nicht auffällt. Skripte dürfen das Passwort weiterhin per HTTP Basic Auth schicken (Benutzername
   egal, gleiche Grenzen); der Browser fragt aber nie danach. Das Passwort reist nur dank HTTPS
   geschützt, und es sollte lang und zufällig sein: Gegen viele Adressen hilft nur das.
-- **Downloads auf GitHub (empfohlen für eine öffentliche Seite).** Zeigen die Manifeste auf GitHub (siehe
+- **Downloads auf GitHub (online seit 26.11.2026).** Zeigen die Manifeste auf GitHub (siehe
   «Downloads bereitstellen»), liefert der Server keine Datei mehr aus: kein Upload für Fremde, keine Download-Plätze
-  zum Belegen, und die Seite verteilt selbst keine Programme. Die Punkte zu Downloads unten gelten dann nicht.
-- **Ohne Netz im Container (optional).** Mit `LISTEN_SOCKET=/pfad/web.sock` hört der Server zusätzlich auf einer
+  zum Belegen, und die Seite verteilt selbst keine Programme. Die Punkte zu Downloads unten (signierte Links,
+  gleichzeitige Downloads, Bandbreite) gelten dann nicht; sie bleiben für Dateien direkt in `releases/`.
+- **Ohne Netz im Container (online seit 26.11.2026).** Mit `LISTEN_SOCKET=/pfad/web.sock` hört der Server zusätzlich auf einer
   Unix-Socket-Datei, über die der Proxy kommt (Caddy: `reverse_proxy unix//pfad/web.sock`). Dann braucht der
   Container gar kein Netz (Docker `network_mode: none`): Wer eine Lücke im Server fände, käme von dort weder an den
   Rechner noch ins Heimnetz oder ins Internet. Alles über den Socket gilt als vom Proxy (seine `X-Forwarded-For`
@@ -146,21 +149,21 @@ Was der Server tut (alle Werte lassen sich in `.env` ändern, siehe `.env.exampl
   8 Formulare pro Adresse (bei IPv6 pro /48) und 1500 insgesamt dürfen gleichzeitig unterwegs sein. Untätige Verbindungen
   werden nach einer Minute getrennt. Mehr als 2000 gleichzeitige Verbindungen nimmt der Server nicht
   an und schliesst dann zuerst die untätigen.
-- **Prüfsummen.** Die SHA-256 jeder Datei steht auf der Seite, in `/checksums.txt` und im
-  Header `Repr-Digest`.
+- **Prüfsummen.** Die SHA-256 jeder Datei steht auf der Seite und in `/checksums.txt` (bei Dateien direkt in
+  `releases/` auch im Header `Repr-Digest`).
 - **Datenschutz.** Keine Cookies (ausser dem Login-Cookie, wenn ein Passwort gesetzt ist), kein Tracking, keine Inhalte von Dritten. Im Protokoll stehen
-  IP-Adressen nur gekürzt (`203.0.113.0`), gezählt werden nur Downloads pro Tag
-  (`data/downloads.json`). `OPERATOR_NAME` und `CONTACT_EMAIL` in `.env` setzen, damit die
+  IP-Adressen nur gekürzt (`203.0.113.0`). Downloads aus `releases/` zählt der Server pro Tag
+  (`data/downloads.json`), Downloads auf GitHub nicht. `OPERATOR_NAME` und `CONTACT_EMAIL` in `.env` setzen, damit die
   Datenschutzerklärung vollständig ist.
 - **Caddy** davor sorgt für HTTPS, ersetzt `X-Forwarded-For` durch die echte Adresse (Besucher
   können sie also nicht fälschen) und begrenzt die Grösse von Anfragen. Der Docker-Container
-  läuft ohne Root, mit schreibgeschütztem Dateisystem und ohne Linux-Capabilities. Docker gibt
-  die Ports nur über IPv4 frei: das Docker-Netz hat kein IPv6, über IPv6 sähe der Server sonst
-  bei allen Besuchern dieselbe Adresse.
+  läuft ohne Root, mit schreibgeschütztem Dateisystem und ohne Linux-Capabilities. Ohne Socket
+  (`LISTEN_SOCKET`) gibt Docker die Ports nur über IPv4 frei: das Docker-Netz hat kein IPv6, über IPv6 sähe der
+  Server sonst bei allen Besuchern dieselbe Adresse.
 
 Nicht abgedeckt: Eine Flut, die schon die Leitung füllt, kann kein Programm am Ende dieser Leitung
-abwehren; dagegen hilft nur etwas davor (Tunnel, CDN, Anbieter). Caddy, Docker und der Worker haben
-eigene Grenzen, die dieser Server nicht setzen kann. Die Apps sind nicht signiert bzw. nicht notarisiert (dafür braucht es
+abwehren; dagegen hilft nur etwas davor (Tunnel, CDN, Anbieter). Caddy, Docker und die Ausweichadresse über
+Cloudflare (siehe Datenschutzerklärung) haben eigene Grenzen, die dieser Server nicht setzen kann. Die Apps sind nicht signiert bzw. nicht notarisiert (dafür braucht es
 kostenpflichtige Entwicklerkonten bei Apple und ein Zertifikat für Windows; `release-mac.sh --notarize`
 ist vorbereitet, siehe `VEROEFFENTLICHEN.md`). Deshalb erklärt die Seite die Warnungen beim ersten Start. Die Prüfsummen zeigen, dass ein Download vollständig
 ist; sie schützen nicht davor, dass jemand den Server selbst übernimmt. Halte deshalb das
@@ -209,9 +212,11 @@ falsche GitHub-Links in Manifesten, Besucheradressen über den Socket).
 - Sprachen der Apps: `server/lib/languages.mjs`. Bis Mac 1.6.2 und Windows 1.4 nur Deutsch, jede neuere Version auch
   Englisch (Releases kommen von `main`). Danach richten sich der Hinweis oben, der Satz im Download-Abschnitt und die
   Zeile «Sprache» jeder Karte – ein neues Release schaltet die Seite von selbst um. Tests: `test/languages.test.mjs`.
+  Die Releases dieses Repos (ab 1.8) sprechen alle Englisch; die Weiche greift nur noch für ältere Manifeste.
 - Updates der Apps: Ist eine Mac- bzw. Windows-Version nach 1.7.1 online, sagen die Datenschutzerklärung (die eine, die
   andere oder beide Apps) und die Hilfe der App, dass sie bei GitHub nach Updates fragt (`updatesView` in
-  `server/lib/app.mjs`: `macUpdates`, `windowsUpdates`, `appUpdates`).
+  `server/lib/app.mjs`: `macUpdates`, `windowsUpdates`, `appUpdates`). Seit den Releases dieses Repos (ab 1.8) gilt
+  das für beide Apps.
 - Spenden: der gezeichnete Kaffee im Hero (`_partials/coffee.html`, `coffee-en.html`, die Tasse in `cup.html`) und
   der Abschnitt «Wortschatz unterstützen» unten auf der Startseite verlinken Ko-fi. Nichts davon lädt etwas von dort.
   Die Worte daneben schreiben sich Strich für Strich (`coffee-note.html`, `coffee-note-en.html`); die Dateien

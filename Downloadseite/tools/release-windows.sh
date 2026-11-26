@@ -1,7 +1,7 @@
 #!/bin/bash
 # Legt die Windows-App (windows-native/dist/Wortschatz.exe, native C#-App seit 1.2) als Download in
 # Downloadseite/releases/ ab, zusammen mit windows.json und windows-update.json (das Update für die installierten Apps).
-# Der laufende Server übernimmt die neue Version innert 15 Sekunden.
+# Ein lokal laufender Server zeigt die neue Version innert 15 Sekunden; online geht sie erst mit dem GitHub-Release.
 #
 # Updates: windows-update.json signiert das Skript mit dem privaten Update-Schlüssel (tools/windows_update.py; Standard
 # ~/.config/wortschatz-update/windows-update-key.pem, anders mit WORTSCHATZ_UPDATE_KEY=…). Fehlt er oder passt er nicht

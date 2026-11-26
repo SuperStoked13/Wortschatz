@@ -20,19 +20,23 @@ online.
    Dabei wandern die Einträge dieser Plattform (ohne Klammer oder mit ihr) unter «Nächste Version» in
    `Downloadseite/public/_neuigkeiten.md` in den Abschnitt der neuen Version (das ist die Seite `/neuigkeiten`).
 3. **Code committen und pushen** – auch die geänderte `_neuigkeiten.md` (die Downloads selbst kommen nicht ins Git).
-4. **Release erstellen:** GitHub → *Releases* → *Draft a new release* → neuen Tag `v<version>` auf `main` →
-   Titel → die Dateien aus `Downloadseite/releases/` anhängen (`.exe` + `windows.json` + `windows-update.json`,
-   `.dmg` + `mac.json` + `appcast.xml`)
-   → *Set as the latest release* angehakt lassen → **Publish release**. Alle Dateien **vorher** anhängen: Danach lässt
-   sich keine mehr anhängen oder austauschen (unveränderliche Releases, siehe «Gut zu wissen»).
+4. **Release erstellen**, je App ein eigenes: GitHub → *Releases* → *Draft a new release* → neuen Tag auf `main`:
+   **`v<version>-mac`** bzw. **`v<version>-windows`** (beim Mac genau der Tag, den `release-mac.sh` am Ende nennt – er
+   steht im `appcast.xml`, siehe «Updates (Mac)») → Titel `Wortschatz <version> (Mac)` bzw. `(Windows)` → die Dateien
+   aus `Downloadseite/releases/` anhängen (`.dmg` + `mac.json` + `appcast.xml` bzw. `.exe` + `windows.json` +
+   `windows-update.json`) → *Set as the latest release* angehakt lassen → **Publish release**. Alle Dateien
+   **vorher** anhängen: Danach lässt sich keine mehr anhängen oder austauschen (unveränderliche Releases, siehe
+   «Gut zu wissen»).
    Oder im Terminal:
    ```bash
-   gh release create v<version> --title "Wortschatz <version>" --notes "Was neu ist …" \
-     Downloadseite/releases/Wortschatz-<version>-Windows.exe Downloadseite/releases/windows.json \
-     Downloadseite/releases/windows-update.json \
+   gh release create v<version>-mac --title "Wortschatz <version> (Mac)" --notes "Was neu ist …" \
      Downloadseite/releases/Wortschatz-<version>-macOS.dmg Downloadseite/releases/mac.json \
      Downloadseite/releases/appcast.xml
+   gh release create v<version>-windows --title "Wortschatz <version> (Windows)" --notes "Was neu ist …" \
+     Downloadseite/releases/Wortschatz-<version>-Windows.exe Downloadseite/releases/windows.json \
+     Downloadseite/releases/windows-update.json
    ```
+   Beide Apps in einem Release geht auch: dann den Mac mit `release-mac.sh --tag=<Tag>` bauen (siehe «Updates (Mac)» und «Gut zu wissen»).
 5. Nach höchstens etwa **6 Minuten** ist die neue Version online. Prüfen: Die Seite zeigt die neue
    Versionsnummer, und `/checksums.txt` nennt die neuen Dateien. Die Seite ist öffentlich (seit 26.11.2026 ohne
    Passwort).
@@ -118,12 +122,13 @@ Dann auch den Abschnitt «Erster Start auf dem Mac» in `Downloadseite/public/in
   Mit Manifest ist es genauer (Build-Nummer, Datum).
 - **Erst ausprobieren?** Release als *Draft* speichern oder *Set as a pre-release* anhaken – das geht nicht live.
 - **Zurück auf die vorherige Version:** das neueste Release löschen oder zur Vorabversion machen – nach
-  höchstens 5 Minuten ist die vorherige wieder online.
+  höchstens etwa 6 Minuten ist die vorherige wieder online.
 - **Tests:** `cd Downloadseite/server && node --test test/*.test.mjs` muss grün sein, sonst geht nichts live.
 - **Dateinamen:** keine Leerzeichen; Endungen `.exe`, `.msi`, `.dmg`, `.pkg` oder `.zip`
-  (ein Mac-ZIP braucht „mac“ im Namen); höchstens 500 MB. Tags wie `v1.1` oder `v1.1.2`.
-- **Was der Server übernimmt:** nur `Downloadseite/server/`, `Downloadseite/public/` im Stand des Tags und die
-  angehängten Dateien. `Website/`, `mac/`, `windows-native/` gehen nie online.
+  (ein Mac-ZIP braucht „mac“ im Namen); höchstens 500 MB. Tags wie `v1.9-mac` oder `v1.9.1-windows`.
+- **Was der Server übernimmt:** `Downloadseite/server/` und `Downloadseite/public/` im Stand des «Latest»-Release. Die
+  angehängten App-Dateien prüft er (Prüfsumme) und verlinkt sie auf GitHub, ausliefern tut er sie nicht. `Website/`,
+  `mac/`, `windows-native/` gehen nie online.
 - **Was der Server nicht übernimmt:** `.env` und alles für den Betrieb – Container, HTTPS und Limits sind auf dem
   Server fest eingestellt.
 - **Nichts passiert?** Auf dem Server steht im Protokoll, warum (z. B. Test fehlgeschlagen). Ein gescheitertes
@@ -131,5 +136,5 @@ Dann auch den Abschnitt «Erster Start auf dem Mac» in `Downloadseite/public/in
 - **Unveränderliche Releases** (seit 25.11.2026): Nach dem Veröffentlichen sind die angehängten Dateien und der Tag
   gesperrt – niemand kann eine Datei still austauschen, auch nicht mit einem gestohlenen Zugang. Titel, Text und
   «Vorabversion» bleiben änderbar, Löschen geht auch; der Tag eines gelöschten Release ist aber für immer vergeben.
-  Ein Fehler in einer Datei heisst also: neue Versionsnummer. Kommen beide Apps ins selbe Release (z. B. das erste),
+  Ein Fehler in einer Datei heisst also: neue Versionsnummer. Kommen beide Apps ins selbe Release,
   zuerst als *Draft* speichern, beide hängen ihre Dateien an, dann veröffentlichen.

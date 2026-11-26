@@ -1,6 +1,6 @@
 # Features/Exam
 
-Prüfungsmodus (spec: docs/superpowers/specs/2026-10-13-wortschatz-exam.md): a vocabulary test with every question on
+Prüfungsmodus (spec: Website/docs/superpowers/specs/2026-10-13-wortschatz-exam.md): a vocabulary test with every question on
 one page, a time limit and a Swiss grade. Swift files in this folder are compiled into the app automatically.
 
 | File | What it holds |

@@ -23,8 +23,10 @@ Darunter, eingerückt, dieselbe Neuigkeit auf Englisch für https://wortschatz.d
   - Neu: Arabisch und Mandarin als Lernsprachen.
     EN: Arabic and Mandarin as study languages.
 
-Bezeichnungen aus der App (sie ist deutsch) bleiben in «…». Fehlt die EN-Zeile, zeigt die englische Seite
-den deutschen Text. Ändert sich der deutsche Eintrag, die EN-Zeile mit anpassen.
+Bezeichnungen aus der App stehen in «…», in der EN-Zeile so, wie die englische App sie zeigt (z. B. «Separator»
+statt «Trennung»; nachschlagen in mac/Wortschatz/Resources/Localizable.xcstrings oder
+windows-native/src/Wortschatz.Core/Strings/). Fehlt die EN-Zeile, zeigt die englische Seite den deutschen Text.
+Ändert sich der deutsche Eintrag, die EN-Zeile mit anpassen.
 
 Versionsnummern nicht von Hand setzen: Downloadseite/tools/release-mac.sh und release-windows.sh machen
 beim Bauen aus «Nächste Version» den Abschnitt «## 1.1 – 2026-10-20». Bis dahin zeigt die Seite die

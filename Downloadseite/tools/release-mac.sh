@@ -1,7 +1,7 @@
 #!/bin/bash
 # Baut die Mac-App und legt sie als DMG in Downloadseite/releases/ ab, zusammen mit mac.json und
-# appcast.xml (das Update für die installierten Apps, Sparkle). Der laufende Server übernimmt die neue
-# Version innert 15 Sekunden von selbst.
+# appcast.xml (das Update für die installierten Apps, Sparkle). Ein lokal laufender Server zeigt die neue
+# Version innert 15 Sekunden; online geht sie erst mit dem GitHub-Release (VEROEFFENTLICHEN.md).
 #
 # Updates: Das DMG und das appcast.xml signiert das Skript mit dem privaten Schlüssel im Schlüsselbund
 # (Sparkle, Konto «wortschatz»; die App kennt die öffentliche Hälfte, mac/Wortschatz-Info.plist).

@@ -62,7 +62,7 @@ public static partial class EarlierApp
             catch (Exception e) when (e is IOException or UnauthorizedAccessException) { done = false; }
         }
 
-        // Its log (windows/host/main.go writes wortschatz.log into the data folder).
+        // Its log (the earlier app, up to 1.1, wrote wortschatz.log into the data folder).
         try { File.Delete(Path.Combine(root, "wortschatz.log")); }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException) { done = false; }
 

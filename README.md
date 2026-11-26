@@ -66,7 +66,6 @@ Get the latest version at **[wortschatz.duckdns.org](https://wortschatz.duckdns.
 - 🍏 **Mac**: macOS 26 or later, Apple Silicon
 - 🪟 **Windows**: Windows 10 or 11, a single file with nothing to install
 
-
 ## Support
 
 Wortschatz is free, with no ads and no account, and it’s meant to stay that way. If the app helps you learn, you can

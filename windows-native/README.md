@@ -2,7 +2,7 @@
 
 Native Windows-Version der App «Wortschatz», gebaut als Port der **Mac-App** (`mac/`, Swift/SwiftUI). **Seit 1.2
 (3.11.2026) die offizielle Windows-App** und auf `main`; sie ersetzt die frühere Windows-App (`windows/` + `Website/`,
-WebView2, bis 1.1), die nicht mehr ausgeliefert wird. Entstanden auf dem Branch `native-windows-app`. Design: Richtung
+WebView2, bis 1.1), die nicht mehr ausgeliefert wird. Entstanden auf einem eigenen Branch. Design: Richtung
 **A · Glas** (so nah wie möglich an der Mac-App), von Joan am 2.11.2026 gewählt.
 
 ## Updates wie die Mac-App (25.11.2026, nach Windows 1.7.1)
@@ -42,7 +42,7 @@ suchen» (fragt bei einem Fund «Jetzt neu starten» oder «Später»). Release-
   Auf einem echten Windows-11-Laptop durchgespielt (25.11.2026): Suche nach etwa 20 s von selbst, «Version 9.1 ist
   bereit», nach dem Schliessen ist die exe 9.1 (alte als versteckte `.old`), beim nächsten Start «Aktualisiert auf
   9.1» mit «+1 weitere» und die `.old` ist weg; «Jetzt neu starten» startet 9.1 sofort. Die echte App fragt GitHub
-  (öffentliches Repo ohne Release → «Wortschatz ist aktuell»).
+  (neuestes veröffentlichtes Release mit `windows-update.json`; ohne neuere Version → «Wortschatz ist aktuell»).
 
 ## Optimierung: flüssiger, weniger Speicher, toter Code weg (25.11.2026, Windows 1.7.1)
 
@@ -79,8 +79,8 @@ Drei Helfer haben den Code gelesen (Lern-Bildschirme, Hülle und Seiten, Kern), 
 - **Toter Code entfernt** (~230 Zeilen): ungenutzte Bausteine in `StudyChrome`, `Ui`, `StudyText`, `Icons.Ring`,
   `Motion`-Kurven, der Sprachmodell-Teil aus `ExtendedSynonyms.swift` (Windows nimmt die Synonymwörterbücher),
   `SubsetWhat`/`ScopeText`/`SubsetDescription`/`SegmentFills` (ersetzt durch ganze Sätze), unbenutzte Felder und usings.
-  Nur von Tests benutzte Kern-Funktionen (Ports) bleiben, ebenso `LanguageDetection.SetLang` (wird auf einem
-  anderen Branch gebraucht, Kommentar dort).
+  Nur von Tests benutzte Kern-Funktionen (Ports) bleiben, ebenso `SetLang` der Spracherkennung (braucht heute der
+  Editor, `SetEditorScreen`).
 - **Bewusst nicht** (Option für später, ändert sonst eventuell Animationen): Multiple Choice zeichnet bei jeder Taste
   und beim Überfahren einer Kachel den ganzen Bildschirm neu (`LearnScreen.Render`); ein Teilumbau nur der Kacheln
   spart einige ms pro Taste. Trimmen der exe (kleiner, schnellerer Start) braucht Tests auf Windows (COM, WinRT).
@@ -89,7 +89,7 @@ Drei Helfer haben den Code gelesen (Lern-Bildschirme, Hülle und Seiten, Kern), 
   nach 580 ms), Weiter-Timer, Textcursor, die angezeigte Lernzeit. Vergleich vor/nach: jedes Bild gleich einem von zwei
   Referenzläufen, sonst von Auge prüfen.
 
-## Ältere Downloads räumen sich weg (nach 1.4, auf main, kommt mit 1.5)
+## Ältere Downloads räumen sich weg (seit Windows 1.7)
 
 Joan: eine neu heruntergeladene Version soll die alte ersetzen. `Services/OlderVersions.cs` (Regeln:
 `Wortschatz.Core/OlderDownloads.cs`, Tests `OlderDownloadsTests`) löscht bei jedem Start im Download-Ordner, auf dem
@@ -100,7 +100,7 @@ der Übernahme). Daten teilen sich alle Versionen ab 1.2, darum gibt es nichts z
 `WORTSCHATZ_NATIVE_DATA` sucht es nur dort und neben der exe. Auf dem Laptop geprüft (03.11.2026): 1.2/1.3-Downloads
 weg, laufende 1.3, gleiche Version, umbenannte Datei und eine Fälschung mit passendem Namen bleiben.
 
-## Lernen mit Abstand, Einstellungen (nach 1.3, 3.11.2026, Branch `lernen-und-einstellungen`)
+## Lernen mit Abstand, Einstellungen (nach 1.3, 3.11.2026)
 
 Joans zwei offene Punkte, gleich in JS-Referenz, Mac und Windows:
 - **Lernen** (`LearnEngine.cs`, Kopfkommentar; JS `src/core/learn.js` massgebend): statt Runden über eine feste Gruppe
@@ -150,14 +150,15 @@ Anthony fand sie bei der Durchsicht der Einstellungen auf dem Mac (GitHub-Issues
   gespeicherten Sitzungen um (`AppPreferences.LearnSwitchesChanged`, auch für importierte Einstellungen); ein offenes
   Lernen folgt über `LearnController.SwitchesMayHaveChanged`. «Standard wiederherstellen» im Lernen-Tab setzt die beiden
   mit zurück. Tests: `LearnSwitchesTests`, `LearnSessionSimulationTests` (Ports), `LearnReviewTests` angepasst.
-- **#7 Optionen ausserhalb der Sitzung geändert** (Windows zuerst, Mac offen): Richtung, Fragetypen und Rundengrösse
+- **#7 Optionen ausserhalb der Sitzung geändert** (Windows zuerst; der Mac hat es seit 1.7 anders gelöst – die Optionen
+  gelten sofort, ohne «Neu starten?» –, für Windows offen: `PORTING.md` › «Mac und Windows gleichziehen»): Richtung, Fragetypen und Rundengrösse
   (Lernen) bzw. Richtung und «Mischen» (Schreiben) gelten weiter erst nach einem Neustart. Neu fragt eine fortgesetzte
   Sitzung mit Antworten «Neu starten?», wenn sie anders läuft, als die Optionen jetzt sind (`AskForChangedOptions` in
   `LearnFlowReducer`/`WriteFlowMachine`, auch bei einer Änderung von aussen, während sie offen ist); ohne Antworten
   beginnt sie still neu. «Später» merkt sich das Gerät pro Lernset (`KeptOptions`, Einstellung
   `keptOptions.learn|write.<Set>`): keine Frage mehr, bis sich die Optionen wieder ändern. Die Optionen in der Sitzung
   sagen dann, womit sie noch läuft (`RunningSettingsNote`). Tests: `OptionsChangedElsewhereTests`.
-- **#8 Eigene Option zurück auf den Standard** (Windows zuerst, Mac offen): Die Optionen eines Lernsets speichern über
+- **#8 Eigene Option zurück auf den Standard** (Windows zuerst, Mac gleich seit 1.7): Die Optionen eines Lernsets speichern über
   `LibraryStore.UpdateOwnStudyOptions`. Eine geänderte Option, die danach dem Standard entspricht, ist keine eigene mehr
   (`StudyOptionsPatch.DroppingStandard`; nur die geänderten Schlüssel, die wirksamen Werte bleiben gleich).
   `UpdateStudyOptions` bleibt `mergeStudy` der Web-App (Parität mit `store.json`). Tests: `OptionsChangedElsewhereTests`.
@@ -219,14 +220,14 @@ Joan: «mache die Multiple Choice schwerer: möglichst ähnliche Wörter (zumind
   gleich viele Wörter, ähnliche Länge, gleicher Anfang/gleiches Ende), dazu 0–2 Zufallspunkte, damit fast gleich ähnliche
   abwechseln. Tests: Parität `WordClassParityTests` (Fixture `wordclass`) und `LearnEngineParityTests`.
 
-## Abgleich mit der Mac-App umgesetzt (1.3, 3.11.2026)
+## Vergleich mit der Mac-App umgesetzt (1.3, 3.11.2026)
 
 Joan: «gehe jeden Code-Abschnitt der Mac-App durch» → sechs Helfer-Agenten haben den ganzen Mac-Code mit der Windows-App
 verglichen, dann «alle 150
 Punkte umsetzen»: die dringenden selbst (b350504: Verlassen-Sperre `AppModel.LeaveGuard` für Prüfung und Editor, leere
 Kartenseiten, Datenrettungs-Hinweis `StartupPrompt`, Speichern scheitert beim Beenden, Sicherungen beim Löschen, Neustart
-mit Rückfrage, Ring-Prozent), der Rest von fünf Agenten auf eigenen Branches (fix-a-lernen, fix-b-pruefung, fix-c-editor,
-fix-d-einstellungen, fix-e-huelle), dann in `windows-import` zusammengeführt. Was jeder umgesetzt hat und was bewusst
+mit Rückfrage, Ring-Prozent), der Rest von fünf Agenten auf eigenen Branches (Lernen, Prüfung, Editor, Einstellungen,
+Hülle), dann zusammengeführt. Was jeder umgesetzt hat und was bewusst
 fehlt: eigene Berichte (nicht im Git).
 
 Neu dabei u. a.: Kern `SetEditorCopy` (Editor-Texte, Trennungen, `UndoHistory`), `SpeechText` (Vorlese-Aufbereitung),
@@ -243,7 +244,7 @@ Bewusst nicht: Haptik, Menüleiste (dafür F1 und Rechtsklick),
 Blätter über dem Lernbildschirm (Ctrl+N verlässt ihn; Prüfung fragt vorher). Ungetestet auf echtem Windows: Pinyin-
 Eingabe, Touchpad-Nachlauf, SAPI-Stimmenwahl, Kontrastdesign, bewegter Hintergrund (CPU/GPU beobachten).
 
-## Neue Funktionen nach 1.2 (3.11.2026, Branch `windows-import`)
+## Neue Funktionen nach 1.2 (3.11.2026)
 
 Joan: «mache neue Features jetzt». Alles, was gegenüber Mac und früherer Web-App fehlte:
 
@@ -251,7 +252,7 @@ Joan: «mache neue Features jetzt». Alles, was gegenüber Mac und früherer Web
   (mehrere), Ziehen auf den ganzen Editor, Ctrl+V eines Bildes oder kopierter Dateien im Importfeld, «Aus Zwischenablage».
   Fortschritt ab 160 ms mit Prozent und «Abbrechen» (auch Esc), Hinweise («Seite 3 konnte nicht gelesen werden»), Titel aus
   dem Dateinamen, Zusammenfassung als Toast (`SetEditorScreen`: `ImportSources`, `FinishImport`, `DropZone`, `RenderProgress`).
-  Kern (`Import/`, `TextLayout`, `OCRPostprocess`) portiert von einem Helfer-Agenten (Branch `windows-import-core`, gemergt).
+  Kern (`Import/`, `TextLayout`, `OCRPostprocess`) portiert von einem Helfer-Agenten.
   Windows-Teil `Services/ImportServices.cs`:
   - PDF-Text: **PdfPig** 0.1.16 (managed, läuft auch unter Linux), Wörter → `TextItem` (Grundlinie von oben, Schriftgrösse).
   - Gescannte Seiten: `Windows.Data.Pdf` rendert (Grösse aus `PdfPage.Size` in DIP, ×72/96 je Punkt).
@@ -262,7 +263,7 @@ Joan: «mache neue Features jetzt». Alles, was gegenüber Mac und früherer Web
     («ruder» aus «Bruder») bleiben stehen. Leerzeichen zwischen chinesischen Zeichen werden entfernt.
   - Fehlt Windows die Texterkennung einer Lernsprache, sagt ein Toast einmal, wo man sie hinzufügt (`MissingRecognizer`).
     Joans Laptop hat nur **de-DE** als OCR-Sprache: Französisch wird mit dem deutschen Erkenner gelesen (Akzente teils falsch).
-  - App mit zwei Zielen: `net10.0-windows10.0.19041.0` (echte App, `#if WINDOWS`, `build.sh -f …`) und `net10.0`
+  - App mit zwei Zielen: `net10.0-windows10.0.19041.0` (echte App, `#if WINDOWS`, baut `build.sh`) und `net10.0`
     (Snapshot-Werkzeug unter Linux). Die WinRT-Projektion macht die exe ~84 statt 63 MB.
 - **Rechtschreibhilfe** im Editor (`VocabSpellChecker` im Kern, Port mit Tests; Windows `ISpellCheckerFactory` per COM in
   `Services/WindowsSpellEngine.cs`): Hinweise unter der Karte «‹separee› → séparée?», Menü mit Vorschlägen und
@@ -304,8 +305,8 @@ und die Web-App **deinstallieren**.
 - Tests: `LegacyWebStorageTests` (selbst geschriebene LevelDB-Dateien, Snappy, Übernahme aller Teile).
 - Version `1.2.0` in `src/Wortschatz.App/Wortschatz.App.csproj`; `Downloadseite/tools/release-windows.sh` baut jetzt
   diese App (`build.sh test`).
-- Was die frühere App konnte und hier noch fehlt: **PDF-/Foto-Import** (die Web-App lud dafür Bibliotheken nach),
-  Sonderzeichen-Leiste, Rechtschreibhilfe, Bildschirmleser-Ansagen.
+- Was die frühere App konnte und hier damals noch fehlte: **PDF-/Foto-Import** (die Web-App lud dafür Bibliotheken nach),
+  Sonderzeichen-Leiste, Rechtschreibhilfe, Bildschirmleser-Ansagen – seither alles da («Neue Funktionen nach 1.2»).
 
 ## Erster Test auf echtem Windows und Nachbesserung (3.11.2026)
 
@@ -344,8 +345,8 @@ Joan: «du darfst gleich alles beheben … auch Performance». Behoben in diesem
 - Testhilfen: `WORTSCHATZ_NATIVE_DATA=<Ordner>` (eigener Datenordner), `WORTSCHATZ_TRACE=1` (Zeiten nach
   `%TEMP%\wortschatz-trace.log`).
 
-Noch offen: Bildschirmleser-Ansagen, PDF/Foto-Import, Rechtschreibhilfe, Sonderzeichen-Leiste, Touchpad-Gesten auf echtem
-Gerät, arm64.
+Damals noch offen (die ersten vier seither erledigt, «Neue Funktionen nach 1.2»): Bildschirmleser-Ansagen,
+PDF/Foto-Import, Rechtschreibhilfe, Sonderzeichen-Leiste, Touchpad-Gesten auf echtem Gerät, arm64.
 
 ## Warum C# + Avalonia
 
@@ -375,7 +376,7 @@ Die Paritätstests lesen die **Fixtures der Mac-App direkt** aus
 
 ```bash
 cd windows-native
-dotnet test tests/Wortschatz.Core.Tests          # alle Kern-Tests (410, ~35 s)
+dotnet test tests/Wortschatz.Core.Tests          # alle Kern-Tests
 dotnet test tests/Wortschatz.Core.Tests --filter GradingParityTests
 dotnet run --project tools/Wortschatz.Snapshots -- /tmp/shots    # Bildschirme als PNG (Linux, ohne Windows)
 dotnet run --project tools/Wortschatz.Snapshots -- /tmp/shots dark --only=flashcards   # dunkel, nur Karteikarten
@@ -403,10 +404,10 @@ Voraussetzung: .NET SDK 10 (`dotnet --version`). Unter Ubuntu: `apt-get install 
 | LearnFlow, LearnFlowModel, LearnFlowReducer (Bildschirm-Logik «Lernen») | ✅ 58 Reducer-Tests (`LearnFlowTests`, inkl. «nur Enter»- und Tastenhämmer-Läufe), Tipp-Tasten- und Wiederholungs-Bildschirmtests portiert |
 | `LearnFlowModelTests`, `WriteFlowKeyTests`, `WriteFlowModelTests`, `LearnEngineTests` (Mac-Unit-Tests) | ⏳ nicht portiert – Parität und Reducer-Tests decken das Verhalten ab |
 | TextLayout, OCRPostprocess (Zeilen/Spalten aus PDF-Text und OCR-Wortboxen, Umlaute, Chinesisch) | ✅ Parität grün (`layout.json` 7'048 Fälle, `ocr.json` 3'098 Fälle) + `TextLayoutTests`, `TextLayoutScriptsTests`, `OCRPostprocessTests`, `OCRPostprocessCJKTests` |
-| Import-Kern (`Import/`: ImportPipeline, PDFTextExtractor, OCRService/OCRTextAssembler, BandedTextRecognizer, OCRImage, TextFileDecoder, ImportFileType) | ✅ portiert (Branch `windows-import-core`), Logik mit Fakes getestet (Textseiten vs. Scans, 30-Seiten-Grenze, Warnungen, Fortschritt, Abbruch); PDF, Bild-Dekodierung und OCR sind Schnittstellen (`IPdfReader`, `IImageDecoder`, `ITextRecognizer`), die die App für Windows implementiert – siehe PORTING.md «Import» |
-| Oberfläche (Avalonia, Glas-Design): Hülle, Übersicht, Lernset, Lernen, Schreiben, Karteikarten, Prüfung, Editor mit Listen-Import, Einstellungen (Hell/Dunkel, Backup) | ✅ gebaut, unter Linux headless geprüft (Screenshots); **auf Windows noch nicht getestet** |
+| Import-Kern (`Import/`: ImportPipeline, PDFTextExtractor, OCRService/OCRTextAssembler, BandedTextRecognizer, OCRImage, TextFileDecoder, ImportFileType) | ✅ portiert, Logik mit Fakes getestet (Textseiten vs. Scans, 30-Seiten-Grenze, Warnungen, Fortschritt, Abbruch); PDF, Bild-Dekodierung und OCR sind Schnittstellen (`IPdfReader`, `IImageDecoder`, `ITextRecognizer`), die die App für Windows implementiert – siehe PORTING.md «Import» |
+| Oberfläche (Avalonia, Glas-Design): Hülle, Übersicht, Lernset, Lernen, Schreiben, Karteikarten, Prüfung, Editor mit Listen-Import, Einstellungen (Hell/Dunkel, Backup) | ✅ gebaut, unter Linux headless geprüft (Screenshots), auf Windows getestet (seit 3.11.2026, «Erster Test auf echtem Windows») |
 | Animationen (Motion/Effects; Karteikarten, Lernen, Schreiben, Prüfung, Toasts, Konfetti, Seiten-Eintritt) | ✅ wie Mac (Kurven/Federn aus `Metrics.swift`), Reduce Motion über Windows-«Animationseffekte»; nur als Einzelbilder geprüft |
-| Vorlesen (Windows-Stimmen über SAPI/OneCore) | ✅ geschrieben, auf Windows ungetestet |
+| Vorlesen (Windows-Stimmen über SAPI/OneCore) | ✅ läuft auf Windows (Test 3.11.2026) |
 | Töne, Bildschirmleser-Ansagen, PDF-/Foto-Import, Rechtschreibhilfe, Sonderzeichen-Leiste | ✅ (siehe «Neue Funktionen nach 1.2») |
 | `build.sh` → `dist/Wortschatz.exe` (eine Datei, ohne .NET-Installation) | ✅ |
 
@@ -415,7 +416,8 @@ Voraussetzung: .NET SDK 10 (`dotnet --version`). Unter Ubuntu: `apt-get install 
 1. `./build.sh` (oder fertige `dist/Wortschatz.exe` kopieren) und starten. Daten liegen in
    `%LOCALAPPDATA%\Wortschatz\library.json`. Achtung: Der erste Start übernimmt und entfernt die frühere App; zum
    Testen `WORTSCHATZ_NATIVE_DATA` und `WORTSCHATZ_LEGACY_DATA` setzen (siehe oben).
-2. Lernsets aus der heutigen App: dort Backup exportieren, hier *Einstellungen → Backup laden* (oder auf der leeren Übersicht).
+2. Lernsets der früheren App (bis 1.1) übernimmt der erste Start von selbst (siehe oben); ein Backup lädt man unter
+   *Einstellungen → Backup laden* (oder auf der leeren Übersicht).
 3. Prüfen: Fenster ziehen/maximieren/Snap (eigene Titelleiste, `WindowDecorations.BorderOnly` + Rollen), Schriften
    (Onest/Nunito, Fallback Segoe UI/Microsoft YaHei für Chinesisch, Arabisch rechts-nach-links), Tasten (Enter, Alt+Enter,
    Ctrl+Enter, Ziffern 1–4/0, Pfeile, Tippen auf Mehrfachauswahl, Esc), Vorlesen, Hell/Dunkel, Datei-Dialoge.

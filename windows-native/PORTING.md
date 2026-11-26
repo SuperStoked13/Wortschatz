@@ -56,7 +56,7 @@ Kurzfassung für eilige Claudes: **Rezept «Mac-Feature übernehmen» ganz unten
 
 ## Swift-Enums mit Werten in C# (Flows)
 
-Die Flows (`WriteFlow`, später `LearnFlow`) sind reine Reducer: `(State, Event, Env) → (State, [Effect])`.
+Die Flows (`WriteFlow`, `LearnFlow`) sind reine Reducer: `(State, Event, Env) → (State, [Effect])`.
 - `enum Event { case submit(String) … }` → `abstract record Event` mit einem verschachtelten `sealed record` pro Fall
   (`new WriteFlow.Event.Submit("…")`); im Reducer `switch (e) { case Event.Submit submit: … }`.
 - `enum Effect` genauso; Tests prüfen mit `Assert.Contains(new Effect.Haptic(HapticKind.Success), fx)` (Record-Gleichheit).
@@ -88,13 +88,7 @@ Die Flows (`WriteFlow`, später `LearnFlow`) sind reine Reducer: `(State, Event,
 | `ExtendedSynonyms.swift` | `ExtendedSynonyms.cs` (reiner Teil) + `ExtendedSynonyms.Thesaurus.cs`, `SynonymLexicon.cs`: statt Apple-Sprachmodell eingebaute Synonymwörterbücher (`SynonymData/README.md`) | – |
 | `LangDetect.swift` | `LangDetect.cs` | `LangDetectParityTests` |
 | `LangDetectLexicon.swift` | `LangDetectLexicon.cs` (**generiert**: `node windows-native/tools/gen-langdetect-lexicon.mjs`) | – |
-
 | `VocabParser.swift` + `VocabParser+{Context,Lines,Split,Text,Delimited,LineBased}.swift` | `VocabParser.cs` (Typen, Optionen, Vorverarbeitung, Klassifizierung, Trenn-Helfer) + `VocabParser.Lists.cs` (getrennte und zeilenbasierte Listen, Ausrichtung, Finish, Warnungen) | `VocabParserParityTests` (8 Teile) |
-
-Hinweis Parser: Die C#-Datei folgt `parser.js` Funktion für Funktion (gleiche Namen). In Swift sind dieselben Funktionen
-auf `VocabParser+*.swift` verteilt (z. B. `languageSplit` in `+Split`, `align` in `+LineBased`). Eine Mac-Änderung findet
-man in C# über den Funktionsnamen. `VocabParser+Text.swift` (Swift-Ersatz für JS-Regex) hat kein Gegenstück: C# nimmt
-die JS-Muster direkt über `JsRegex`.
 | `LibraryStoreTypes.swift` | `LibraryStoreTypes.cs` | – |
 | `LibraryStoreSanitizer.swift` | `LibraryStoreSanitizer.cs` (`JSLoose`, `StoreSanitizer`) | – |
 | `LibraryStoreBackends.swift` | `LibraryStoreBackends.cs` (`IStorageBackend`, `MemoryBackend`, `FileBackend`) | – |
@@ -116,6 +110,11 @@ die JS-Muster direkt über `JsRegex`.
 | `WordClass.swift` | `WordClass.cs` (Wortart und Ähnlichkeit der Multiple-Choice-Antworten; `sideProfile` → `SideProfileOf`, `textClass` → `TextClassOf`, `optionShape` → `OptionShapeOf`, `listProfiles` → `ListProfilesOf`) | `WordClassParityTests` (Fixture `wordclass`) |
 | `TextLayout.swift` | `TextLayout.cs` (`TextItem`, `LayoutOptions`, `BaselineSegment`, `ItemsToLines`, `EstimateSlope`, `DeskewItems`; nach `layout.js` mit UTF-16-Indizes) | `TextLayoutParityTests` (Fixture `layout`, 4 Teile), `TextLayoutTests`, `TextLayoutScriptsTests` |
 | `OCRPostprocess.swift` | `OCRPostprocess.cs` (`joinCJK` → `JoinCJK`) | `OCRPostprocessParityTests` (Fixture `ocr`), `OCRPostprocessTests`, `OCRPostprocessCJKTests` |
+
+Hinweis Parser: Die C#-Datei folgt `parser.js` Funktion für Funktion (gleiche Namen). In Swift sind dieselben Funktionen
+auf `VocabParser+*.swift` verteilt (z. B. `languageSplit` in `+Split`, `align` in `+LineBased`). Eine Mac-Änderung findet
+man in C# über den Funktionsnamen. `VocabParser+Text.swift` (Swift-Ersatz für JS-Regex) hat kein Gegenstück: C# nimmt
+die JS-Muster direkt über `JsRegex`.
 
 Hinweis LearnEngine: `LearnState` ist in C# eine **Klasse** (viele Listen/Maps, Swift mutiert eine Kopie mit `var s`).
 Regel: Engine-Funktionen beginnen immer mit `var s = CopyState(state)` – das ist die frische Kopie, die verändert wird;
@@ -162,9 +161,10 @@ aufrufenden Thread: aus der Oberfläche über `Task.Run` starten.
 | `BandedTextRecognizer.swift` | `BandedTextRecognizer.cs` | `BandedTextRecognizerTests` |
 | `TextRecognition.swift` (OCRQuad/OCRWord/OCRLine, `TextRecognizing`) | `TextRecognition.cs` (`OcrQuad`, `OcrWord`, `OcrLine`, `ITextRecognizer` + die übrigen Schnittstellen) | – |
 
-Nicht portiert: `VocabSpellChecker.swift` (Apple-Rechtschreibung), die Vision-Engines und `VisionSettings`
-(Sprachabgleich/Rückfall auf die Lernsprache: Sache der Windows-Engine), `PDFImageProbe`/`DisplayGeometry`/das Rendern
-selbst. Von den Mac-Tests fehlen darum `VisionRecognitionTests`, `VocabSpellCheckerTests` und die PDF-Tests, die echte
+`VocabSpellChecker.swift` ist als `VocabSpellChecker.cs` portiert (Tests `VocabSpellCheckerTests`); die Rechtschreibung
+selbst kommt unter Windows von `Services/WindowsSpellEngine.cs` statt von Apple. Nicht portiert: die Vision-Engines und
+`VisionSettings` (Sprachabgleich/Rückfall auf die Lernsprache: Sache der Windows-Engine), `PDFImageProbe`/`DisplayGeometry`/
+das Rendern selbst. Von den Mac-Tests fehlen darum `VisionRecognitionTests` und die PDF-Tests, die echte
 PDFs brauchen (`sample.pdf`, gedrehte Seiten, arabische/chinesische Textebene): sie gehören zur Windows-Implementierung
 von `IPdfReader`.
 
@@ -218,15 +218,16 @@ Die Oberfläche ist **C#-Code, kein XAML**: eine SwiftUI-Datei ↔ eine C#-Datei
 | `Features/Flashcards/FlashcardSwipe.swift` | `Features/Flashcards/FlashcardSwipe.cs` (`FlashcardSwipe`, `FlashcardScrollMonitor` für das Touchpad) |
 | `Features/Flashcards/FlashcardsStage.swift`, `FlashcardsScreen.swift`, `FlashcardsOptionsPanel.swift` | `FlashcardsStage.cs`, `FlashcardsScreen.cs`, `FlashcardsOptionsPanel.cs` |
 | `Features/Exam/*` | `Features/Exam/ExamScreen.cs` |
-| `Features/Editor/*`, `Features/Import/*` | `Features/Editor/SetEditorScreen.cs` (Text/Datei/Zwischenablage; **noch kein PDF/Foto**) |
-| `Features/Settings/*` | `Features/Settings/SettingsScreen.cs` (Darstellung, Backup, Daten löschen, Info) |
+| `Features/Editor/*`, `Features/Import/*` | `Features/Editor/SetEditorScreen.cs` (Text, Datei, Zwischenablage, PDF und Foto) |
+| `Features/Settings/*` | `Features/Settings/SettingsScreen.cs` (Darstellung, Sprache, Backup, Updates, Daten löschen, Info) |
 | gemeinsame Lern-Teile (Kopfzeile, Aktionsleiste, Dialoge, Optionen) | `Features/Study/StudyChrome.cs`, `StudyText.cs` |
 | `Services/SpeechService.swift` | `Services/SpeechService.cs` (SAPI/OneCore-Stimmen über COM) |
 | UserDefaults | `Services/AppPreferences.cs` (`preferences.json` neben der Bibliothek) |
 | Snapshot-Harness (`DebugSnapshot.swift`) | `tools/Wortschatz.Snapshots` (headless PNGs) |
 
-Noch nicht portiert (bewusste Lücken, Stand 3.11.2026): Menüleisten-Befehle (Windows hat keine Menüleiste; die
-Kürzel gibt es), App-Updates (bewusst nicht, auch auf dem Mac verworfen). Tippfehler zeigen beide nur in der
+Noch nicht portiert (bewusste Lücke): Menüleisten-Befehle (Windows hat keine Menüleiste; die Kürzel gibt es).
+App-Updates hat Windows seit 25.11.2026 wie der Mac (`Services/AppUpdater.cs`, `README.md` › «Updates wie die
+Mac-App»). Tippfehler zeigen beide nur in der
 Kartenliste (die Import-Vorschau gibt es seit Mac 1.8 bzw. 26.11.2026 nicht mehr). Windows-Dienste: `Services/ImportServices.cs` (PDF, Bilder, OCR),
 `Services/WindowsSpellEngine.cs` (Rechtschreibung), `DesignSystem/Announcer.cs` (Bildschirmleser).
 

@@ -26,7 +26,7 @@ public sealed record LegacyTakeover(JSONValue Library, JsonObjectMap Preferences
 /// <summary>Everything of the earlier WebView2-based Windows app, read from its localStorage (one-time takeover).</summary>
 public static class LegacyWebStorage
 {
-    /// <summary>The page origin of the earlier app (windows/host/main.go: appHost). WebView2 stores localStorage per origin.</summary>
+    /// <summary>The page origin of the earlier app (up to 1.1, its appHost). WebView2 stores localStorage per origin.</summary>
     public const string Origin = "https://wortschatz.example";
 
     /// <summary>The Website's storage prefix (Website/src/store/db.js: PREFIX).</summary>
