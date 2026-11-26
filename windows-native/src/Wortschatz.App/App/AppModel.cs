@@ -510,13 +510,11 @@ public sealed class AppModel
         {
             var q = JSCompat.Trim(Search);
             if (q.Length == 0) return Library.Sets;
-            var needle = Fold(q);
-            bool Has(string s) => Fold(s).Contains(needle, StringComparison.Ordinal);
+            var needle = StudyCopy.Fold(q);
+            bool Has(string s) => StudyCopy.Fold(s).Contains(needle, StringComparison.Ordinal);
             return Library.Sets.Where(s => Has(s.Set.Title) || Has(s.Set.Description) || s.Set.Cards.Any(c => Has(c.Term) || Has(c.Definition))).ToList();
         }
     }
-
-    static string Fold(string s) => string.Join(' ', JSCompat.Lower(TextNormalizer.StripDiacritics(s)).Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
 
     public VocabSet? Set(string id) => Store.GetSet(id);
 

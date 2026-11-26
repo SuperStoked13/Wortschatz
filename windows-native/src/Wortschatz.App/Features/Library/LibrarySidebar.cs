@@ -305,13 +305,11 @@ public sealed class LibrarySidebar
     static string? Match(SetSummary summary, string query)
     {
         if (query.Length == 0) return null;
-        var needle = Fold(query);
-        if (Fold(summary.Set.Title).Contains(needle, StringComparison.Ordinal)) return null;
-        var matches = summary.Set.Cards.Where(c => Fold(c.Term + "\n" + c.Definition).Contains(needle, StringComparison.Ordinal)).ToList();
+        var needle = StudyCopy.Fold(query);
+        if (StudyCopy.Fold(summary.Set.Title).Contains(needle, StringComparison.Ordinal)) return null;
+        var matches = summary.Set.Cards.Where(c => StudyCopy.Fold(c.Term + "\n" + c.Definition).Contains(needle, StringComparison.Ordinal)).ToList();
         if (matches.Count == 0) return null;
         var text = $"{matches[0].Term} – {matches[0].Definition}";
         return matches.Count > 1 ? $"{text} (+{matches.Count - 1})" : text;
     }
-
-    static string Fold(string s) => string.Join(' ', JSCompat.Lower(TextNormalizer.StripDiacritics(s)).Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
 }

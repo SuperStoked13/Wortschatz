@@ -247,4 +247,25 @@ public static class StudyCopy
     public static string Terms(int n) => Labels.Plural(n, "Begriff", "Begriffe");
 
     public static string Capitalized(string text) => text.Length == 0 ? text : char.ToUpper(text[0]) + text[1..];
+
+    /// <summary>
+    /// Lower case, no accents, single spaces: the search form of the sidebar and the set page (Mac: StudyCopy.fold),
+    /// "Ecole  normale" finds "école normale". Remembered per text: a search folds every title, term and definition on
+    /// each key typed into it.
+    /// </summary>
+    public static string Fold(string text)
+    {
+        lock (Folded)
+            if (Folded.TryGetValue(text, out var known)) return known;
+        var result = string.Join(' ', JSCompat.Lower(TextNormalizer.StripDiacritics(text)).Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
+        lock (Folded)
+        {
+            if (Folded.Count >= 50_000) Folded.Clear();
+            Folded[text] = result;
+        }
+        return result;
+    }
+
+    /// <summary>The texts folded so far (Mac: StudyCopy.folded, cleared at 50 000 like there).</summary>
+    static readonly Dictionary<string, string> Folded = new(StringComparer.Ordinal);
 }

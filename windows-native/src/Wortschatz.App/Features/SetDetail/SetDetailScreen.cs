@@ -713,9 +713,6 @@ public sealed class SetDetailScreen : Screen
         _ => true,
     };
 
-    /// <summary>Lower case, no accents, single spaces (Mac: StudyCopy.fold): "Ecole  normale" finds "école normale".</summary>
-    static string Fold(string s) => string.Join(' ', JSCompat.Lower(TextNormalizer.StripDiacritics(s)).Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
-
     static readonly StringComparer Localized = StringComparer.Create(System.Globalization.CultureInfo.GetCultureInfo("de-CH"), System.Globalization.CompareOptions.IgnoreCase);
 
     static int StatusRank(CardStatus status) => status switch
@@ -733,7 +730,7 @@ public sealed class SetDetailScreen : Screen
     {
         if (_terms is null) return;
         _summary = summary;
-        var query = Fold(_search);
+        var query = StudyCopy.Fold(_search);
         var items = new List<TermItem>();
         int position = 0;
         foreach (var card in summary.Set.Cards)
@@ -742,7 +739,7 @@ public sealed class SetDetailScreen : Screen
             int mistakes = summary.MistakesOf(card);
             int index = position++;
             if (!Matches(card, status, mistakes)) continue;
-            if (query.Length > 0 && !Fold(card.Term + "\n" + card.Definition).Contains(query, StringComparison.Ordinal)) continue;
+            if (query.Length > 0 && !StudyCopy.Fold(card.Term + "\n" + card.Definition).Contains(query, StringComparison.Ordinal)) continue;
             items.Add(new TermItem(summary, card, status, index, mistakes));
         }
         if (_sort is { } sort)
