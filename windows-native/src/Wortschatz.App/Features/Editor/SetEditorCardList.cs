@@ -44,7 +44,7 @@ public sealed partial class SetEditorScreen
         public bool IsDuplicate;
         /// <summary>Probable typos (Mac: termSpelling / definitionSpelling).</summary>
         public IReadOnlyList<SpellingIssue> TermSpelling = [], DefSpelling = [];
-        /// <summary>The row's controls while it is on screen.</summary>
+        /// <summary>The row's controls while it is on screen (TrackRow; the draft keeps the text).</summary>
         public RowView? View;
 
         public string TrimmedTerm => JSCompat.Trim(Term);
@@ -334,7 +334,7 @@ public sealed partial class SetEditorScreen
             var phoneNotes = new WrapPanel { ItemSpacing = 6, LineSpacing = 6, Margin = new Thickness(30, 0, 0, 0) };
             var phoneCard = Ui.Glass(Ui.V(6, phone, phoneNotes), 14, new Thickness(8, 8), shadow: false);
             phoneCard.Margin = new Thickness(0, 0, 0, 6);
-            d.View = new RowView(phoneCard, term, def, numberColumn, phoneNotes);
+            TrackRow(d, new RowView(phoneCard, term, def, numberColumn, phoneNotes));
             UpdateRow(d);
             return phoneCard;
         }
@@ -353,9 +353,31 @@ public sealed partial class SetEditorScreen
         var notes = new WrapPanel { ItemSpacing = 6, LineSpacing = 6, Margin = new Thickness(NumberWidth + ColumnSpacing, 0, 0, 0) };
         var card = Ui.Glass(Ui.V(6, grid, notes), 14, new Thickness(10, 7), shadow: false);
         card.Margin = new Thickness(0, 0, 0, 6);
-        d.View = new RowView(card, term, def, numberColumn, notes);
+        TrackRow(d, new RowView(card, term, def, numberColumn, notes));
         UpdateRow(d);
         return card;
+    }
+
+    /// <summary>
+    /// Keeps the row's controls in <see cref="Draft.View"/> while the row is in the window. The list builds a new row
+    /// whenever a card scrolls back in, so a row scrolled away is never shown again: holding it kept its controls alive
+    /// (541 cards: some 1,080 text fields) and UpdateRow worked on rows nobody sees. The draft keeps its text and state;
+    /// a row attached again (the page moved, sidebar shown or hidden) takes its place back unless a newer row has it,
+    /// and catches up with UpdateRow.
+    /// </summary>
+    void TrackRow(Draft d, RowView view)
+    {
+        d.View = view;
+        view.Card.AttachedToVisualTree += (_, _) =>
+        {
+            if (d.View is not null) return;
+            d.View = view;
+            UpdateRow(d);
+        };
+        view.Card.DetachedFromVisualTree += (_, _) =>
+        {
+            if (d.View == view) d.View = null;
+        };
     }
 
     TextBox RowField(Draft d, bool isTerm, int number)

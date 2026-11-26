@@ -496,7 +496,7 @@ public sealed class SetDetailScreen : Screen
     readonly HashSet<string> _selection = [];
     /// <summary>The anchor of a Shift+click range.</summary>
     string? _anchor;
-    /// <summary>The rows on screen by card id (the list virtualizes; stale entries are harmless).</summary>
+    /// <summary>The rows on screen by card id (the list virtualizes: TrackRow keeps only the attached ones).</summary>
     readonly Dictionary<string, Border> _rowViews = [];
     List<TermItem> _items = [];
     SetSummary? _summary;
@@ -845,7 +845,7 @@ public sealed class SetDetailScreen : Screen
         void Paint() => row.Background = _selection.Contains(card.Id) ? WsTheme.B(P.AccentSoft) : hovered ? WsTheme.B(P.Hairline) : Brushes.Transparent;
         row.Tag = (Action)Paint;
         Paint();
-        _rowViews[card.Id] = row;
+        TrackRow(card.Id, row);
         row.PointerEntered += (_, _) =>
         {
             hovered = true;
@@ -894,8 +894,8 @@ public sealed class SetDetailScreen : Screen
     Control PhoneRowChrome(Grid grid, VocabSet set, Card card)
     {
         var row = new Border { Child = grid, CornerRadius = new CornerRadius(12), Background = Brushes.Transparent };
-        _rowViews[card.Id] = row;
         row.Tag = (Action)(() => { });
+        TrackRow(card.Id, row);
         row.Tapped += (_, e) =>
         {
             if (e.Source is Visual v && v.FindAncestorOfType<WsButton>(includeSelf: true) is not null) return;
@@ -936,6 +936,25 @@ public sealed class SetDetailScreen : Screen
         }
         _anchor = cardId;
         PaintRows();
+    }
+
+    /// <summary>
+    /// Keeps <paramref name="row"/> in <see cref="_rowViews"/> while it is in the window. The list builds a new row
+    /// whenever a card scrolls back in, so a row scrolled away is never shown again: holding it kept its controls alive,
+    /// and PaintRows painted every row ever shown. Attached again (the page moved, sidebar shown or hidden), it takes
+    /// its place back unless a newer row has it, and catches up on the selection.
+    /// </summary>
+    void TrackRow(string cardId, Border row)
+    {
+        _rowViews[cardId] = row;
+        row.AttachedToVisualTree += (_, _) =>
+        {
+            if (_rowViews.TryAdd(cardId, row) && row.Tag is Action paint) paint();
+        };
+        row.DetachedFromVisualTree += (_, _) =>
+        {
+            if (_rowViews.TryGetValue(cardId, out var shown) && shown == row) _rowViews.Remove(cardId);
+        };
     }
 
     void PaintRows()
