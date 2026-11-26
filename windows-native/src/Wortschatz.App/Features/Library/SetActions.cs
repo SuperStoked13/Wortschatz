@@ -1,6 +1,5 @@
 using Avalonia.Controls;
 using Avalonia.Input;
-using Avalonia.Controls.Primitives;
 using Wortschatz.App.DesignSystem;
 using Wortschatz.Core;
 using static Wortschatz.Core.CoreText;

@@ -307,7 +307,6 @@ public sealed class AnimatedValue
     /// <summary>The value on screen now.</summary>
     public double Value { get; private set; }
     public double Target => _to;
-    public bool IsAnimating => _curve is not null;
 
     public event Action? Changed;
 

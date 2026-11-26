@@ -54,7 +54,6 @@ public sealed partial record Palette
     public StatusPalette Info { get; init; } = null!;
     public Color Star { get; init; }
     public Color Flame { get; init; }
-    public Color FlameText { get; init; }
 
     public StatusPalette Status(CardStatus status) => status switch
     {
@@ -99,7 +98,6 @@ public sealed partial record Palette
         Info = new(Hex(0x2F7DE1), Hex(0x1F63BF), Hex(0x2F7DE1, 0.12)),
         Star = Hex(0xF2AE0C),
         Flame = Hex(0xF26B1D),
-        FlameText = Hex(0xB4480C),
     };
 
     public static readonly Palette DarkPalette = new()
@@ -135,7 +133,6 @@ public sealed partial record Palette
         Info = new(Hex(0x5EA2FF), Hex(0x8FC0FF), Hex(0x5EA2FF, 0.20)),
         Star = Hex(0xF5C344),
         Flame = Hex(0xFF8A3D),
-        FlameText = Hex(0xFFA766),
     };
 }
 

@@ -117,7 +117,6 @@ public sealed partial record Palette
             Info = S(Info, 0x1A5DB5, 0x154C93, 0x8FC0FF, 0xB5D5FF),
             Star = Dark ? Hex(0xFFD66B) : Hex(0xB98200),
             Flame = Dark ? Hex(0xFFA766) : Hex(0xC2500E),
-            FlameText = Dark ? Hex(0xFFC296) : Hex(0x8F3A08),
             SolidSurface = Dark ? Hex(0x1B1D24) : Hex(0xFFFFFF),
             Backdrop = Dark ? Hex(0x000000) : Hex(0xE6E6EB),
         };

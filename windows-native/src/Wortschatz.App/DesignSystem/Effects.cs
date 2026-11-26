@@ -30,8 +30,6 @@ public sealed class MotionState
         foreach (var v in new[] { _x, _y, _scale, _opacity, _shake, _pop }) v.Changed += Apply;
     }
 
-    public Placement Current => new(_x.Value, _y.Value, _scale.Value, _opacity.Value);
-
     /// <summary>Moves to <paramref name="to"/> along <paramref name="curve"/> (null: at once).</summary>
     public void Place(Placement to, Curve? curve = null, Action? completed = null)
     {
