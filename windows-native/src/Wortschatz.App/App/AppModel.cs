@@ -426,12 +426,13 @@ public sealed class AppModel
         }
 
         // Downloads of older versions of this app go (a new download replaces the old one; both share this data
-        // folder). In the background, on every start; with a test library (WORTSCHATZ_NATIVE_DATA) only in its folder
-        // and next to the exe, never in the real Downloads folder.
-        var versionFolders = OlderVersions.Folders(!string.IsNullOrWhiteSpace(folder) ? [folder] : null).ToList();
+        // folder). In the background, on every start, also finding the folders (known-folder lookup, disk checks); with
+        // a test library (WORTSCHATZ_NATIVE_DATA) only in its folder and next to the exe, never in the real Downloads
+        // folder.
+        string[]? testFolders = !string.IsNullOrWhiteSpace(folder) ? [folder] : null;
         Task.Run(() =>
         {
-            try { OlderVersions.Remove(versionFolders); }
+            try { OlderVersions.Remove(OlderVersions.Folders(testFolders).ToList()); }
             catch (Exception) { }
         });
         return model;
